@@ -16,9 +16,10 @@ whitebox-server (engagement + analytics) ◀────┘
 awareness store  → channel: web · direction: exposure
 ```
 
-The dev server exists for one reason: the server has **no HTTP CORS**, so the browser must reach
-it same-origin. `serve.mjs` serves the page and reverse-proxies API + WebSocket traffic to the
-server, so no server change is needed.
+`serve.mjs` does three things: **starts the whitebox-server** (a child process it manages),
+**serves the demo page** (bundling it with esbuild), and **reverse-proxies** API + WebSocket
+traffic to the server. The proxy is what makes it work without touching the server: the server has
+**no HTTP CORS**, so the browser must reach it same-origin — and through the proxy, it does.
 
 ## Prerequisites
 
@@ -27,16 +28,24 @@ server, so no server change is needed.
    npm install
    npm run build --workspace=whitebox-client     # produces whitebox-client/dist
    ```
-2. **A running whitebox-server** with the `engagement` plugin (and `analytics` if you want to
-   verify), reachable at `http://localhost:3000` (or set `WB_SERVER`). It needs `config.openai.apiKey`
-   for embeddings.
+2. **Redis running locally** and `whitebox-server/.env` filled in (copy from `.env.example`) with
+   DB, OpenAI key, and `WB_ENGAGEMENT_TOKEN` / `WB_ANALYTICS_TOKEN`. `whitebox.config.js` must have
+   `engagement` + `analytics` in `plugins`.
 
-## Run
+## Run — one command
 
 ```bash
 cd examples/engagement
-WB_SERVER=http://localhost:3000 node serve.mjs
+node serve.mjs
 # → http://localhost:5173
+```
+
+`serve.mjs` **starts the whitebox-server for you** (streaming its logs prefixed `[server]`), waits
+for it, then serves the demo. Stopping `serve.mjs` (Ctrl+C) shuts the server down too. Variants:
+
+```bash
+WB_START_SERVER=0 node serve.mjs              # don't spawn — use a server you already started
+WB_SERVER=http://other-host:3000 node serve.mjs   # proxy to a remote server (never spawns)
 ```
 
 Open the page, then **scroll slowly**, let your cursor rest on the images, and **play the video**.
