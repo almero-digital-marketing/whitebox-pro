@@ -1,20 +1,20 @@
 <p align="center">
-  <img src="whitebox.svg" alt="whitebox" width="320" />
+  <img src="whitebox.svg" alt="WhiteBox" width="320" />
 </p>
 
-# Whitebox
+# WhiteBox
 
-**Whitebox is a channel backend with memory.** Record every customer touch — email, voice call, web engagement, CRM event — against one identity, embed it into a per-customer semantic store, and ask grounded questions about it in natural language.
+**WhiteBox is a channel backend with memory.** Record every customer touch — email, voice call, web engagement, CRM event — against one identity, embed it into a per-customer semantic store, and ask grounded questions about it in natural language.
 
 ## Where it fits
 
-Whitebox is a focused component, not your whole backend. It owns customer touchpoints and the memory of them: defined surface, channel-shaped responsibilities. Your app code lives separately and reaches in through HTTP or MCP — it never imports whitebox internals.
+WhiteBox is a focused component, not your whole backend. It owns customer touchpoints and the memory of them: defined surface, channel-shaped responsibilities. Your app code lives separately and reaches in through HTTP or MCP — it never imports WhiteBox internals.
 
-## Why whitebox
+## Why WhiteBox
 
 - **One identity across channels.** Email, phone, fingerprint and login all merge into a single **passport**, so a call, a click and a reply belong to the same person.
 - **Memory you can query.** Every touch is embedded into an **awareness** store. Identical content embeds once (`content_hash`) and is shared across customers at query time — `/analytics/ask` answers in natural language, grounded in what actually happened.
-- **LLM-native.** The same data is reachable over **MCP**, so an agent can read timelines, recall context, and act through whitebox's tools directly.
+- **LLM-native.** The same data is reachable over **MCP**, so an agent can read timelines, recall context, and act through WhiteBox's tools directly.
 - **Channels are plugins.** Each channel is its own npm package that registers against the core `ctx`. Plugins never import each other; adding a channel is a new package, not a core change.
 
 ## Channels
