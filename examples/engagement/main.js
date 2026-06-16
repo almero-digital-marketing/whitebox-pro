@@ -134,10 +134,11 @@ const wb = whitebox({
         cps: 30,                         // ~chars/sec reading speed; lower = longer dwell to count as read
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
         capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
-        // Max scroll velocity scales (non-linearly) with font size: a power law
-        // fit through 16px → 0.05 px/ms and 30.4px → 0.5 px/ms, so the title
-        // tolerates ~10× faster scrolling than body text.
-        scrollVelocityForFontSize: (px) => 0.05 * (px / 16) ** 3.59,
+        // Max scroll velocity scales (steeply) with font size: a power law fit
+        // through 16px → 0.05 and 20px → 0.5 px/ms (exp = ln10/ln1.25 ≈ 10.32).
+        // Body text is strict; headings ramp up fast (h2 ~0.75, the title is
+        // effectively unbounded) so big text counts at almost any scroll speed.
+        scrollVelocityForFontSize: (px) => 0.05 * (px / 16) ** 10.32,
         scrollQuietMs: 100,              // resume the timer 100ms after scrolling settles (default 250)
         // Reading band: top 0%, bottom 30%. Top 0% means a block counts from the
         // very top of the viewport (above-the-fold content included) and stays
