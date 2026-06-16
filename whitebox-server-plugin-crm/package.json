@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "whitebox-server": "*"
+    "whitebox-server": "^2.0.0"
   },
   "dependencies": {
     "express": "^4.18.2",

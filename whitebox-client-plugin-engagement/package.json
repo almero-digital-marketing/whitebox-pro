@@ -16,7 +16,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "whitebox-client": "*"
+    "whitebox-client": "^0.2.0"
   },
   "devDependencies": {
     "happy-dom": "^15.0.0",
