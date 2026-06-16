@@ -131,7 +131,7 @@ const wb = whitebox({
       text: {
         sequential: true,                // read top-to-bottom: only the topmost visible block
                                          // accumulates; headings + paragraphs are separate queues
-        cps: 35,                         // ~chars/sec reading speed; lower = longer dwell to count as read
+        cps: 30,                         // ~chars/sec reading speed; lower = longer dwell to count as read
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
         capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
         // Reading band: top 0%, bottom 30%. Top 0% means a block counts from the
