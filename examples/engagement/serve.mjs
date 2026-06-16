@@ -53,10 +53,16 @@ function proxyHttp(req, res) {
     res.writeHead(up.statusCode, up.headers)
     up.pipe(res)
   })
+  // Without a timeout, an unreachable-but-not-refused backend would hang the
+  // browser fetch forever (and with it the SDK's session resolve). Fail fast.
+  upstream.setTimeout(6000, () => upstream.destroy(new Error('upstream timeout (no response in 6s)')))
   upstream.on('error', err => {
-    res.writeHead(502, { 'content-type': 'text/plain' })
-    res.end(`proxy error: ${err.message}\nIs whitebox-server running at ${TARGET.href}?`)
+    console.error(`proxy ${req.method} ${req.url} → ${err.message}`)
+    if (res.headersSent) return res.end()
+    res.writeHead(504, { 'content-type': 'text/plain' })
+    res.end(`proxy: ${err.message} — is whitebox-server running at ${TARGET.href}?`)
   })
+  req.on('error', () => upstream.destroy())
   req.pipe(upstream)
 }
 

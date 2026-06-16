@@ -20,6 +20,21 @@ function log(kind, data) {
 }
 function setStatus(text, ok) { statusEl.textContent = text; statusEl.className = ok ? 'ok' : '' }
 
+// Reachability probe — independent of the SDK, time-bounded. Tells you straight
+// away whether the proxy can reach whitebox-server.
+;(async () => {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 5000)
+  try {
+    const r = await fetch('/sessions/resolve', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: ctrl.signal,
+    })
+    log('probe', `/sessions/resolve → HTTP ${r.status}` + (r.status >= 500 ? ' (server not reachable through proxy)' : ''))
+  } catch (e) {
+    log('probe', `/sessions/resolve ${e.name === 'AbortError' ? 'timed out — server not responding' : 'failed: ' + e.message}`)
+  } finally { clearTimeout(t) }
+})()
+
 // Served same-origin via serve.mjs, which proxies /sessions, /socket.io,
 // /engagement, … to the real whitebox-server. So the SDK url is just us.
 const wb = whitebox({
