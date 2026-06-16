@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="whitebox.svg" alt="whitebox" width="198" />
+  <img src="whitebox.svg" alt="whitebox" width="320" />
 </p>
 
 # Whitebox
