@@ -135,6 +135,7 @@ const wb = whitebox({
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
         capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
         scrollVelocityMax: 0.02,         // px/ms (~20px/s) — only near-stationary reading counts; any real scroll pauses
+        scrollQuietMs: 100,              // resume the timer 100ms after scrolling settles (default 250)
         // Reading band: top 0%, bottom 30%. Top 0% means a block counts from the
         // very top of the viewport (above-the-fold content included) and stays
         // counted until it scrolls off the top. The 30% bottom margin keeps an
