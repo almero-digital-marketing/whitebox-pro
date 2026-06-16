@@ -70,14 +70,16 @@ const server = http.createServer(async (req, res) => {
   try {
     if (isApi(req.url)) return proxyHttp(req, res)
 
+    const noCache = { 'cache-control': 'no-store, no-cache, must-revalidate' }
     const url = req.url.split('?')[0]
     if (url === '/' || url === '/index.html') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...noCache })
       return res.end(await readFile(path.join(__dirname, 'index.html')))
     }
     if (url === '/main.js') {
       const js = await bundleMain()
-      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
+      console.log(`bundled main.js (${(js.length / 1024).toFixed(0)} kB)`)
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...noCache })
       return res.end(js)
     }
     res.writeHead(404, { 'content-type': 'text/plain' })
@@ -105,6 +107,6 @@ server.on('upgrade', (req, clientSocket, head) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`WhiteBox engagement demo → http://localhost:${PORT}`)
+  console.log(`WhiteBox engagement demo [v2: proxy-timeout + no-cache] → http://localhost:${PORT}`)
   console.log(`proxying API + WS → ${TARGET.href}`)
 })
