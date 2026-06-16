@@ -60,16 +60,19 @@ const wb = whitebox({
     engagementPlugin({
       flushIntervalMs: 2000,
       batchSize: 5,
-      // Demo tuning: every paragraph should register, including tall ones, with
-      // a brief dwell and normal scrolling — not just the first short block.
+      // Genuine-reading detection — a block only counts once it has actually
+      // held your attention: sitting in the central reading band, with the
+      // scroll-velocity gate closed (you stopped to read), accumulating dwell
+      // proportional to its length. So nothing fires just because it loaded
+      // on-screen — you have to scroll to it and pause.
+      //
+      // These are essentially the SDK defaults; the only nudge is cps (reading
+      // speed), raised a bit so demo paragraphs need a few seconds, not ten.
       text: {
-        minRatio: 0.2,            // a fifth visible counts (tall blocks never hit 0.5)
-        rootMargin: '0px',        // use the full viewport, not the middle 60%
-        cps: 4000,                // length barely affects the threshold…
-        minRequiredMs: 700,       // …~0.7s of dwell = a read
-        scrollVelocityMax: 1e6,   // don't block on scroll speed
+        cps: 45,             // ~chars/sec; higher = shorter dwell to count as read
+        minRequiredMs: 1500, // floor: even a short line needs ~1.5s
       },
-      image: { minRatio: 0.2, rootMargin: '0px', requiredMs: 800 },
+      // images: ~3s of viewport dwell (SDK default)
     }),
   ],
 })
