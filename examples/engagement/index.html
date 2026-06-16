@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhiteBox · Engagement demo</title>
+<style>
+  :root { --fg:#1c2530; --mut:#6b7785; --line:#e4e8ee; --accent:#2f9e95; --bg:#fafbfc; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; color:var(--fg); background:var(--bg); }
+  header { position:sticky; top:0; z-index:5; display:flex; gap:1rem; align-items:center;
+           padding:.7rem 1.2rem; background:#fff; border-bottom:1px solid var(--line); }
+  header b { font-weight:700; }
+  header .sp { flex:1; }
+  .pill { font:12px/1 ui-monospace,monospace; padding:.35rem .55rem; border-radius:999px; background:#eef2f5; color:var(--mut); }
+  #status.ok { color:#0a7d52; background:#e3f6ec; }
+  .layout { display:grid; grid-template-columns: 1fr 360px; gap:0; }
+  main { max-width:680px; margin:0 auto; padding:2rem 1.5rem 60vh; }
+  main h1 { font-size:2rem; margin:.5rem 0 1.5rem; }
+  main h2 { font-size:1.35rem; margin:2.5rem 0 .5rem; }
+  main img { width:100%; border-radius:10px; border:1px solid var(--line); display:block; margin:1rem 0; }
+  main video { width:100%; border-radius:10px; border:1px solid var(--line); margin:1rem 0; }
+  .hint { color:var(--mut); font-size:.85rem; }
+  /* log sidebar */
+  aside { position:sticky; top:49px; height:calc(100vh - 49px); border-left:1px solid var(--line);
+          background:#fff; display:flex; flex-direction:column; }
+  .bar { display:flex; gap:.5rem; padding:.6rem .8rem; border-bottom:1px solid var(--line); align-items:center; }
+  .bar h3 { margin:0; font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); flex:1; }
+  .bar button { font:12px sans-serif; padding:.3rem .6rem; border:1px solid var(--line); background:#f6f8fa;
+                border-radius:6px; cursor:pointer; }
+  .bar button:hover { background:#eef2f5; }
+  #log { overflow:auto; padding:.4rem .6rem; font:12px/1.5 ui-monospace,monospace; }
+  #log .row { padding:.25rem 0; border-bottom:1px dashed #eef1f4; word-break:break-word; }
+  #log .t { color:#9aa6b2; }
+  #log .k { display:inline-block; min-width:46px; font-weight:700; }
+  #log .text .k { color:#2f6fed; } #log .image .k { color:#a855f7; } #log .video .k { color:#e0780b; }
+  #log .ready .k, #log .flush .k, #log .copy .k { color:#0a7d52; }
+  #log .warn .k, #log .error .k { color:#c0392b; }
+</style>
+</head>
+<body>
+<header>
+  <b>WhiteBox</b> <span class="hint">engagement demo</span>
+  <span class="sp"></span>
+  <span class="pill">status: <span id="status">connecting…</span></span>
+  <span class="pill">passport: <span id="passport">…</span></span>
+</header>
+
+<div class="layout">
+  <main>
+    <h1 data-wb-text="title">Reading, watching, listening — recorded as memory</h1>
+
+    <p class="hint">Scroll, dwell on the images, and play the video. Every tracked element below
+    streams an engagement event to the server (watch the live log on the right). Each becomes a
+    <code>channel:web · direction:exposure</code> entry in the customer's awareness store.</p>
+
+    <h2 data-wb-text="what-h">What gets tracked</h2>
+    <p data-wb-text="what-1">Text blocks marked with <code>data-wb-text</code> are tracked for genuine
+    reading — the tracker gates on viewport visibility, scroll velocity and active engagement, so a
+    block that merely flashes past while you scroll does not count. Spend a few seconds on this
+    paragraph and you'll see a <b>text</b> event appear once the dwell threshold is crossed.</p>
+
+    <p data-wb-text="what-2">Reads are reported with the time spent and whether they were partial.
+    The same content embeds once on the server (keyed by a content hash) and is shared across every
+    customer who saw it — so identical copy on ten landing pages is one embedding, attributed to ten
+    passports at query time.</p>
+
+    <h2 data-wb-text="images-h">Images</h2>
+    <p data-wb-text="images-1">Images marked with <code>data-wb-image</code> are tracked for viewport
+    dwell. These ship with <code>alt</code> text, so the server uses that as the description instead
+    of calling a vision model.</p>
+
+    <img data-wb-image="diagram-pipeline" alt="Diagram: browser trackers feed engagement events into the awareness store"
+         src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='680' height='300'&gt;&lt;rect width='100%25' height='100%25' fill='%23eef6f5'/&gt;&lt;text x='50%25' y='50%25' font-family='sans-serif' font-size='22' fill='%232f9e95' text-anchor='middle'&gt;engagement pipeline&lt;/text&gt;&lt;/svg&gt;">
+
+    <img data-wb-image="screenshot-timeline" alt="Screenshot: a customer timeline showing interleaved mail, voip and web exposures"
+         src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='680' height='300'&gt;&lt;rect width='100%25' height='100%25' fill='%23f2eefb'/&gt;&lt;text x='50%25' y='50%25' font-family='sans-serif' font-size='22' fill='%23a855f7' text-anchor='middle'&gt;customer timeline&lt;/text&gt;&lt;/svg&gt;">
+
+    <h2 data-wb-text="video-h">Video</h2>
+    <p data-wb-text="video-1">The video below is marked with <code>data-wb-video</code>. The tracker
+    records the disjoint intervals you actually watch and the completion percentage — not just
+    "played". Note: on the server, a video the first viewer watches triggers transcription
+    (Whisper + frame vision) of the watched portion, which calls OpenAI. Disable it by passing
+    <code>video:false</code> in <code>main.js</code> if you'd rather not.</p>
+
+    <video data-wb-video="intro-clip" controls preload="metadata"
+           src="https://www.w3schools.com/html/mov_bbb.mp4"></video>
+
+    <h2 data-wb-text="verify-h">Verifying on the server</h2>
+    <p data-wb-text="verify-1">Copy the passport id from the header, then query the customer's
+    timeline (needs the analytics bearer token). The reads you just performed appear as web
+    exposures. See the README for the exact command.</p>
+
+    <p data-wb-text="filler-1">Keep scrolling — the more you dwell, the more events fire. Reads that
+    are still in progress when you leave the page are flushed via <code>sendBeacon</code> on unload,
+    so even a quick visit is captured.</p>
+  </main>
+
+  <aside>
+    <div class="bar">
+      <h3>live events</h3>
+      <button id="flush" title="Force-flush buffered events now">flush</button>
+      <button id="copy" title="Copy passport id">copy id</button>
+    </div>
+    <div id="log"></div>
+  </aside>
+</div>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>

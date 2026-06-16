@@ -1,0 +1,77 @@
+# Engagement demo — client → server, end to end
+
+A static page that loads the **real** `whitebox-client` + `whitebox-client-plugin-engagement`,
+tracks reading / image dwell / video watching, and streams it to a running whitebox-server.
+Use it to exercise the whole path: browser tracker → socket → engagement plugin → awareness.
+
+```
+browser (this page)
+   │  whitebox-client + engagement plugin
+   ▼
+serve.mjs  ── static page + esbuild bundle ──┐   same-origin, no CORS
+   │  reverse-proxy /sessions /socket.io …    │
+   ▼                                          │
+whitebox-server (engagement + analytics) ◀────┘
+   ▼
+awareness store  → channel: web · direction: exposure
+```
+
+The dev server exists for one reason: the server has **no HTTP CORS**, so the browser must reach
+it same-origin. `serve.mjs` serves the page and reverse-proxies API + WebSocket traffic to the
+server, so no server change is needed.
+
+## Prerequisites
+
+1. **Install + build once** (from the repo root):
+   ```bash
+   npm install
+   npm run build --workspace=whitebox-client     # produces whitebox-client/dist
+   ```
+2. **A running whitebox-server** with the `engagement` plugin (and `analytics` if you want to
+   verify), reachable at `http://localhost:3000` (or set `WB_SERVER`). It needs `config.openai.apiKey`
+   for embeddings.
+
+## Run
+
+```bash
+cd examples/engagement
+WB_SERVER=http://localhost:3000 node serve.mjs
+# → http://localhost:5173
+```
+
+Open the page, then **scroll slowly**, let your cursor rest on the images, and **play the video**.
+Tracked reads appear in the live-events panel on the right as soon as the dwell threshold is crossed.
+Reads still in progress when you leave are flushed via `sendBeacon` on unload.
+
+## Verify it landed on the server
+
+The header shows the **passport id** (click *copy id*). Query that customer's timeline — the reads
+appear as web exposures:
+
+```bash
+PASSPORT=<paste-from-header>
+TOKEN=<your config.analytics.auth.secret>
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3000/analytics/timeline/$PASSPORT?channels=web" | jq
+```
+
+Or ask a grounded question about the visitor:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"passport_id\":\"$PASSPORT\",\"question\":\"What did this visitor read about?\"}" \
+  "http://localhost:3000/analytics/ask" | jq
+```
+
+## Notes
+
+- **The socket is the real path.** The SDK resolves a session over HTTP, then carries the passport
+  on the socket handshake; engagement batches flow over `engagement.batch`. (The HTTP `/events`
+  fallback needs an explicit `passport_id` and is only used by the unload beacon.)
+- **Video triggers server-side transcription** (Whisper + frame vision) of the watched portion on
+  first view — that calls OpenAI. To skip it, pass `video: false` to `engagementPlugin({...})` in
+  `main.js`.
+- **No build step for the demo itself** — `serve.mjs` bundles `main.js` from the workspace packages
+  with esbuild on each load. You do need `whitebox-client/dist` built (step 1) because the plugin
+  imports the client's built subpath exports.
+- Tune responsiveness in `main.js`: `flushIntervalMs` / `batchSize` on the plugin options.
