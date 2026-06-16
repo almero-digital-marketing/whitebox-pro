@@ -1,61 +1,93 @@
+// LLM facade — backed by the Vercel AI SDK (`ai` + `@ai-sdk/openai`) rather
+// than the OpenAI client directly, so the provider can be swapped later
+// without touching consumers. The public surface (prompt / embed / vision /
+// transcribe / expand) is unchanged; only the engine underneath moved.
+
+import { createOpenAI } from '@ai-sdk/openai'
+import { generateText, embedMany, experimental_transcribe as aiTranscribe } from 'ai'
+import { readFile } from 'fs/promises'
 import { encode } from '@toon-format/toon'
 
-let client = null
+const CHAT_MODEL = 'gpt-4o'
+const EMBED_MODEL = 'text-embedding-3-small'
+const TRANSCRIBE_MODEL = 'whisper-1'
+
+// Provider captured once via init() — module-level singleton (no factory
+// closure), matching the rest of core. Null until configured; methods throw.
+let provider = null
 
 export async function init(options) {
-  if (!options.config?.openai?.apiKey) return
-  const { default: OpenAI } = await import('openai')
-  client = new OpenAI({ apiKey: options.config.openai.apiKey })
+  const apiKey = options.config?.openai?.apiKey
+  if (!apiKey) return
+  provider = createOpenAI({ apiKey })
 }
 
 export async function prompt(system, user) {
-  if (!client) throw new Error('OpenAI not configured')
-  const res = await client.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
+  if (!provider) throw new Error('OpenAI not configured')
+  const { text } = await generateText({
+    model: provider(CHAT_MODEL),
+    system,
+    prompt: user,
   })
-  const text = res.choices[0].message.content
   return text
 }
 
-export async function embed(texts, { model = 'text-embedding-3-small' } = {}) {
-  if (!client) throw new Error('OpenAI not configured')
+export async function embed(texts, { model = EMBED_MODEL } = {}) {
+  if (!provider) throw new Error('OpenAI not configured')
   const input = Array.isArray(texts) ? texts : [texts]
   if (!input.length) return []
-  const res = await client.embeddings.create({ model, input })
-  return res.data.map(d => d.embedding)
+  const { embeddings } = await embedMany({
+    model: provider.embedding(model),
+    values: input,
+  })
+  return embeddings
 }
 
-export async function vision(prompt, imageUrl, { detail = 'low', maxTokens = 200 } = {}) {
-  if (!client) throw new Error('OpenAI not configured')
-  const res = await client.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: maxTokens,
+export async function vision(promptText, imageUrl, { detail = 'low', maxTokens = 200 } = {}) {
+  if (!provider) throw new Error('OpenAI not configured')
+  const { text } = await generateText({
+    model: provider(CHAT_MODEL),
+    maxOutputTokens: maxTokens,
     messages: [{
       role: 'user',
       content: [
-        { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: imageUrl, detail } },
+        { type: 'text', text: promptText },
+        { type: 'image', image: imageUrl, providerOptions: { openai: { imageDetail: detail } } },
       ],
     }],
   })
-  return res.choices[0].message.content
+  return text
 }
 
+// Returns a plain string by default; for response_format === 'verbose_json'
+// returns { text, duration, segments: [{ start, end, text }] } — the same
+// shape Whisper's verbose output exposed, so consumers don't change.
 export async function transcribe(filePath, { language, prompt, response_format } = {}) {
-  if (!client) throw new Error('OpenAI not configured')
-  const { createReadStream } = await import('fs')
-  const res = await client.audio.transcriptions.create({
-    file: createReadStream(filePath),
-    model: 'whisper-1',
-    language,
-    prompt,
-    response_format,
+  if (!provider) throw new Error('OpenAI not configured')
+  const audio = await readFile(filePath)
+  const verbose = response_format === 'verbose_json'
+
+  const openaiOptions = {}
+  if (language) openaiOptions.language = language
+  if (prompt) openaiOptions.prompt = prompt
+  if (verbose) openaiOptions.timestampGranularities = ['segment']
+
+  const res = await aiTranscribe({
+    model: provider.transcription(TRANSCRIBE_MODEL),
+    audio,
+    providerOptions: { openai: openaiOptions },
   })
-  return response_format === 'verbose_json' ? res : res.text
+
+  if (!verbose) return res.text
+  return {
+    text: res.text,
+    duration: res.durationInSeconds,
+    segments: (res.segments || []).map(s => ({
+      start: s.startSecond,
+      end: s.endSecond,
+      text: s.text,
+    })),
+  }
 }
 
 export async function expand(content) {
@@ -79,6 +111,5 @@ export async function expand(content) {
     }
   }))
 
-  const expanded = content + fetched.join('')
-  return expanded
+  return content + fetched.join('')
 }
