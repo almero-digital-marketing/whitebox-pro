@@ -67,6 +67,9 @@ export default function createTextEngagements({ onRead, onProgress, options = {}
     buildPayload,
     onRead,
     onProgress,
+    // Headings and paragraphs read as independent top-to-bottom queues — a
+    // heading doesn't block the paragraph under it (or vice versa).
+    sequentialGroup: (el) => classify(el).kind,
     options: { ...cfg, idAttribute },
   })
 

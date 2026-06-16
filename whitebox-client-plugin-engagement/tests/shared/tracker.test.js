@@ -148,6 +148,31 @@ describe('tracker state machine', () => {
     tracker.stop()
   })
 
+  it('sequential mode: each group has an independent focus', async () => {
+    const onRead = vi.fn()
+    const tracker = createTracker({
+      gates: [{ isOpen: () => true }],
+      requiredMs: () => 60,
+      buildPayload: (el, s) => ({ text: el.textContent, partial: s.partial }),
+      onRead,
+      sequentialGroup: (el) => el.tagName,   // <p> queue independent of <h2> queue
+      options: { tickMs: 20, minPartialRatio: 0.5, sequential: true },
+    })
+    tracker.start()
+    document.body.innerHTML = `<p>p1</p><h2>h1</h2><p>p2</p><h2>h2</h2>`
+    const els = [...document.body.children]
+    els.forEach(e => tracker.observe(e))
+    els.forEach(e => FakeIO.last.trigger(e, 1.0))
+    // The first element of EACH group reads in parallel (p1 + the first h2).
+    await new Promise(r => setTimeout(r, 100))
+    expect(onRead).toHaveBeenCalledTimes(2)
+    expect(onRead.mock.calls.map(c => c[0].text).sort()).toEqual(['h1', 'p1'])
+    // Then each group advances to its next element.
+    await new Promise(r => setTimeout(r, 100))
+    expect(onRead).toHaveBeenCalledTimes(4)
+    tracker.stop()
+  })
+
   it('fires at most once per element', async () => {
     const onRead = vi.fn()
     const tracker = makeTracker({ onRead })

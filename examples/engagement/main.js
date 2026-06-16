@@ -129,16 +129,13 @@ const wb = whitebox({
       // Reading band widened from the default -20% to -10% (central 80% of the
       // viewport rather than 60%).
       text: {
-        sequential: true,        // read top-to-bottom: only the topmost visible block
-                                 // accumulates; focus advances when it's read (default for text)
-        cps: 25,                 // ~chars/sec reading speed; lower = longer dwell to count as read
-        minRequiredMs: 1500,     // floor: even a short line needs ~1.5s
-        capRequiredMs: 60_000,   // ceiling: length scales dwell up to 60s, then caps
-        // Accumulate over the block's whole time on screen, not a narrow central
-        // band — otherwise a long block (10–13s at cps 25) scrolls out before it
-        // ever completes, and since text is sequential nothing downstream fires.
-        rootMargin: '0px',       // full viewport
-        minRatio: 0.35,          // focus holds a block until it's mostly scrolled off
+        sequential: true,                // read top-to-bottom: only the topmost visible block
+                                         // accumulates; headings + paragraphs are separate queues
+        cps: 25,                         // ~chars/sec reading speed; lower = longer dwell to count as read
+        minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
+        capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
+        rootMargin: '-20% 0% -20% 0%',   // reading band = central 60% of viewport
+        minRatio: 0.35,                  // forgiving — focus holds a block until it's mostly off-band
       },
       // images: ~3s of viewport dwell (SDK default)
     }),

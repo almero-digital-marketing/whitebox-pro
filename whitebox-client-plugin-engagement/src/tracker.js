@@ -13,6 +13,8 @@
 //   - sequential (opt-in): only the topmost visible, not-yet-read element
 //     accumulates — modelling top-to-bottom reading. When it fires (or scrolls
 //     out of view), focus advances to the next element down. Used for text.
+//     With a sequentialGroup(el) key, each group gets its own independent focus
+//     (e.g. headings and paragraphs read as separate top-to-bottom queues).
 //
 // Domain specifics (text vs image vs …) come from injected hooks:
 //   - requiredMs(el)            — how much time defines "read"
@@ -35,6 +37,7 @@ export default function createTracker({
   buildPayload,
   onRead,
   onProgress,
+  sequentialGroup,
   options = {},
 } = {}) {
   if (typeof requiredMs !== 'function') throw new Error('tracker: requiredMs(el) is required')
@@ -109,18 +112,23 @@ export default function createTracker({
     })
   }
 
-  // The topmost (highest on screen) visible, not-yet-fired element. Ties — and
-  // the layout-less test environment, where every rect is 0 — fall back to
-  // observe order, which is DOM order.
+  // The set of elements that should be accumulating in sequential mode: the
+  // topmost (highest on screen) visible, not-yet-fired element in each group.
+  // Without a sequentialGroup key everything shares one group → a single focus.
+  // Ties — and the layout-less test environment, where every rect is 0 — fall
+  // back to observe order, which is DOM order.
   function pickFocus() {
-    let focus = null
-    let topY = Infinity
+    const best = new Map()   // groupKey -> { s, top }
     for (const el of observed) {
       const s = states.get(el)
       if (!s || s.fired || !s.visible) continue
-      const y = el.getBoundingClientRect().top
-      if (y < topY) { topY = y; focus = s }
+      const key = sequentialGroup ? sequentialGroup(el) : ''
+      const top = el.getBoundingClientRect().top
+      const cur = best.get(key)
+      if (!cur || top < cur.top) best.set(key, { s, top })
     }
+    const focus = new Set()
+    for (const { s } of best.values()) focus.add(s)
     return focus
   }
 
@@ -132,7 +140,7 @@ export default function createTracker({
       for (const el of observed) {
         const s = states.get(el)
         if (!s || s.fired) continue
-        setReading(s, s === focus)
+        setReading(s, !!focus && focus.has(s))
       }
     } else {
       for (const el of observed) {
