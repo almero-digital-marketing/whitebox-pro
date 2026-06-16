@@ -173,6 +173,32 @@ describe('tracker state machine', () => {
     tracker.stop()
   })
 
+  it('sequential mode: a block scrolled off the top releases focus to one on screen', async () => {
+    const onRead = vi.fn()
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+    const tracker = createTracker({
+      gates: [{ isOpen: () => true }],
+      requiredMs: () => 10_000,   // long, so nothing fires — we inspect which block accumulates
+      buildPayload: (el, s) => ({ text: el.textContent, partial: s.partial }),
+      onRead,
+      options: { tickMs: 20, sequential: true, readingLineRatio: 0.25 },   // lineY = 200
+    })
+    tracker.start()
+    document.body.innerHTML = `<p>A</p><p>B</p>`
+    const [a, b] = document.body.children
+    // A is scrolled off the top (top<0) with its bottom above the reading line → released.
+    a.getBoundingClientRect = () => ({ top: -250, bottom: 120, height: 370 })
+    // B is on screen below.
+    b.getBoundingClientRect = () => ({ top: 260, bottom: 560, height: 300 })
+    tracker.observe(a); tracker.observe(b)
+    FakeIO.last.trigger(a, 1.0)
+    FakeIO.last.trigger(b, 1.0)
+    await new Promise(r => setTimeout(r, 60))
+    expect([...tracker._active]).toContain(b)      // B accumulates
+    expect([...tracker._active]).not.toContain(a)  // A released, not blocking
+    tracker.stop()
+  })
+
   it('fires at most once per element', async () => {
     const onRead = vi.fn()
     const tracker = makeTracker({ onRead })

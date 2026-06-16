@@ -141,6 +141,9 @@ const wb = whitebox({
         // scrolled up into the top 75% of the viewport (genuinely readable).
         rootMargin: '0% 0% -25% 0%',
         minRatio: 0.35,                  // forgiving — focus holds a block until it's mostly off-band
+        // A block scrolled off the top releases focus once its bottom passes above
+        // the top 25% of the viewport, so it stops blocking blocks still on screen.
+        readingLineRatio: 0.25,
       },
       // images: ~3s of viewport dwell (SDK default)
     }),

@@ -15,6 +15,9 @@
 //     out of view), focus advances to the next element down. Used for text.
 //     With a sequentialGroup(el) key, each group gets its own independent focus
 //     (e.g. headings and paragraphs read as separate top-to-bottom queues).
+//     A block that scrolls off the top releases focus once its bottom edge
+//     rises above readingLineRatio of the viewport — so a block you've scrolled
+//     past doesn't keep blocking blocks still on screen below it.
 //
 // Domain specifics (text vs image vs …) come from injected hooks:
 //   - requiredMs(el)            — how much time defines "read"
@@ -29,6 +32,7 @@ const DEFAULT_OPTS = {
   tickMs: 250,
   minPartialRatio: 0.5,
   sequential: false,
+  readingLineRatio: 0,   // sequential: release a block scrolled off the top once its bottom rises above this fraction of the viewport (0 = off)
 }
 
 export default function createTracker({
@@ -118,14 +122,20 @@ export default function createTracker({
   // Ties — and the layout-less test environment, where every rect is 0 — fall
   // back to observe order, which is DOM order.
   function pickFocus() {
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0
+    const lineY = cfg.readingLineRatio > 0 ? cfg.readingLineRatio * vh : 0
     const best = new Map()   // groupKey -> { s, top }
     for (const el of observed) {
       const s = states.get(el)
       if (!s || s.fired || !s.visible) continue
+      const rect = el.getBoundingClientRect()
+      // Release a block that has scrolled off the top: once its top edge is
+      // above the viewport and its bottom has risen above the reading line,
+      // you've read past it — don't let it block blocks still on screen below.
+      if (lineY > 0 && rect.top < 0 && rect.bottom <= lineY) continue
       const key = sequentialGroup ? sequentialGroup(el) : ''
-      const top = el.getBoundingClientRect().top
       const cur = best.get(key)
-      if (!cur || top < cur.top) best.set(key, { s, top })
+      if (!cur || rect.top < cur.top) best.set(key, { s, top: rect.top })
     }
     const focus = new Set()
     for (const { s } of best.values()) focus.add(s)
