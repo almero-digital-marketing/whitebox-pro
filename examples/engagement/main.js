@@ -74,6 +74,7 @@ const wb = whitebox({
       text: {
         cps: 25,                         // ~chars/sec reading speed; lower = longer dwell to count as read
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
+        capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
         rootMargin: '-10% 0% -10% 0%',   // reading band = central 80% of viewport
       },
       // images: ~3s of viewport dwell (SDK default)
