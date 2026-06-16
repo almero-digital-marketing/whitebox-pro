@@ -134,7 +134,10 @@ const wb = whitebox({
         cps: 40,                         // ~chars/sec reading speed; lower = longer dwell to count as read
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
         capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
-        rootMargin: '-20% 0% -20% 0%',   // reading band = central 60% of viewport
+        // Reading band: top 20%, bottom 25%. The larger bottom margin keeps an
+        // entity entering from below the fold from grabbing focus until it has
+        // scrolled up into the top 75% of the viewport (genuinely readable).
+        rootMargin: '-20% 0% -25% 0%',
         minRatio: 0.35,                  // forgiving — focus holds a block until it's mostly off-band
       },
       // images: ~3s of viewport dwell (SDK default)
