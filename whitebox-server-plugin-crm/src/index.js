@@ -5,7 +5,7 @@ import createAuth from 'whitebox-server/auth'
 import * as records from './records.js'
 import * as ingest from './ingest.js'
 
-import { mountRoutes } from './routes.js'
+import { mountRoutes, observeSchema } from './routes.js'
 import { registerMcp } from './mcp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -21,7 +21,7 @@ export default {
   },
 
   async register(app, ctx) {
-    const { config, db, passports, awareness, context, logger: rootLogger } = ctx
+    const { config, db, connect, passports, awareness, context, logger: rootLogger } = ctx
     const logger = rootLogger.child({ plugin: 'crm' })
     const crmConfig = config.crm || {}
 
@@ -35,6 +35,19 @@ export default {
 
     mountRoutes(app, { requireAuth, records, ingest, logger })
     registerMcp(ctx, { records, ingest })
+
+    // Client-reported observations arrive over the socket (whitebox-client-plugin-crm).
+    // Identity is the connection's passport — the trusted, handshake-bound one —
+    // so the client can't report for someone else over the socket.
+    connect?.onMessage(async ({ connectionId, event, data }) => {
+      if (event !== 'crm.observe') return
+      const visitor = connect.find(connectionId)
+      if (!visitor?.passportId) return
+      const parsed = observeSchema.safeParse(data)
+      if (!parsed.success) { logger.warn({ err: parsed.error }, 'crm.observe validation failed'); return }
+      await ingest.ingestObservations({ passport_id: visitor.passportId, observations: parsed.data.observations })
+        .catch(err => logger.warn({ err }, 'crm.observe ingest failed'))
+    })
 
     // CRM records flow into analytics' `/ask` via the generic context registry.
     // Facts already live in awareness so they're surfaced through awareness.recall;
