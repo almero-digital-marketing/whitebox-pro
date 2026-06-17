@@ -71,9 +71,12 @@ function card({ kind, title, answer, stat, evidence, evidenceLabel = 'evidence',
     for (const h of evidence) {
       const e = document.createElement('div'); e.className = 'ev'
       const when = h.ts ? `[${new Date(h.ts).toISOString().slice(0, 16).replace('T', ' ')}] ` : ''
-      // population/cohort items carry a customer reach count; per-passport recall doesn't.
+      const src = h.source ? `/${h.source}` : ''
+      // population/cohort items carry a customer reach count; per-passport recall carries similarity.
       const seen = h.passport_count != null ? ` · ${h.passport_count} customer${h.passport_count === 1 ? '' : 's'}` : ''
-      e.innerHTML = `<div class="meta">${when}${h.channel || '?'}/${h.direction || '?'}${seen}</div>`
+      const sim = (h.passport_count == null && h.similarity != null) ? ` · sim ${Number(h.similarity).toFixed(2)}` : ''
+      const depth = h.depth ? ` · ${h.depth}` : ''
+      e.innerHTML = `<div class="meta">${when}${h.channel || '?'}/${h.direction || '?'}${src}${seen}${sim}${depth}</div>`
       e.appendChild(document.createTextNode(h.chunk_text || ''))
       d.appendChild(e)
     }
@@ -142,16 +145,36 @@ async function askPopulation(question) {
   } catch (e) { pending.remove(); card({ kind: 'error', title: `${question} — ${e.message}`, error: true }) }
 }
 
-// Per-passport inspect tools — need a passport id.
+// Per-passport inspect tools — need a passport id. Each renders a legible view
+// (one row per item, newest/most-relevant first) with the raw JSON collapsed.
 async function tool(name) {
   const ctx = need(); if (!ctx) return
   try {
-    let json, title = name
-    if (name === 'timeline') json = await authed(`/analytics/timeline/${encodeURIComponent(ctx.passport_id)}`, {}, ctx.token)
-    else if (name === 'context') json = await authed(`/analytics/context/${encodeURIComponent(ctx.passport_id)}`, {}, ctx.token)
-    else if (name === 'recall') { const query = $('#recallq').value.trim() || 'pricing'; title = `recall: "${query}"`
-      json = await authed('/analytics/recall', { method: 'POST', body: { passport_id: ctx.passport_id, query } }, ctx.token) }
-    card({ kind: name, title, json })
+    if (name === 'timeline') {
+      const rows = await authed(`/analytics/timeline/${encodeURIComponent(ctx.passport_id)}`, {}, ctx.token)
+      const events = (Array.isArray(rows) ? rows : []).map(r => ({
+        ts: r.ts, channel: r.channel, direction: r.direction, source: r.source,
+        depth: r.meta?.depth, chunk_text: r.text || r.content_id || '',
+      }))
+      card({ kind: 'timeline', title: 'timeline', stat: `${events.length} event${events.length === 1 ? '' : 's'}`,
+             evidence: events, evidenceLabel: 'events', evidenceOpen: true, raw: rows })
+      return
+    }
+    if (name === 'context') {
+      const res = await authed(`/analytics/context/${encodeURIComponent(ctx.passport_id)}`, {}, ctx.token)
+      const blob = res.context || {}
+      const summary = Object.entries(blob).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.length : 1}`).join(' · ')
+      card({ kind: 'context', title: 'context (CRM state)', stat: summary || 'no context providers', context: blob, raw: res })
+      return
+    }
+    if (name === 'recall') {
+      const query = $('#recallq').value.trim() || 'teeth whitening'
+      const res = await authed('/analytics/recall', { method: 'POST', body: { passport_id: ctx.passport_id, query } }, ctx.token)
+      const hits = res.hits || []
+      card({ kind: 'recall', title: `recall: "${query}"`, stat: `${hits.length} hit${hits.length === 1 ? '' : 's'}`,
+             evidence: hits, evidenceLabel: 'hits', evidenceOpen: true, raw: res })
+      return
+    }
   } catch (e) { card({ kind: 'error', title: `${name} — ${e.message}`, error: true }) }
 }
 
