@@ -1,6 +1,6 @@
 # TikTok
 
-Adapter: [`src/adapters/tiktok.js`](../../src/adapters/tiktok.js) — **Mode A** via the Events API.
+Adapter: [`src/adapters/tiktok.js`](../../../whitebox-adnetworks/src/adapters/tiktok.js) — **Mode A** via the Events API.
 
 ## Flow
 

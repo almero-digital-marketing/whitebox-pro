@@ -22,7 +22,7 @@ import * as consent from './consent.js'
 import * as service from './service.js'
 import * as rest from './rest.js'
 import * as mcpTools from './mcp.js'
-import { buildAdapters } from './adapters/index.js'
+import { buildAdapters } from 'whitebox-adnetworks'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

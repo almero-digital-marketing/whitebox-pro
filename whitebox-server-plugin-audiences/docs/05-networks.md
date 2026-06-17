@@ -3,6 +3,11 @@
 All three networks use **Mode A**: WhiteBox fires a custom event, the platform builds the audience.
 Each network is an **adapter** — data plus one method.
 
+> The adapters live in the shared **[`whitebox-adnetworks`](../../../whitebox-adnetworks)** package, not
+> in this plugin — they're the ad-network *transport*, reused by `analytics` to report standard
+> conversion events (`purchase`, `lead`, …). This plugin just fires **custom** events through them.
+> See that package's README for the contract + standard-event taxonomy.
+
 ## The adapter contract
 
 ```js
@@ -21,11 +26,13 @@ Each network is an **adapter** — data plus one method.
   collection manifest. See [06 · Identity](06-identity.md).
 - **`acceptedKeys`** is consumed server-side at send time — the core resolves a passport's identity and
   the adapter picks the subset it can use.
-- **`sendEvent`** receives a `canonical` event `{ event, event_id, ts, value? }` and the resolved
+- **`sendEvent`** receives a `canonical` event — `{ event, … }` for a custom event (audiences) or
+  `{ standard: 'purchase', value, currency, … }` for a standard event (analytics) — and the resolved
   `ids` `{ email_sha256, phone_sha256, external_id, signals, ip?, user_agent? }`.
 
-Add a network = add an adapter factory in [`src/adapters/`](../src/adapters), register it in
-`adapters/index.js`, and write a `docs/networks/<net>.md`.
+Add a network = add an adapter factory in
+[`whitebox-adnetworks/src/adapters/`](../../../whitebox-adnetworks/src/adapters), register it there,
+and write a `docs/networks/<net>.md`.
 
 ## Eligibility
 

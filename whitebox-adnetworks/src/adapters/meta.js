@@ -1,5 +1,8 @@
-// Meta adapter — Mode A: fire a Conversions API custom event; you build a
-// Custom Audience from that event in Ads Manager. See docs/networks/meta.md.
+// Meta adapter — Conversions API. Fires custom events (audiences) or standard
+// events (analytics, mapped via the taxonomy). Mode A.
+
+import { resolveEventName } from '../taxonomy.js'
+import { pick } from '../identity.js'
 
 const GRAPH = 'https://graph.facebook.com/v19.0'
 
@@ -9,15 +12,13 @@ export function createMeta(cfg, { logger } = {}) {
     name: 'meta',
     modes: ['event'],
     eligible,
-    // browser signals the client capture shim must collect for Meta
     identitySpec: [
       { key: 'fbp', from: 'cookie', name: '_fbp' },
       { key: 'fbc', from: 'cookie', name: '_fbc', fallback: { from: 'url', name: 'fbclid', transform: 'build_fbc' } },
     ],
-    // which keys we send (server resolves hashed PII + IP/UA itself)
     acceptedKeys: ['email', 'phone', 'fbp', 'fbc', 'external_id', 'client_ip_address', 'client_user_agent'],
 
-    // canonical: { event, event_id, ts, value? }  ids: resolved identity (hashed + signals)
+    // canonical: { event | standard, event_id, ts, value?, currency?, content_ids? }
     async sendEvent(canonical, ids) {
       if (!eligible) return { status: 'error', error: 'meta not configured' }
       const user_data = pick({
@@ -25,14 +26,18 @@ export function createMeta(cfg, { logger } = {}) {
         fbp: ids.signals?.fbp, fbc: ids.signals?.fbc,
         client_ip_address: ids.ip, client_user_agent: ids.user_agent,
       })
+      const custom_data = pick({
+        value: canonical.value, currency: canonical.currency,
+        content_ids: canonical.content_ids, num_items: canonical.num_items,
+      })
       const body = {
         data: [{
-          event_name: canonical.event,
+          event_name: resolveEventName(canonical, 'meta'),
           event_time: Math.floor(new Date(canonical.ts).getTime() / 1000),
-          event_id: canonical.event_id,           // dedup with the browser pixel
+          event_id: canonical.event_id,
           action_source: 'website',
           user_data,
-          ...(canonical.value != null ? { custom_data: { value: canonical.value } } : {}),
+          ...(Object.keys(custom_data).length ? { custom_data } : {}),
         }],
         ...(cfg.testEventCode ? { test_event_code: cfg.testEventCode } : {}),
       }
@@ -45,5 +50,3 @@ export function createMeta(cfg, { logger } = {}) {
     },
   }
 }
-
-const pick = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== ''))
