@@ -1,17 +1,17 @@
-# SaaS integration demo
+# Dental clinic integration demo
 
-A pretend SaaS app (**Acme Cloud**) that integrates the **whole WhiteBox client surface** in one page. This is the kitchen-sink example — as new client plugins ship, they get wired in here.
+A pretend dental clinic site (**Brightsmile Dental**) that integrates the **whole WhiteBox client surface** in one page. This is the kitchen-sink example — as new client plugins ship, they get wired in here.
 
 What it exercises today:
 
 | surface | in the demo |
 |---|---|
 | **core** | session/passport resolution, socket transport, `consent` | header pills + the consent banner |
-| **`whitebox-client-plugin-engagement`** | reading / image-dwell tracking | the marketing/pricing copy at the top |
-| **`whitebox-client-plugin-crm`** | client observations of in-app usage | the "Simulate product usage" buttons |
-| **`whitebox-client-plugin-voip`** | per-visitor call-tracking number (DNI) | the "Talk to sales" card + request form |
+| **`whitebox-client-plugin-engagement`** | reading / image-dwell tracking | the service copy: pricing/insurance, cosmetic/whitening, orthodontics/Invisalign, implants/restorative |
+| **`whitebox-client-plugin-crm`** | client observations of patient-portal actions | the "Simulate patient actions" buttons (registration, appointment, insurance, whitening, treatment plans, payment plans, emergency, referral, accept treatment) |
+| **`whitebox-client-plugin-voip`** | per-visitor call-tracking number (DNI) | the "Call the clinic" card + callback form |
 
-One passport, one timeline — marketing reads and in-app product events land in the **same per-customer memory**.
+One passport, one timeline — website reads and patient-portal actions land in the **same per-patient memory**.
 
 ## Prerequisites
 
@@ -31,17 +31,30 @@ One passport, one timeline — marketing reads and in-app product events land in
 
 ```bash
 cd examples/integration
-node serve.mjs            # starts whitebox-server too, then serves on :5173
+node serve.mjs            # starts whitebox-server too, then serves on :5273
 ```
 
 `serve.mjs` starts the server for you (logs prefixed `[server]`), bundles `main.js` with esbuild, and proxies API + WebSocket same-origin. Open the URL it prints.
 
 ## Try it
 
-1. **Read** the pricing copy — scroll and pause; paragraphs get a green marker and a `text`/`image` row appears in the live panel (engagement).
+1. **Read** the service copy — scroll and pause; paragraphs get a green marker and a `text`/`image` row appears in the live panel (engagement).
 2. **Accept** the consent banner — grants `analytics` + `marketing`.
-3. **Click the product buttons** — each fires `wb.crm.observe(...)` (a `crm` row). Before consent they're dropped with a warning; after, they send. These are **low-trust observations** tagged `source:'client'`, not authoritative state.
+3. **Click the patient-portal buttons** — each fires `wb.crm.observe(...)` (a `crm` row). Before consent they're dropped with a warning; after, they send. These are **low-trust observations** tagged `source:'client'`, not authoritative state.
 4. Click a log row to expand its full payload.
+
+## Seed a whole customer base
+
+One browser session is one passport — so the [console](../console)'s **All customers** / cohort / population questions have nothing to aggregate. `seed.mjs` fixes that: it creates synthetic patients across a handful of personas (whitening-cosmetic, invisalign-ortho, implant-restorative, new-patient-checkup, emergency-pain), driving the **same ingress the browser uses** — `/sessions/resolve`, `/engagement/events`, `/crm/observe`, and a real `voip.pick → /voip/calls` for clinic-call transcripts. Everything is embedded by the running server, so semantic recall/population actually matches.
+
+```bash
+cd examples/integration
+node serve.mjs &                 # (or have whitebox-server up on :3000)
+node seed.mjs                    # ~30 patients
+COUNT=60 node seed.mjs           # more
+```
+
+Give embeddings a few seconds, then open the console's **All customers** tab and ask *"What treatments are patients most interested in?"* or run a cohort on *"teeth whitening"* / *"dental implants"*. The personas read the service copy (whitening, Invisalign, implants, pricing/insurance) and fire matching CRM observations, so cohorts and themes are real.
 
 ## Verify on the server
 
@@ -51,11 +64,11 @@ Copy the passport id (header → *copy id*), then ask a grounded question that s
 PASSPORT=<paste>
 TOKEN=<your config.analytics.auth.secret>
 curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d "{\"passport_id\":\"$PASSPORT\",\"question\":\"What has this user read and done in the app?\"}" \
+  -d "{\"passport_id\":\"$PASSPORT\",\"question\":\"What has this patient read and done on the site?\"}" \
   http://localhost:3000/analytics/ask | jq
 ```
 
-The answer should weave together what they **read** on the marketing page (exposures) and what they **did** in the app (client observations).
+The answer should weave together what they **read** on the clinic website (exposures) and what they **did** in the patient portal (client observations).
 
 ## Adding a plugin later
 

@@ -52,6 +52,8 @@ Open the page, then **scroll slowly**, let your cursor rest on the images, and *
 Tracked reads appear in the live-events panel on the right as soon as the dwell threshold is crossed.
 Reads still in progress when you leave are flushed via `sendBeacon` on unload.
 
+The page has two parts: a short docs section explaining what's tracked, then a **sample patient-education article** ("What actually happens during a root canal") — the kind of post a dental clinic publishes, so you can watch reading depth accumulate on prose people actually read. It also shows the tracker working across more block types: headings, paragraphs, a **pull-quote**, a **bulleted list**, and two images, each tracked as its own block.
+
 ## Verify it landed on the server
 
 The header shows the **passport id** (click *copy id*). Query that customer's timeline — the reads

@@ -1,7 +1,8 @@
-// Acme Cloud — a SaaS app integrating the whole WhiteBox client surface:
+// Brightsmile Dental — a dental clinic site integrating the whole WhiteBox
+// client surface:
 //   • core        — session/passport resolution, transport, consent
-//   • engagement  — reading / image-dwell tracking on the marketing page
-//   • crm         — client observations of in-app product usage
+//   • engagement  — reading / image-dwell tracking on the clinic website
+//   • crm         — client observations of patient-portal actions
 //   • voip        — per-visitor call-tracking number (dynamic number insertion)
 //
 // Bundled by serve.mjs (esbuild) from the workspace packages. Add a new client
@@ -108,7 +109,7 @@ document.querySelector('#sim-call')?.addEventListener('click', async () => {
   const link = document.querySelector('[data-wb-phone]')
   const number = link?.getAttribute('data-wb-phone-assigned')
   if (!number) { log('warn', 'reveal the sales number first (scroll the "Talk to sales" card into view)'); return }
-  const transcription = 'Customer: Hi, I read your pricing page and want to ask about the Team plan and the refund policy.\nAgent: Happy to help — Team is usage-based, and refunds are prorated to the day.'
+  const transcription = 'Patient: Hi, I read about teeth whitening on your site and wanted to ask the price and whether you take my insurance.\nReceptionist: Happy to help — whitening is about an hour, we file most insurance, and we offer monthly payment plans.'
   try {
     const r = await fetch('/voip/calls', {
       method: 'POST', headers: { 'content-type': 'application/json' },
