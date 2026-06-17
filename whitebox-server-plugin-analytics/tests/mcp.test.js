@@ -86,7 +86,7 @@ describe('analytics plugin — MCP registration', () => {
     const result = await mcp.tools.get('whitebox.recall').handler({
       passport_id: PID, query: 'pricing', limit: 5,
     })
-    expect(deps.awareness.recall).toHaveBeenCalledWith({ passport_id: PID, query: 'pricing', limit: 5 })
+    expect(deps.awareness.recall).toHaveBeenCalledWith({ passport_id: PID, query: 'pricing', limit: 5, min_similarity: 0 })
     const out = JSON.parse(result.content[0].text)
     expect(out[0].chunk_text).toBe('pricing tier')
   })

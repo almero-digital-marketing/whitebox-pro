@@ -95,6 +95,7 @@ describe('analytics.recall', () => {
       query: 'pricing',
       limit: 6,    // page limit 5 + 1 extra row to detect has_more
       offset: 0,
+      min_similarity: 0,
     })
   })
 

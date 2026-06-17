@@ -171,7 +171,9 @@ async function tool(name) {
     }
     if (name === 'recall') {
       const query = $('#recallq').value.trim() || 'teeth whitening'
-      const res = await authed('/analytics/recall', { method: 'POST', body: { passport_id: ctx.passport_id, query } }, ctx.token)
+      // min_similarity floors out off-topic chunks (in a single-domain corpus
+      // everything scores ~0.4, so without a floor recall returns weak matches).
+      const res = await authed('/analytics/recall', { method: 'POST', body: { passport_id: ctx.passport_id, query, min_similarity: 0.45 } }, ctx.token)
       const hits = res.data || []
       const more = res.has_more ? ' +more' : ''
       card({ kind: 'recall', title: `recall: "${query}"`, stat: `${hits.length} hit${hits.length === 1 ? '' : 's'}${more}`,

@@ -46,12 +46,13 @@ export function registerMcp(ctx, { awareness, context }) {
     name: 'whitebox.recall',
     description: 'Per-passport semantic search. Returns the top-K content chunks (mail bodies, web reads, call transcripts, CRM notes) most relevant to a query, ranked by vector similarity. Each hit includes channel, direction, timestamp, and UTM attribution when available.',
     inputSchema: {
-      passport_id: z.string().uuid(),
-      query:       z.string().min(1),
-      limit:       z.number().int().positive().max(100).optional(),
+      passport_id:    z.string().uuid(),
+      query:          z.string().min(1),
+      limit:          z.number().int().positive().max(100).optional(),
+      min_similarity: z.number().min(0).max(1).optional(),
     },
-    handler: async ({ passport_id, query, limit = 10 }) => {
-      const hits = await awareness.recall({ passport_id, query, limit })
+    handler: async ({ passport_id, query, limit = 10, min_similarity = 0 }) => {
+      const hits = await awareness.recall({ passport_id, query, limit, min_similarity })
       return { content: [{ type: 'text', text: JSON.stringify(hits, null, 2) }] }
     },
   })

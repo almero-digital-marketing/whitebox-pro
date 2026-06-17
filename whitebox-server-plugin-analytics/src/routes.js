@@ -10,10 +10,11 @@ import { createAskHandler, createAskPopulationHandler } from './ask.js'
 // limit/offset are parsed by the shared pagination helper; the schemas just bound
 // them so a bad value 400s rather than silently clamping.
 const recallSchema = z.object({
-  passport_id: z.string().uuid(),
-  query:       z.string().min(1),
-  limit:       z.number().int().positive().max(100).optional(),
-  offset:      z.number().int().nonnegative().optional(),
+  passport_id:    z.string().uuid(),
+  query:          z.string().min(1),
+  limit:          z.number().int().positive().max(100).optional(),
+  offset:         z.number().int().nonnegative().optional(),
+  min_similarity: z.number().min(0).max(1).optional(),   // relevance floor (0 = off)
 })
 
 const populationSchema = z.object({
@@ -33,7 +34,10 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     try {
       const { limit, offset } = parsePage(parsed.data, { defaultLimit: 10, maxLimit: 100 })
       // fetch one extra so the envelope knows there's a next page (no COUNT query)
-      const hits = await awareness.recall({ passport_id: parsed.data.passport_id, query: parsed.data.query, limit: limit + 1, offset })
+      const hits = await awareness.recall({
+        passport_id: parsed.data.passport_id, query: parsed.data.query,
+        limit: limit + 1, offset, min_similarity: parsed.data.min_similarity ?? 0,
+      })
       res.json(page(hits, { limit, offset }))
     } catch (err) {
       logger.error({ err }, 'recall failed')

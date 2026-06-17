@@ -38,6 +38,7 @@ describe('awareness.query', () => {
       embedding: [0.1, 0.2, 0.3],
       limit: 5,
       offset: 0,
+      minSimilarity: 0,
     })
     expect(hits).toHaveLength(1)
   })

@@ -157,6 +157,8 @@ Response:
 
 Paginated (`limit` ≤100, default 10). Embeds the query, vector-searches chunks scoped to that passport, and returns top matches ranked by relevance **blended with reading depth** — a deeply-read paragraph outranks a skimmed heading of similar relevance (a heading that *is* the query phrase can score the highest raw similarity yet rank below the paragraph the customer actually read). Each hit carries `engagement` (0–1 depth weight) and `depth` (`glance`/`read`/`deep`); non-text exposures (mail/voip/crm) have no depth signal and use `engagement = 1`.
 
+Pass **`min_similarity`** (0–1, default 0 = off) to apply a relevance **floor** *before* the depth blend — chunks below it are dropped rather than returned as weak "best of a bad lot" matches. Without it, a single-domain corpus returns off-topic results (every dental paragraph scores ~0.4 against any dental query); a floor of ~0.45 keeps only genuinely on-topic content. The console's `Recall` defaults to `0.45`.
+
 ### `POST /analytics/population` — cohort awareness
 
 > "How many users know about X?"

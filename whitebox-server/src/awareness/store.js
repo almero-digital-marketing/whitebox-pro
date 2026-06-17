@@ -98,12 +98,13 @@ export async function gcOrphanChunks() {
 // exposure first (DISTINCT ON), so every chunk appears exactly once, carrying
 // the metadata of the latest time the passport saw it. Ordering is then a pure
 // vector-distance sort over the (small, per-passport) chunk set.
-export async function recallChunks({ passport_id, embedding, limit = 10, offset = 0 }) {
+export async function recallChunks({ passport_id, embedding, limit = 10, offset = 0, minSimilarity = 0 }) {
   const v = toVectorLiteral(embedding)
-  // Rank blends relevance with engagement depth: a deeply-read paragraph outranks
-  // a skimmed heading of similar relevance. engagement is the per-exposure depth
-  // weight (text reads only); non-text exposures coalesce to 1.0 (full). The
-  // multiplier floors at 0.4 so a glance is demoted, not erased.
+  // minSimilarity is a relevance FLOOR applied in WHERE — before the ranking blend
+  // — so genuinely off-topic chunks are dropped rather than returned as weak
+  // "best of a bad lot" matches. The blend then orders only the survivors: a
+  // deeply-read paragraph outranks a skimmed heading of similar relevance
+  // (engagement is the per-exposure depth weight; non-text exposures coalesce to 1).
   const result = await db.raw(
       `SELECT
          c.id, c.content_hash, c.chunk_text,
@@ -121,9 +122,10 @@ export async function recallChunks({ passport_id, embedding, limit = 10, offset 
          ORDER BY content_hash, ts DESC
        ) e ON e.content_hash = c.content_hash
        LEFT JOIN ${SESSIONS} s ON s.id = e.session_id
+       WHERE (1 - (c.embedding <=> ?::vector)) >= ?::float
        ORDER BY (1 - (c.embedding <=> ?::vector)) * (0.4 + 0.6 * COALESCE((e.meta->>'engagement')::float, 1)) DESC
        LIMIT ? OFFSET ?`,
-    [v, passport_id, v, limit, offset]
+    [v, passport_id, v, minSimilarity, v, limit, offset]
   )
   return result.rows ?? result
 }
