@@ -34,7 +34,7 @@ export default {
     // Resolve relative to the server's working dir (like `context` below), with a
     // local default — so recordings land under the running server, not an absolute
     // path like /var that may not be writable. An absolute config value is kept as-is.
-    const recordsFolder = path.resolve(process.cwd(), voipConfig.recordsFolder || 'var/voip/records')
+    const recordsFolder = path.resolve(process.cwd(), voipConfig.recordsFolder || 'recordings')
     voipConfig.recordsFolder = recordsFolder   // normalize once so encoder/speech/ari read the resolved path too
 
     // Best-effort: recordings only exist with a PBX, so don't let a non-writable
