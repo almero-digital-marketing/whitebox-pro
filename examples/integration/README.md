@@ -29,7 +29,7 @@ One passport, one timeline — marketing reads and in-app product events land in
 ## Run — one command
 
 ```bash
-cd examples/saas
+cd examples/integration
 node serve.mjs            # starts whitebox-server too, then serves on :5173
 ```
 
