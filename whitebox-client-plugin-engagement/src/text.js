@@ -6,12 +6,16 @@ import createOrchestrator from 'whitebox-client/orchestrator'
 import createTracker from './tracker.js'
 import createActivity from 'whitebox-client/activity'
 import createVelocity from './velocity.js'
+import createPointer from './pointer.js'
 import {
   DEFAULT_TEXT_SELECTOR,
   DEFAULT_TEXT_EXCLUDE,
   DEFAULT_TEXT_ID_ATTR,
   buildScannerHooks,
 } from './scanner.js'
+
+const isCoarsePointer = () =>
+  typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
 const HEADING_LEVEL = { h1: 1, h2: 2, h3: 3, h4: 4, h5: 5, h6: 6 }
 
@@ -57,10 +61,23 @@ export default function createTextEngagements({ onRead, onProgress, options = {}
     }
   }
 
-  const activity = createActivity({ idleAfterMs: options.idleAfterMs })
+  // On touch devices the page is the only thing on screen, so input-idle isn't a
+  // disengagement signal — visibility (app-switch / lock) is. Default the idle
+  // gate off there; an explicit idleAfterMs still wins.
+  const idleAfterMs = options.idleAfterMs !== undefined
+    ? options.idleAfterMs
+    : (isCoarsePointer() ? Infinity : undefined)
+  const activity = createActivity({ idleAfterMs })
   const velocity = createVelocity({
     maxVelocity: options.scrollVelocityMax,   // fixed fallback / default
     quietMs: options.scrollQuietMs,
+  })
+
+  // Pointer attention (desktop): the paragraph the mouse rests on takes focus.
+  // Inert on touch (no hover); disable with pointerAttention: false.
+  const pointer = options.pointerAttention === false ? null : createPointer({
+    dwellMs: options.pointerDwellMs,
+    selector: options.selector ?? DEFAULT_TEXT_SELECTOR,
   })
 
   // Per-element scroll-velocity threshold, scaled by the element's font size —
@@ -94,6 +111,7 @@ export default function createTextEngagements({ onRead, onProgress, options = {}
     // Headings and paragraphs read as independent top-to-bottom queues — a
     // heading doesn't block the paragraph under it (or vice versa).
     sequentialGroup: (el) => classify(el).kind,
+    attendedElement: pointer ? pointer.attended : undefined,
     options: { ...cfg, idAttribute },
   })
 
@@ -102,8 +120,8 @@ export default function createTextEngagements({ onRead, onProgress, options = {}
   const tracker = {
     observe: inner.observe,
     unobserve: inner.unobserve,
-    start: () => { activity.attach(); velocity.attach(); inner.start() },
-    stop:  () => { inner.stop(); velocity.detach(); activity.detach() },
+    start: () => { activity.attach(); velocity.attach(); pointer?.attach(); inner.start() },
+    stop:  () => { inner.stop(); pointer?.detach(); velocity.detach(); activity.detach() },
   }
 
   const scannerOptions = {

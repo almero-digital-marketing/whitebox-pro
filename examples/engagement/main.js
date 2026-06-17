@@ -110,6 +110,11 @@ addEventListener('resize', () => {
   } finally { clearTimeout(t) }
 })()
 
+// Touch devices get a different input model: no hover, momentum scrolling, and
+// (handled in the SDK) a visibility-based activity gate instead of input-idle.
+const isTouch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+log('init', isTouch ? 'touch device — mobile preset' : 'pointer device — desktop preset')
+
 const wb = whitebox({
   url: location.origin,
   logger: { debug: () => {}, warn: (...a) => log('warn', a.join(' ')), error: (...a) => log('error', a.join(' ')) },
@@ -134,23 +139,24 @@ const wb = whitebox({
         cps: 20,                         // ~chars/sec reading speed; lower = longer dwell to count as read
         minRequiredMs: 1500,             // floor: even a short line needs ~1.5s
         capRequiredMs: 60_000,           // ceiling: length scales dwell up to 60s, then caps
-        // Max scroll velocity scales (steeply) with font size: a power law fit
-        // through 16px → 0.05 and 20px → 0.5 px/ms (exp = ln10/ln1.25 ≈ 10.32).
-        // Body text is strict; headings ramp up fast (h2 ~0.75, the title is
-        // effectively unbounded) so big text counts at almost any scroll speed.
-        scrollVelocityForFontSize: (px) => 0.05 * (px / 16) ** 10.32,
-        scrollQuietMs: 100,              // resume the timer 100ms after scrolling settles (default 250)
-        // Reading band: top 0%, bottom 30%. Top 0% means a block counts from the
-        // very top of the viewport (above-the-fold content included) and stays
-        // counted until it scrolls off the top. The 30% bottom margin keeps an
-        // entity entering from below the fold from grabbing focus until it has
-        // scrolled up into the top 70% of the viewport (genuinely readable).
+        // Reading band: top 0% (above-the-fold content counts from the very top
+        // and stays counted until it scrolls off), bottom 30% (content from below
+        // the fold must rise into the top 70% before it grabs focus).
         rootMargin: '0% 0% -30% 0%',
-        minRatio: 0.35,                  // forgiving — focus holds a block until it's mostly off-band
-        // A block you've read and scrolled up releases focus once its middle passes
-        // above the top 25% of the viewport, so a block sitting at the very top
-        // stops blocking blocks still on screen below it.
+        minRatio: isTouch ? 0.30 : 0.35, // narrow mobile column → taller paragraphs
+        // A block read & scrolled up releases focus once its middle passes above
+        // the top 25%, so a block at the very top stops blocking ones below it.
         readingLineRatio: 0.25,
+        // Max scroll velocity scales with font size (power law): body text is
+        // strict, headings ramp up so big text counts at almost any scroll speed.
+        // Touch flick/momentum is far faster than a wheel, so the floor is higher
+        // and the curve gentler (PROVISIONAL — tune on a real device).
+        scrollVelocityForFontSize: isTouch
+          ? (px) => 0.15 * (px / 16) ** 8       // touch
+          : (px) => 0.05 * (px / 16) ** 10.32,  // mouse / trackpad
+        scrollQuietMs: isTouch ? 150 : 100,      // momentum settles slower than a wheel
+        // idleAfterMs: handled by the SDK — Infinity on touch (visibility-based).
+        // pointerAttention: on by default; desktop-only (inert without a hover).
       },
       // images: ~3s of viewport dwell (SDK default)
     }),

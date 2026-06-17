@@ -267,6 +267,31 @@ describe('tracker state machine', () => {
     Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
   })
 
+  it('sequential mode: pointer attention overrides reading order', async () => {
+    const onRead = vi.fn()
+    let attended = null
+    const tracker = createTracker({
+      gates: [{ isOpen: () => true }],
+      requiredMs: () => 10_000,   // long, so nothing fires — we inspect which block accumulates
+      buildPayload: (el) => ({ text: el.textContent }),
+      onRead,
+      attendedElement: () => attended,
+      options: { tickMs: 20, sequential: true },
+    })
+    tracker.start()
+    document.body.innerHTML = `<p>A</p><p>B</p>`
+    const [a, b] = document.body.children
+    tracker.observe(a); tracker.observe(b)
+    FakeIO.last.trigger(a, 1.0); FakeIO.last.trigger(b, 1.0)
+    await new Promise(r => setTimeout(r, 40))
+    expect([...tracker._active]).toContain(a)       // no pointer → topmost (A) is focus
+    attended = b                                    // mouse rests on B
+    await new Promise(r => setTimeout(r, 40))
+    expect([...tracker._active]).toContain(b)        // focus jumps to where the pointer is
+    expect([...tracker._active]).not.toContain(a)
+    tracker.stop()
+  })
+
   it('fires at most once per element', async () => {
     const onRead = vi.fn()
     const tracker = makeTracker({ onRead })

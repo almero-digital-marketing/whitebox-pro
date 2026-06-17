@@ -19,6 +19,8 @@
 //     rises above readingLineRatio of the viewport — so a block you've read and
 //     scrolled to the top doesn't keep blocking blocks still on screen below it.
 //     First-screen (above-the-fold) blocks always count.
+//   - attendedElement() (desktop): a block the mouse pointer rests on takes
+//     focus for its group, overriding reading order — that's where attention is.
 //
 // Domain specifics (text vs image vs …) come from injected hooks:
 //   - requiredMs(el)            — how much time defines "read"
@@ -44,6 +46,7 @@ export default function createTracker({
   onRead,
   onProgress,
   sequentialGroup,
+  attendedElement,
   options = {},
 } = {}) {
   if (typeof requiredMs !== 'function') throw new Error('tracker: requiredMs(el) is required')
@@ -161,6 +164,17 @@ export default function createTracker({
       const key = sequentialGroup ? sequentialGroup(el) : ''
       const cur = best.get(key)
       if (!cur || rect.top < cur.top) best.set(key, { s, top: rect.top })
+    }
+    // Pointer attention (desktop): a tracked element the mouse has rested on is
+    // most likely what's being read, so it takes focus for its group regardless
+    // of reading order. Null on touch / when the pointer isn't lingering.
+    if (attendedElement) {
+      const att = attendedElement()
+      const s = att && states.get(att)
+      if (s && !s.fired) {
+        const key = sequentialGroup ? sequentialGroup(att) : ''
+        best.set(key, { s, top: att.getBoundingClientRect().top })
+      }
     }
     const focus = new Set()
     for (const { s } of best.values()) focus.add(s)
