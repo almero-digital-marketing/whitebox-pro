@@ -21,6 +21,8 @@
   .eyebrow { text-transform:uppercase; letter-spacing:.08em; font-size:.72rem; color:var(--mut); font-weight:700; }
   h1 { font-size:2rem; margin:.3rem 0 1rem; } h2 { font-size:1.3rem; margin:0 0 .6rem; }
   p { margin:0 0 1rem; } .hint { color:var(--mut); font-size:.9rem; }
+  .cta { display:inline-block; color:var(--brand); font-weight:600; text-decoration:none; }
+  .cta:hover { text-decoration:underline; }
   img { width:100%; border-radius:10px; border:1px solid var(--line); display:block; margin:1.2rem 0; }
   [data-wb-read="1"] { box-shadow:-3px 0 0 0 var(--accent); padding-left:.6rem; margin-left:-.6rem; transition:box-shadow .2s; }
   .card { border:1px solid var(--line); border-radius:12px; padding:1.1rem 1.2rem; background:#fff; }
@@ -86,6 +88,8 @@
       <h2 data-wb-text="h-cosmetic">A brighter smile, on your timeline</h2>
       <p data-wb-text="cos-1">Professional teeth whitening lifts years of coffee and wine staining in about an hour, with take-home trays to keep it bright. It's our most-requested treatment and the most common reason new patients call.</p>
       <p data-wb-text="cos-2">For chips, gaps, and worn edges, porcelain veneers and composite bonding reshape a smile in a couple of visits. Ask about a free smile-makeover consultation with a digital preview.</p>
+      <!-- Link click: the anchor text is already meaningful, so a bare data-wb-link uses it as the label. -->
+      <p><a href="#cosmetic" data-wb-link class="cta">Compare whitening &amp; veneers →</a></p>
     </section>
 
     <section>
@@ -93,6 +97,8 @@
       <h2 data-wb-text="h-ortho">Straighter teeth, clear or classic</h2>
       <p data-wb-text="ortho-1">Invisalign clear aligners straighten teeth without metal — removable for meals and nearly invisible, with most cases finishing in 6 to 18 months. The first orthodontic consultation is free.</p>
       <p data-wb-text="ortho-2">For teens and more complex bites, traditional and ceramic braces are still the most predictable option. We offer monthly payment plans on every orthodontic case.</p>
+      <!-- Link click: generic "Learn more" text → data-wb-link supplies the meaning. -->
+      <p><a href="#ortho" data-wb-link="Invisalign clear aligners cost" class="cta">Learn more →</a></p>
     </section>
 
     <section>
@@ -101,7 +107,7 @@
       <p data-wb-text="imp-1">Dental implants replace a missing tooth root with a titanium post and a natural-looking crown — placed in-house, no referral needed. We quote the full treatment plan up front, with financing.</p>
       <p data-wb-text="imp-2">For damaged teeth, same-day crowns are milled and fitted in one visit, and root canal therapy saves a tooth that would otherwise be lost — comfortably, under local anaesthetic.</p>
       <!-- Link-click tracking: generic anchor text, so data-wb-link supplies the meaning. A click is a strong intent signal (recorded as a web expression). -->
-      <p><a href="#implants" data-wb-link="dental implant pricing and financing" style="color:var(--brand);font-weight:600;text-decoration:none">Learn more about implants →</a></p>
+      <p><a href="#implants" data-wb-link="dental implant pricing and financing" class="cta">Learn more about implants →</a></p>
     </section>
 
     <!-- Patient portal → CRM client observations -->

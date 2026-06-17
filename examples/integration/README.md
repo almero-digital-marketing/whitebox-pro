@@ -7,7 +7,7 @@ What it exercises today:
 | surface | in the demo |
 |---|---|
 | **core** | session/passport resolution, socket transport, `consent` | header pills + the consent banner |
-| **`whitebox-client-plugin-engagement`** | reading / image-dwell tracking | the service copy: pricing/insurance, cosmetic/whitening, orthodontics/Invisalign, implants/restorative |
+| **`whitebox-client-plugin-engagement`** | reading / image-dwell tracking + **link-click intent** | the service copy (pricing/insurance, cosmetic/whitening, orthodontics/Invisalign, implants/restorative) and the *Learn more* CTAs (`data-wb-link`) |
 | **`whitebox-client-plugin-crm`** | client observations of patient-portal actions | the "Simulate patient actions" buttons (registration, appointment, insurance, whitening, treatment plans, payment plans, emergency, referral, accept treatment) |
 | **`whitebox-client-plugin-voip`** | per-visitor call-tracking number (DNI) | the "Call the clinic" card + callback form |
 
@@ -39,9 +39,10 @@ node serve.mjs            # starts whitebox-server too, then serves on :5273
 ## Try it
 
 1. **Read** the service copy — scroll and pause; paragraphs get a green marker and a `text`/`image` row appears in the live panel (engagement).
-2. **Accept** the consent banner — grants `analytics` + `marketing`.
-3. **Click the patient-portal buttons** — each fires `wb.crm.observe(...)` (a `crm` row). Before consent they're dropped with a warning; after, they send. These are **low-trust observations** tagged `source:'client'`, not authoritative state.
-4. Click a log row to expand its full payload.
+2. **Click a *Learn more* CTA** (under each service) — a `link` row appears. A click is a **strong intent signal**, recorded as a web *expression*; the generic ones carry a `data-wb-link` label (so "Learn more" under implants becomes interest in *"dental implant pricing and financing"*).
+3. **Accept** the consent banner — grants `analytics` + `marketing`.
+4. **Click the patient-portal buttons** — each fires `wb.crm.observe(...)` (a `crm` row). Before consent they're dropped with a warning; after, they send. These are **low-trust observations** tagged `source:'client'`, not authoritative state.
+5. Click a log row to expand its full payload.
 
 ## Seed a whole customer base
 
