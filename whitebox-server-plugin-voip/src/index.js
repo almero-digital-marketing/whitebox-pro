@@ -49,10 +49,17 @@ export default {
     const speechEnabled = !!(voipConfig.transcription && config.ai?.apiKey)
     if (speechEnabled) await speech.init({ config, ai, logger, context })
 
-    await ari.init({
-      config, webhooks, events, logger,
-      passports, sessions, awareness, speechEnabled,
-    })
+    // The PBX (Asterisk/ARI) is OPTIONAL. Without it, call-tracking numbers are
+    // still assigned and shown to visitors over the socket — only the live
+    // inbound-call ingestion needs a PBX (or a telephony-provider webhook).
+    if (voipConfig.ari?.url) {
+      await ari.init({
+        config, webhooks, events, logger,
+        passports, sessions, awareness, speechEnabled,
+      }).catch(err => logger.warn({ err }, 'VoIP: PBX/ARI unavailable — running without live call ingestion'))
+    } else {
+      logger.info('VoIP: no PBX/ARI configured — call-tracking numbers active, live ingestion off')
+    }
 
     app.use('/voip/records', express.static(voipConfig.recordsFolder))
     registerMcp(ctx, { db })
