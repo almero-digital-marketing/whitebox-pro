@@ -91,6 +91,11 @@ document.querySelector('#consent-reject').addEventListener('click', () => {
   wb.consent.revoke('analytics'); wb.consent.revoke('marketing')
   log('consent', 'rejected — product observations will be dropped'); banner.classList.add('hide'); refreshConsent()
 })
+// Reveal the banner only when the visitor hasn't answered yet. The choice
+// persists in localStorage (wb:consent), so a prior accept/reject sticks across
+// refreshes instead of re-prompting every time.
+if (!wb.consent.decided('analytics') && !wb.consent.decided('marketing')) banner.classList.remove('hide')
+refreshConsent()
 
 // ── in-app dashboard → crm observations ───────────────────────────────────
 document.querySelectorAll('[data-crm-kind]').forEach(btn => {
