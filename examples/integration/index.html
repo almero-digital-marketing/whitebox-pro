@@ -40,7 +40,7 @@
   #log .row { padding:.25rem 0; border-bottom:1px dashed #eef1f4; word-break:break-word; }
   #log .t { color:#9aa6b2; } #log .caret { display:inline-block; width:.8em; color:#b3bcc6; }
   #log .k { display:inline-block; min-width:54px; font-weight:700; }
-  #log .text .k,#log .image .k,#log .video .k { color:#2f6fed; }
+  #log .text .k,#log .image .k,#log .video .k { color:#2f6fed; } #log .link .k { color:#e0780b; }
   #log .crm .k { color:#7048e8; } #log .consent .k { color:#0a7d52; } #log .session .k,#log .ready .k { color:#0a7d52; }
   #log .warn .k,#log .error .k { color:#c0392b; }
   #log .row:has(.detail) .head { cursor:pointer; }
@@ -100,6 +100,8 @@
       <h2 data-wb-text="h-implants">Replace and repair, built to last</h2>
       <p data-wb-text="imp-1">Dental implants replace a missing tooth root with a titanium post and a natural-looking crown — placed in-house, no referral needed. We quote the full treatment plan up front, with financing.</p>
       <p data-wb-text="imp-2">For damaged teeth, same-day crowns are milled and fitted in one visit, and root canal therapy saves a tooth that would otherwise be lost — comfortably, under local anaesthetic.</p>
+      <!-- Link-click tracking: generic anchor text, so data-wb-link supplies the meaning. A click is a strong intent signal (recorded as a web expression). -->
+      <p><a href="#implants" data-wb-link="dental implant pricing and financing" style="color:var(--brand);font-weight:600;text-decoration:none">Learn more about implants →</a></p>
     </section>
 
     <!-- Patient portal → CRM client observations -->

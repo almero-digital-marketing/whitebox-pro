@@ -72,6 +72,7 @@ wb.on('transport:disconnected', d  => { setStatus('session ready · socket down'
 wb.on('engagement.text',  e => { log('text',  `read “${e.id}” (${e.length_chars}c, ${e.ms_spent}ms)`, e); markRead('data-wb-text', e.id) })
 wb.on('engagement.image', e => { log('image', `viewed ${e.id} (${e.ms_spent}ms)`, e); markRead('data-wb-image', e.id) })
 wb.on('engagement.video', e => log('video', `watched ${e.id} · ${e.completion_pct}%`, e))
+wb.on('engagement.link',  e => log('link',  `clicked “${e.text}”`, e))
 wb.on('voip.number', ({ tag, number, formatted }) => log('voip', `number assigned (${tag}): ${formatted || number}`, { tag, number, formatted }))
 wb.on('voip.click',  ({ tag, number }) => log('voip', `click-to-call ${number}`, { tag, number }))
 

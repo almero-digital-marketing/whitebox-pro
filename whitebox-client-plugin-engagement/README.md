@@ -14,13 +14,18 @@ those events to WhiteBox — where they become part of the person's cross-channe
 
 ## What it does
 
-Drop a `data-wb-text` / `data-wb-image` / `data-wb-video` attribute on the things you care about, and
-the plugin tells you — per element, per person — *that they read it, for how long, and how much.*
+Drop a `data-wb-text` / `data-wb-image` / `data-wb-video` / `data-wb-link` attribute on the things you
+care about, and the plugin tells you — per element, per person — *that they read it, for how long, and
+how much.*
 
 - **Text** — paragraph/heading reading, modelled on how people actually read: top-to-bottom, one block
   at a time, with dwell proportional to length. Pointer-aware on desktop, visibility-driven on mobile.
 - **Image** — viewport dwell (≥3s by default).
 - **Video** — the *disjoint intervals actually played* and completion %, not just "played".
+- **Link** — a click on a `data-wb-link` anchor: a **strong intent signal**, recorded as an active
+  expression (not passive reading). The label comes from the link's text, or from the attribute value
+  when the visible text is generic — `<a data-wb-link="dental implant pricing">Learn more</a>` records
+  interest in *"dental implant pricing"*, not *"Learn more"*.
 
 It distinguishes a **read** from a **skim**: a block only counts once it has held settled attention in
 the reading zone — fast scrolling, idle tabs, and background pages don't accrue.
@@ -48,6 +53,7 @@ Then mark up your content:
 <p   data-wb-text="intro">Scroll down and pause to read…</p>
 <img data-wb-image="hero" alt="…" src="…">
 <video data-wb-video="demo" controls src="…"></video>
+<a   data-wb-link="implant pricing" href="/implants">Learn more</a>
 ```
 
 That's it — opted-in elements are discovered automatically (including ones added later, SPA routes
@@ -69,6 +75,7 @@ cd examples/engagement && node serve.mjs   # → http://localhost:5173
 wb.on('engagement.text',  e => console.log('read', e.id, e.ms_spent, 'ms', e.partial ? '(partial)' : ''))
 wb.on('engagement.image', e => console.log('viewed', e.id, e.ms_spent, 'ms'))
 wb.on('engagement.video', e => console.log('watched', e.id, e.completion_pct, '%', e.intervals))
+wb.on('engagement.link',  e => console.log('clicked', e.text, '→', e.href))
 wb.on('engagement.progress', p => {/* live dwell tick — drives a UI timer */})
 ```
 

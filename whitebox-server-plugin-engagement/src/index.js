@@ -6,6 +6,7 @@ import * as sections from './sections.js'
 import * as text from './text.js'
 import * as videos from './videos.js'
 import * as images from './images.js'
+import * as links from './link.js'
 import createAuth from 'whitebox-server/auth'
 
 import { createDispatch, KIND_BY_TYPE, batchSchema } from './events.js'
@@ -37,10 +38,11 @@ export default {
     text.init({ awareness, logger })
     videos.init({ awareness, logger })
     images.init({ awareness, logger })
+    links.init({ awareness, logger })
 
     const requireAuth = createAuth({ secret: engagementConfig.auth?.secret, logger })
 
-    const { dispatch, dispatchBatchEvent } = createDispatch({ sections, text, videos, images, logger })
+    const { dispatch, dispatchBatchEvent } = createDispatch({ sections, text, videos, images, links, logger })
 
     // Live events arrive over the existing connect socket. Batched envelope
     // is also supported for high-volume sessions.
