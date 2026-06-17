@@ -34,6 +34,7 @@ const DEFAULT_OPTS = {
   minPartialRatio: 0.5,
   sequential: false,
   readingLineRatio: 0,   // sequential: release a block scrolled off the top once its bottom rises above this fraction of the viewport (0 = off)
+  endRegion: false,      // sequential: let blocks in the document's last screen count even while pinned in the bottom band
 }
 
 export default function createTracker({
@@ -128,11 +129,25 @@ export default function createTracker({
     const vh = typeof window !== 'undefined' ? window.innerHeight : 0
     const scrollY = typeof window !== 'undefined' ? window.scrollY : 0
     const lineY = cfg.readingLineRatio > 0 ? cfg.readingLineRatio * vh : 0
+    // End-of-document mirror of above-the-fold: when scrolled into the last
+    // screen, blocks pinned in the bottom band (they can't be scrolled up into
+    // it — there's nothing below) still count, so the final paragraphs aren't
+    // lost when there's no whitespace below them.
+    const docH = (cfg.endRegion && typeof document !== 'undefined') ? document.documentElement.scrollHeight : 0
+    const nearEnd = docH > 0 && scrollY + vh > docH - vh
     const best = new Map()   // groupKey -> { s, top }
     for (const el of observed) {
       const s = states.get(el)
-      if (!s || s.fired || !s.visible) continue
+      if (!s || s.fired) continue
+      if (!s.visible && !nearEnd) continue
       const rect = el.getBoundingClientRect()
+      let eligible = s.visible
+      if (!eligible && rect.height > 0) {
+        // in the document's last screen and substantially on screen
+        const onScreen = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0))
+        if (rect.bottom + scrollY > docH - vh && onScreen >= cfg.minRatio * rect.height) eligible = true
+      }
+      if (!eligible) continue
       if (lineY > 0 && rect.height > 0) {
         // Above-the-fold blocks (in the document's first screen) always count —
         // they're never released by the reading line. Anything further down

@@ -242,6 +242,31 @@ describe('tracker state machine', () => {
     tracker.stop()
   })
 
+  it('sequential mode: end-of-document block counts even below the band', async () => {
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+    Object.defineProperty(window, 'scrollY', { value: 1200, configurable: true })   // max scroll (docH 2000 - vh 800)
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 2000, configurable: true })
+    const onRead = vi.fn()
+    const tracker = createTracker({
+      gates: [{ isOpen: () => true }],
+      requiredMs: () => 10_000,
+      buildPayload: (el) => ({ text: el.textContent }),
+      onRead,
+      options: { tickMs: 20, sequential: true, minRatio: 0.35, endRegion: true },
+    })
+    tracker.start()
+    document.body.innerHTML = `<p>last</p>`
+    const a = document.body.firstElementChild
+    // At max scroll the last block sits low in the viewport (below the 70% band),
+    // and its document-bottom is in the last screen. Never marked visible by the IO.
+    a.getBoundingClientRect = () => ({ top: 700, bottom: 760, height: 60 })
+    tracker.observe(a)
+    await new Promise(r => setTimeout(r, 60))
+    expect([...tracker._active]).toContain(a)   // end-of-document exemption made it eligible
+    tracker.stop()
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
+  })
+
   it('fires at most once per element', async () => {
     const onRead = vi.fn()
     const tracker = makeTracker({ onRead })
