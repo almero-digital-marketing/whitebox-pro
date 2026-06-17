@@ -10,6 +10,7 @@
     "./notify": "./src/notify.js",
     "./logger": "./src/logger.js",
     "./ai": "./src/ai.js",
+    "./pagination": "./src/pagination.js",
     "./test-setup/neon": "./tests/setup/neon.js"
   },
   "scripts": {

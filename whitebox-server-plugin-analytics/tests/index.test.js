@@ -88,11 +88,13 @@ describe('analytics.recall', () => {
       body: { passport_id: 'a1b2c3d4-5678-4abc-89de-1234567890ab', query: 'pricing', limit: 5 },
     })
     expect(status).toBe(200)
-    expect(body.hits).toHaveLength(1)
+    expect(body.data).toHaveLength(1)
+    expect(body).toMatchObject({ limit: 5, offset: 0, has_more: false })
     expect(awareness.recall).toHaveBeenCalledWith({
       passport_id: 'a1b2c3d4-5678-4abc-89de-1234567890ab',
       query: 'pricing',
-      limit: 5,
+      limit: 6,    // page limit 5 + 1 extra row to detect has_more
+      offset: 0,
     })
   })
 
@@ -136,12 +138,13 @@ describe('analytics.population', () => {
       body: { query: 'spring promotion', similarity: 0.8 },
     })
     expect(status).toBe(200)
-    expect(body.count).toBe(3)
-    expect(body.passports).toHaveLength(3)
-    expect(awareness.population).toHaveBeenCalledWith({
+    expect(body.total).toBe(3)               // cohort size
+    expect(body.data).toHaveLength(3)        // paginated passport drilldown
+    expect(body).toMatchObject({ limit: 50, offset: 0, has_more: false })
+    expect(awareness.population).toHaveBeenCalledWith(expect.objectContaining({
       query: 'spring promotion',
       similarity: 0.8,
-    })
+    }))
   })
 
   it('returns 400 on missing query', async () => {
@@ -162,9 +165,11 @@ describe('analytics.timeline', () => {
       auth: SECRET,
     })
     expect(status).toBe(200)
-    expect(body).toHaveLength(1)
+    expect(body.data).toHaveLength(1)
+    expect(body).toMatchObject({ limit: 50, offset: 0, has_more: false })
     expect(awareness.timeline).toHaveBeenCalledWith(expect.objectContaining({
       passport_id: 'a1b2c3d4-5678-4abc-89de-1234567890ab',
+      limit: 51, offset: 0,
     }))
   })
 
@@ -216,8 +221,8 @@ describe('analytics.context', () => {
 
     expect(status).toBe(200)
     expect(body.providers).toEqual(['crm', 'billing'])
-    expect(body.page).toBe(1)
-    expect(body.page_size).toBe(20)
+    expect(body.limit).toBe(20)
+    expect(body.offset).toBe(0)
     expect(body.context.crm).toHaveLength(1)
     expect(body.context.billing).toEqual({ plan: 'pro' })
     expect(context.collect).toHaveBeenCalledWith(
@@ -263,14 +268,14 @@ describe('analytics.context', () => {
     expect(context.collect).not.toHaveBeenCalled()
   })
 
-  it('translates page + page_size into limit/offset', async () => {
+  it('passes limit/offset through to the registry', async () => {
     const context = {
       names: () => ['crm'],
       collect: vi.fn(async () => ({ crm: [] })),
     }
     const { app } = makeApp({ context })
     await request(app, 'GET',
-      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?page=3&page_size=10',
+      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?limit=10&offset=20',
       { auth: SECRET })
     expect(context.collect).toHaveBeenCalledWith(
       'a1b2c3d4-5678-4abc-89de-1234567890ab',
@@ -278,16 +283,16 @@ describe('analytics.context', () => {
     )
   })
 
-  it('clamps page_size to 200', async () => {
+  it('clamps limit to 200', async () => {
     const context = {
       names: () => ['crm'],
       collect: vi.fn(async () => ({ crm: [] })),
     }
     const { app } = makeApp({ context })
     const { body } = await request(app, 'GET',
-      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?page_size=999',
+      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?limit=999',
       { auth: SECRET })
-    expect(body.page_size).toBe(200)
+    expect(body.limit).toBe(200)
     expect(context.collect).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ limit: 200, offset: 0 })
@@ -303,7 +308,7 @@ describe('analytics.context', () => {
     }
     const { app } = makeApp({ context })
     const { body } = await request(app, 'GET',
-      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?page_size=5',
+      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?limit=5',
       { auth: SECRET })
     expect(body.has_more).toEqual({ crm: true })
   })
@@ -315,7 +320,7 @@ describe('analytics.context', () => {
     }
     const { app } = makeApp({ context })
     const { body } = await request(app, 'GET',
-      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?page_size=5',
+      '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab?limit=5',
       { auth: SECRET })
     expect(body.has_more).toEqual({ crm: false })
   })
@@ -325,7 +330,7 @@ describe('analytics.context', () => {
     const { status, body } = await request(app, 'GET',
       '/analytics/context/a1b2c3d4-5678-4abc-89de-1234567890ab', { auth: SECRET })
     expect(status).toBe(200)
-    expect(body).toEqual({ providers: [], page: 1, page_size: 20, context: {} })
+    expect(body).toEqual({ providers: [], limit: 20, offset: 0, has_more: {}, context: {} })
   })
 })
 

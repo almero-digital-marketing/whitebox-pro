@@ -4,19 +4,24 @@
 
 import express from 'express'
 import { z } from 'zod'
+import { parsePage, page, pageSlice } from 'whitebox-server/pagination'
 import { createAskHandler, createAskPopulationHandler } from './ask.js'
 
+// limit/offset are parsed by the shared pagination helper; the schemas just bound
+// them so a bad value 400s rather than silently clamping.
 const recallSchema = z.object({
   passport_id: z.string().uuid(),
   query:       z.string().min(1),
   limit:       z.number().int().positive().max(100).optional(),
+  offset:      z.number().int().nonnegative().optional(),
 })
 
 const populationSchema = z.object({
   query:          z.string().min(1),
   similarity:     z.number().min(0).max(1).optional(),
-  limit:          z.number().int().positive().max(10000).optional(),
   min_engagement: z.number().min(0).max(1).optional(),
+  limit:          z.number().int().positive().max(200).optional(),
+  offset:         z.number().int().nonnegative().optional(),
 })
 
 export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
@@ -26,8 +31,10 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     const parsed = recallSchema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
     try {
-      const hits = await awareness.recall(parsed.data)
-      res.json({ hits })
+      const { limit, offset } = parsePage(parsed.data, { defaultLimit: 10, maxLimit: 100 })
+      // fetch one extra so the envelope knows there's a next page (no COUNT query)
+      const hits = await awareness.recall({ passport_id: parsed.data.passport_id, query: parsed.data.query, limit: limit + 1, offset })
+      res.json(page(hits, { limit, offset }))
     } catch (err) {
       logger.error({ err }, 'recall failed')
       res.status(500).json({ error: 'recall failed' })
@@ -38,7 +45,12 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     const parsed = populationSchema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
     try {
-      res.json(await awareness.population(parsed.data))
+      const { limit, offset } = parsePage(parsed.data, { defaultLimit: 50, maxLimit: 200 })
+      const { count, passports } = await awareness.population({
+        query: parsed.data.query, similarity: parsed.data.similarity, min_engagement: parsed.data.min_engagement,
+      })
+      // `total` is the cohort size (distinct matching customers); data is the page of passports.
+      res.json(pageSlice(passports, { limit, offset, total: count }))
     } catch (err) {
       logger.error({ err }, 'population failed')
       res.status(500).json({ error: 'population failed' })
@@ -47,14 +59,16 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
 
   router.get('/timeline/:passport_id', requireAuth, async (req, res) => {
     try {
+      const { limit, offset } = parsePage(req.query, { defaultLimit: 50, maxLimit: 200 })
       const rows = await awareness.timeline({
         passport_id: req.params.passport_id,
         from:        req.query.from ? new Date(req.query.from) : null,
         to:          req.query.to   ? new Date(req.query.to)   : null,
         channels:    req.query.channels   ? String(req.query.channels).split(',')   : null,
         directions:  req.query.directions ? String(req.query.directions).split(',') : null,
+        limit: limit + 1, offset,
       })
-      res.json(rows)
+      res.json(page(rows, { limit, offset }))
     } catch (err) {
       logger.error({ err }, 'timeline failed')
       res.status(500).json({ error: 'timeline failed' })
@@ -67,8 +81,11 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
   // shape into the prompt.
   // Query params:
   //   provider=crm,billing   — comma-separated allowlist (default: all)
-  //   page=1                 — 1-based page (default 1)
-  //   page_size=20           — items per provider (default 20, max 200)
+  //   limit=20 / offset=0    — same pagination params as every other endpoint
+  //
+  // NOTE: context is the one structural exception to the uniform { data } envelope
+  // — it returns a MAP of providers (crm, billing, …), not a single list — so it
+  // carries the same limit/offset params but keeps a per-provider `has_more`.
   router.get('/context/:passport_id', requireAuth, async (req, res) => {
     try {
       const allProviders = context?.names?.() ?? []
@@ -81,17 +98,15 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
         return res.status(400).json({ error: 'unknown providers', unknown, available: allProviders })
       }
 
-      const page     = Math.max(1, Number(req.query.page) || 1)
-      const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 20))
-      const offset   = (page - 1) * pageSize
+      const { limit, offset } = parsePage(req.query, { defaultLimit: 20, maxLimit: 200 })
 
       if (!context?.collect) {
-        return res.json({ providers: [], page, page_size: pageSize, context: {} })
+        return res.json({ providers: [], limit, offset, has_more: {}, context: {} })
       }
 
       const collected = await context.collect(req.params.passport_id, {
         providers: requested ?? undefined,
-        limit:     pageSize,
+        limit,
         offset,
       })
 
@@ -99,12 +114,12 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
       // back full it's likely there's another page. Object providers omit it.
       const has_more = {}
       for (const [name, value] of Object.entries(collected)) {
-        if (Array.isArray(value)) has_more[name] = value.length === pageSize
+        if (Array.isArray(value)) has_more[name] = value.length === limit
       }
 
       res.json({
         providers: requested ?? allProviders,
-        page, page_size: pageSize, has_more,
+        limit, offset, has_more,
         context: collected,
       })
     } catch (err) {

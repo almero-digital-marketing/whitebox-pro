@@ -115,6 +115,16 @@ No migrations. No worker. No DB tables. Just routes.
 
 All four are auth-protected with a Bearer token. None are public.
 
+### Pagination
+
+Every collection endpoint takes the same `limit` + `offset` params (defaults/caps differ per endpoint) and returns the same envelope:
+
+```json
+{ "data": [ ... ], "limit": 50, "offset": 0, "has_more": true }
+```
+
+`has_more` is computed by fetching one extra row — no `COUNT` query. `population` additionally returns `total` (the cohort size). The one structural exception is `context`: it returns a *map* of providers rather than a single list, so it carries the same `limit`/`offset` params but keeps a per-provider `has_more`.
+
 ### `POST /analytics/recall` — per-passport semantic search
 
 > "What does this user know about X?"
@@ -131,7 +141,7 @@ Request:
 Response:
 ```json
 {
-  "hits": [
+  "data": [
     {
       "id": 421,
       "chunk_text": "Professional teeth whitening lifts years of staining...",
@@ -140,11 +150,12 @@ Response:
       "engagement": 0.75,
       "depth": "deep"
     }
-  ]
+  ],
+  "limit": 10, "offset": 0, "has_more": false
 }
 ```
 
-Embeds the query, vector-searches chunks scoped to that passport, and returns top matches ranked by relevance **blended with reading depth** — a deeply-read paragraph outranks a skimmed heading of similar relevance (a heading that *is* the query phrase can score the highest raw similarity yet rank below the paragraph the customer actually read). Each hit carries `engagement` (0–1 depth weight) and `depth` (`glance`/`read`/`deep`); non-text exposures (mail/voip/crm) have no depth signal and use `engagement = 1`.
+Paginated (`limit` ≤100, default 10). Embeds the query, vector-searches chunks scoped to that passport, and returns top matches ranked by relevance **blended with reading depth** — a deeply-read paragraph outranks a skimmed heading of similar relevance (a heading that *is* the query phrase can score the highest raw similarity yet rank below the paragraph the customer actually read). Each hit carries `engagement` (0–1 depth weight) and `depth` (`glance`/`read`/`deep`); non-text exposures (mail/voip/crm) have no depth signal and use `engagement = 1`.
 
 ### `POST /analytics/population` — cohort awareness
 
@@ -155,28 +166,30 @@ Request:
 {
   "query": "spring promotion 25% discount",
   "similarity": 0.78,
-  "limit": 5000
+  "limit": 50,
+  "offset": 0
 }
 ```
 
 Response:
 ```json
 {
-  "count": 1284,
-  "passports": [
+  "total": 1284,
+  "data": [
     {
       "passport_id": "a1b2c3d4-...",
       "hits": [{ "chunk_text": "...", "similarity": 0.94, "ts": "..." }]
     }
-  ]
+  ],
+  "limit": 50, "offset": 0, "has_more": true
 }
 ```
 
-`count` = distinct passports with at least one chunk above the similarity threshold. `passports` is the drilldown.
+`total` = the cohort size (distinct passports matching above the similarity threshold). `data` is the paginated drilldown of those passports.
 
 Parameters:
 - `similarity` — cosine threshold (default 0.75). Raise for strict concept matches, lower for fuzzy theme matches.
-- `limit` — max chunks scanned (not passports). Default 1000.
+- `limit` / `offset` — page the passport drilldown (`limit` ≤200, default 50). `total` stays the full cohort size.
 - `min_engagement` — optional reading-depth gate (0–1, default 0 = off). A web text read only puts a passport in the cohort if its depth weight clears this — e.g. `0.15` counts genuine reads but excludes skimmed headings (a heading scores ~0.05). Non-text exposures (mail/voip/crm — no depth signal) always qualify, so this never drops a customer who *called* or *was emailed* about the concept. Lets "how many customers are interested in X" mean readers, not glancers.
 
 ### `GET /analytics/timeline/:passport_id` — raw exposure history
@@ -188,7 +201,7 @@ Query parameters:
 - `channels` — comma-separated: `mail,voip,web`
 - `directions` — comma-separated: `exposure,expression,conversation`
 
-Response: array of exposure rows ordered by `ts` descending. No embedding logic — just SQL filter on the exposures table.
+Response: the standard `{ data, limit, offset, has_more }` envelope; `data` is exposure rows ordered by `ts` descending (`limit` ≤200, default 50). No embedding logic — just a SQL filter on the exposures table. Page with `?limit=&offset=`.
 
 ### `POST /analytics/ask` — LLM-synthesized answer
 
@@ -338,27 +351,26 @@ Returns whatever each registered context provider returns for the passport. Same
 
 Query params:
 - `provider` — comma-separated allowlist (`?provider=crm,billing`). Default: all registered. Unknown names return **400** so typos aren't silently swallowed.
-- `page` — 1-based page number. Default 1.
-- `page_size` — items per provider. Default 20, clamped to 200.
+- `limit` / `offset` — same pagination params as every other endpoint (default 20, `limit` ≤200), passed to each provider, which is expected to honor them.
 
-Page + page_size are translated into `{ limit: page_size, offset: (page-1)*page_size }` and passed to each provider, which is expected to honor them.
+Unlike the list endpoints, the response is a **map** of providers (so there's no single `data` array); it carries the same `limit`/`offset` plus a per-provider `has_more`.
 
 ```bash
 # Default — all providers, first 20 entries each
 curl -H "Authorization: Bearer $T" \
   "https://api.example.com/analytics/context/$PASSPORT_ID"
 
-# Only CRM, page 3, 10 per page
+# Only CRM, second page of 10
 curl -H "Authorization: Bearer $T" \
-  "https://api.example.com/analytics/context/$PASSPORT_ID?provider=crm&page=3&page_size=10"
+  "https://api.example.com/analytics/context/$PASSPORT_ID?provider=crm&limit=10&offset=10"
 ```
 
 Response:
 ```json
 {
   "providers": ["crm"],
-  "page": 3,
-  "page_size": 10,
+  "limit": 10,
+  "offset": 10,
   "has_more": { "crm": true },
   "context": {
     "crm": [
@@ -377,7 +389,7 @@ Response:
 
 `has_more` is a best-effort hint per array-returning provider: `true` when the slice came back full (likely more on the next page), `false` otherwise. Object-returning providers (e.g. `billing: { plan: 'pro' }`) are omitted from `has_more`. There is no total count — paginate forward until `has_more` is false.
 
-When no plugins have registered providers, returns `{ providers: [], page, page_size, context: {} }`. No LLM call, no embedding call — pure registry walk + per-provider DB query.
+When no plugins have registered providers, returns `{ providers: [], limit, offset, has_more: {}, context: {} }`. No LLM call, no embedding call — pure registry walk + per-provider DB query.
 
 ### `DELETE /analytics/passport/:passport_id` — GDPR forget
 

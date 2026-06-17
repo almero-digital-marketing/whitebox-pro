@@ -10,9 +10,9 @@ export function init(deps) {
   logger = deps.logger
 }
 
-export async function recall({ passport_id, query, limit = 10 }) {
+export async function recall({ passport_id, query, limit = 10, offset = 0 }) {
   const [embedding] = await ai.embed([query])
-  return store.recallChunks({ passport_id, embedding, limit })
+  return store.recallChunks({ passport_id, embedding, limit, offset })
 }
 
 export async function population({ query, similarity = 0.75, limit = 1000, min_engagement = 0 }) {

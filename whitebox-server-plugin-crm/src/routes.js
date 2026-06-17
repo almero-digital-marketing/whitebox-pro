@@ -4,6 +4,7 @@
 
 import express from 'express'
 import { z } from 'zod'
+import { parsePage, page } from 'whitebox-server/pagination'
 
 // Customer block — shared between records and facts. At least one of
 // email / phone / external_id must resolve to an identity at ingest time,
@@ -117,12 +118,14 @@ export function mountRoutes(app, { requireAuth, records, ingest, logger }) {
 
   router.get('/records/:passport_id', requireAuth, async (req, res) => {
     try {
+      const { limit, offset } = parsePage(req.query, { defaultLimit: 50, maxLimit: 500 })
       const rows = await records.listForPassport(req.params.passport_id, {
         source: req.query.source,
         kind:   req.query.kind,
-        limit:  req.query.limit ? Math.min(Number(req.query.limit), 500) : undefined,
+        limit:  limit + 1,   // one extra → has_more without a COUNT
+        offset,
       })
-      res.json(rows)
+      res.json(page(rows, { limit, offset }))
     } catch (err) {
       logger.error({ err }, 'CRM records listing failed')
       res.status(500).json({ error: 'CRM records listing failed' })

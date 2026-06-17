@@ -36,7 +36,7 @@ export async function deletePassport(passportId) {
   return db(EXPOSURES).where({ passport_id: passportId }).del()
 }
 
-export async function timeline({ passport_id, from, to, channels, directions }) {
+export async function timeline({ passport_id, from, to, channels, directions, limit, offset = 0 }) {
   let q = db(EXPOSURES + ' as e')
     .leftJoin(SESSIONS + ' as s', 's.id', 'e.session_id')
     .where('e.passport_id', passport_id)
@@ -45,7 +45,11 @@ export async function timeline({ passport_id, from, to, channels, directions }) 
   if (to) q = q.where('e.ts', '<=', to)
   if (channels?.length) q = q.whereIn('e.channel', channels)
   if (directions?.length) q = q.whereIn('e.direction', directions)
-  return q.orderBy('e.ts', 'desc')
+  // ts then id — stable order so offset paging doesn't shuffle rows that share a ts.
+  q = q.orderBy('e.ts', 'desc').orderBy('e.id', 'desc')
+  if (limit != null) q = q.limit(limit)
+  if (offset) q = q.offset(offset)
+  return q
 }
 
 export async function hasChunks(contentHash) {
@@ -94,7 +98,7 @@ export async function gcOrphanChunks() {
 // exposure first (DISTINCT ON), so every chunk appears exactly once, carrying
 // the metadata of the latest time the passport saw it. Ordering is then a pure
 // vector-distance sort over the (small, per-passport) chunk set.
-export async function recallChunks({ passport_id, embedding, limit = 10 }) {
+export async function recallChunks({ passport_id, embedding, limit = 10, offset = 0 }) {
   const v = toVectorLiteral(embedding)
   // Rank blends relevance with engagement depth: a deeply-read paragraph outranks
   // a skimmed heading of similar relevance. engagement is the per-exposure depth
@@ -118,8 +122,8 @@ export async function recallChunks({ passport_id, embedding, limit = 10 }) {
        ) e ON e.content_hash = c.content_hash
        LEFT JOIN ${SESSIONS} s ON s.id = e.session_id
        ORDER BY (1 - (c.embedding <=> ?::vector)) * (0.4 + 0.6 * COALESCE((e.meta->>'engagement')::float, 1)) DESC
-       LIMIT ?`,
-    [v, passport_id, v, limit]
+       LIMIT ? OFFSET ?`,
+    [v, passport_id, v, limit, offset]
   )
   return result.rows ?? result
 }

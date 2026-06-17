@@ -151,13 +151,15 @@ async function tool(name) {
   const ctx = need(); if (!ctx) return
   try {
     if (name === 'timeline') {
-      const rows = await authed(`/analytics/timeline/${encodeURIComponent(ctx.passport_id)}`, {}, ctx.token)
-      const events = (Array.isArray(rows) ? rows : []).map(r => ({
+      const res = await authed(`/analytics/timeline/${encodeURIComponent(ctx.passport_id)}?limit=50`, {}, ctx.token)
+      const rows = res.data || []
+      const events = rows.map(r => ({
         ts: r.ts, channel: r.channel, direction: r.direction, source: r.source,
         depth: r.meta?.depth, chunk_text: r.text || r.content_id || '',
       }))
-      card({ kind: 'timeline', title: 'timeline', stat: `${events.length} event${events.length === 1 ? '' : 's'}`,
-             evidence: events, evidenceLabel: 'events', evidenceOpen: true, raw: rows })
+      const more = res.has_more ? ' +more' : ''
+      card({ kind: 'timeline', title: 'timeline', stat: `${events.length} event${events.length === 1 ? '' : 's'}${more}`,
+             evidence: events, evidenceLabel: 'events', evidenceOpen: true, raw: res })
       return
     }
     if (name === 'context') {
@@ -170,8 +172,9 @@ async function tool(name) {
     if (name === 'recall') {
       const query = $('#recallq').value.trim() || 'teeth whitening'
       const res = await authed('/analytics/recall', { method: 'POST', body: { passport_id: ctx.passport_id, query } }, ctx.token)
-      const hits = res.hits || []
-      card({ kind: 'recall', title: `recall: "${query}"`, stat: `${hits.length} hit${hits.length === 1 ? '' : 's'}`,
+      const hits = res.data || []
+      const more = res.has_more ? ' +more' : ''
+      card({ kind: 'recall', title: `recall: "${query}"`, stat: `${hits.length} hit${hits.length === 1 ? '' : 's'}${more}`,
              evidence: hits, evidenceLabel: 'hits', evidenceOpen: true, raw: res })
       return
     }
@@ -189,12 +192,12 @@ async function tool(name) {
 // channels (mail/voip/crm) have no depth signal and always qualify.
 const COHORT_SIMILARITY = 0.6
 const COHORT_MIN_ENGAGEMENT = 0.15
-// Collapse the raw {passports:[{hits}]} blob into the legible bit: one row per
+// Collapse the page of matching passports into the legible bit: one row per
 // distinct piece of content, with how many customers it reached — instead of a
 // wall of JSON. (Same shape as the All-customers ask evidence.)
 function summarizeCohort(json) {
   const byChunk = new Map()
-  for (const p of json.passports || []) {
+  for (const p of json.data || []) {
     for (const h of p.hits || []) {
       const key = h.chunk_text || ''; if (!key) continue
       let g = byChunk.get(key)
@@ -213,7 +216,7 @@ async function cohort(concept) {
   const query = (concept || $('#cohortq').value.trim() || 'teeth whitening')
   try {
     const json = await authed('/analytics/population', { method: 'POST', body: { query, similarity: COHORT_SIMILARITY, min_engagement: COHORT_MIN_ENGAGEMENT } }, token)
-    const n = json.count ?? 0
+    const n = json.total ?? 0   // cohort size (total distinct matching customers)
     card({
       kind: 'cohort', title: `cohort: "${query}"`,
       stat: `${n} customer${n === 1 ? '' : 's'} match (genuine reads)`,
