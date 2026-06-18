@@ -26,63 +26,68 @@ import { buildAdapters } from 'whitebox-adnetworks'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-export default {
-  async migrate(db) {
-    await db.migrate.latest({
-      directory: path.join(__dirname, 'migrations'),
-      tableName: 'whitebox_audience_migrations',
-      loadExtensions: ['.js'],
-    })
-  },
+// Factory: audiences({ networks, auth: { secret }, privacy, evaluation }).
+export function audiences(options = {}) {
+  return {
+    name: 'audiences',
 
-  async register(app, ctx) {
-    const cfg = ctx.config.audiences || {}
-    const { logger } = ctx
+    async migrate(db) {
+      await db.migrate.latest({
+        directory: path.join(__dirname, 'migrations'),
+        tableName: 'whitebox_audience_migrations',
+        loadExtensions: ['.js'],
+      })
+    },
 
-    // --- wire the singletons (init() + free functions, like the core) ---
-    store.init({ db: ctx.db })
-    identity.init({ db: ctx.db, passports: ctx.passports })
-    consent.init({ db: ctx.db, passports: ctx.passports, config: cfg.privacy })
+    async register(app, ctx) {
+      const cfg = options
+      const { logger } = ctx
 
-    const adapters = buildAdapters(cfg.networks || {}, { logger })
+      // --- wire the singletons (init() + free functions, like the core) ---
+      store.init({ db: ctx.db })
+      identity.init({ db: ctx.db, passports: ctx.passports })
+      consent.init({ db: ctx.db, passports: ctx.passports, config: cfg.privacy })
 
-    evaluator.init({
-      awareness: ctx.awareness,   // recall() + population()
-      ai: ctx.ai,         // prompt() / embed()
-      context: ctx.context,       // collect() → CRM facts
-      db: ctx.db,                 // metric aggregates over exposures
-      config: cfg.evaluation || {},
-      logger,
-    })
+      const adapters = buildAdapters(cfg.networks || {}, { logger })
 
-    delivery.init({ adapters, identity, consent, store, logger })
+      evaluator.init({
+        awareness: ctx.awareness,   // recall() + population()
+        ai: ctx.ai,         // prompt() / embed()
+        context: ctx.context,       // collect() → CRM facts
+        db: ctx.db,                 // metric aggregates over exposures
+        config: cfg.evaluation || {},
+        logger,
+      })
 
-    service.init({ store, rules, evaluator, delivery, adapters, identity, consent, logger })
+      delivery.init({ adapters, identity, consent, store, logger })
 
-    // --- REST (privileged management tier) ---
-    rest.register(app, { service, secret: cfg.auth?.secret, logger })
+      service.init({ store, rules, evaluator, delivery, adapters, identity, consent, logger })
 
-    // --- MCP tools (behind config.mcp.auth.secret) ---
-    mcpTools.register(ctx.mcp, { service, logger })
+      // --- REST (privileged management tier) ---
+      rest.register(app, { service, secret: cfg.auth?.secret, logger })
 
-    // --- identity manifest onto the session-resolve response (decoupled) ---
-    // The client capture shim reads this to know what to collect. See docs/06.
-    if (ctx.sessions?.onResolve) {
-      ctx.sessions.onResolve(() => ({ ad_identity_manifest: identity.manifest(adapters) }))
-    }
+      // --- MCP tools (behind config.mcp.auth.secret) ---
+      mcpTools.register(ctx.mcp, { service, logger })
 
-    // --- dirty-tracking: re-evaluate a passport when its awareness changes ---
-    // `awareness.recorded` is already published by the core on every exposure.
-    ctx.events.subscribe('awareness.recorded', ({ data }) => {
-      service.markDirty(data.passport_id).catch(err =>
-        logger.warn({ err }, 'audiences: markDirty failed'))
-    })
+      // --- identity manifest onto the session-resolve response (decoupled) ---
+      // The client capture shim reads this to know what to collect. See docs/06.
+      if (ctx.sessions?.onResolve) {
+        ctx.sessions.onResolve(() => ({ ad_identity_manifest: identity.manifest(adapters) }))
+      }
 
-    // --- background workers: debounced eval + keep-warm re-fire ---
-    service.startWorkers({ queue: ctx.queue, scheduler: ctx.scheduler })
+      // --- dirty-tracking: re-evaluate a passport when its awareness changes ---
+      // `awareness.recorded` is already published by the core on every exposure.
+      ctx.events.subscribe('awareness.recorded', ({ data }) => {
+        service.markDirty(data.passport_id).catch(err =>
+          logger.warn({ err }, 'audiences: markDirty failed'))
+      })
 
-    logger.info('Audiences plugin ready (%d networks)', adapters.length)
+      // --- background workers: debounced eval + keep-warm re-fire ---
+      service.startWorkers({ queue: ctx.queue, scheduler: ctx.scheduler })
 
-    return { service }   // exposed on ctx.plugins.audiences for other plugins/tests
-  },
+      logger.info('Audiences plugin ready (%d networks)', adapters.length)
+
+      return { service }   // exposed on ctx.plugins.audiences for other plugins/tests
+    },
+  }
 }

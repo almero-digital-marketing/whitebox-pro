@@ -38,7 +38,9 @@ const RESET = process.argv.includes('--reset')
 const SEED = process.argv.includes('--seed')
 
 async function start() {
-  const config = await loadConfig()
+  // runtime is handed to the config factory (async (runtime) => ({...})) so it can
+  // branch on flags/env when building the plugin list — mirrors mikser's runtime.
+  const config = await loadConfig({ argv: process.argv, env: process.env })
   initLogger({ config })
   logger.info('Starting whitebox v2')
 

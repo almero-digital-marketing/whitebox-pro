@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import express from 'express'
-import analyticsPlugin from '../src/index.js'
+import { analytics } from '../src/index.js'
 
 const SECRET = 'test-secret-123'
 
@@ -19,12 +19,11 @@ function makeApp({ awarenessOverrides = {}, context = null } = {}) {
   // No body parser in test — we set req.body directly
   const logger = { child: () => logger, warn: vi.fn(), error: vi.fn(), info: vi.fn() }
   const ctx = {
-    config: { analytics: { auth: { secret: SECRET } } },
     awareness,
     context,
     logger,
   }
-  analyticsPlugin.register(app, ctx)
+  analytics({ auth: { secret: SECRET } }).register(app, ctx)
   return { app, awareness, context }
 }
 

@@ -24,7 +24,7 @@ export function init(deps) {
   ai = deps.ai
   logger = deps.logger
 
-  const cfg = deps.config.engagement || {}
+  const cfg = deps.options || {}
   image = {
     maxSide: cfg.image?.maxSide ?? 1024,
     quality: cfg.image?.quality ?? 85,
