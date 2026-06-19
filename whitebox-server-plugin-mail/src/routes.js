@@ -15,9 +15,12 @@ export function mountRoutes(app, { attachmentsFolder, requireAuth }) {
 
   // Public — contact form intake. The provider inbound/tracking webhooks are
   // also public but authenticity-verified inside their handlers via the provider.
-  router.post('/inbox',            inbox.upload.array('files'), inbox.inboxMail)
-  router.post('/webhooks/inbox',   inbox.upload.any(), inbox.handle)
-  router.post('/webhooks/tracking', tracking.handle)
+  // Both webhook routes run multer so they accept multipart/form-data (e.g.
+  // Mailgun) in addition to the globally-parsed JSON / urlencoded (e.g. Postmark);
+  // multer no-ops on non-multipart bodies, leaving the core parsers' result intact.
+  router.post('/inbox',             inbox.upload.array('files'), inbox.inboxMail)
+  router.post('/webhooks/inbox',    inbox.upload.any(), inbox.handle)
+  router.post('/webhooks/tracking', inbox.upload.any(), tracking.handle)
 
   // Auth-gated — send + admin
   router.post('/outbox', requireAuth, outbox.upload.array('files'), outbox.outboxMail)
