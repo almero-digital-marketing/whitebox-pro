@@ -4,6 +4,7 @@ import * as suppressions from './suppressions.js'
 import * as invalid from './invalid.js'
 import * as mailer from './mailer.js'
 import * as attachments from './attachments.js'
+import { personalizeLinks } from './personalize.js'
 
 const TABLE = 'whitebox_mail_outbox'
 
@@ -19,6 +20,19 @@ function extractUtms(query) {
 
 export const upload = multer({ storage: multer.memoryStorage() })
 
+// Send-level shortener config: UTM defaults for the link-personalization pass.
+// Shared with the bulk schema.
+export const shortenSchema = z.object({
+  utm: z.object({
+    source: z.string().optional(),
+    medium: z.string().optional(),
+    campaign: z.string().optional(),
+    term: z.string().optional(),
+    content: z.string().optional(),
+    id: z.string().optional(),
+  }).optional(),
+}).optional().nullable()
+
 const outboxSchema = z.object({
   to: z.string().email(),
   from: z.string().email().optional().nullable(),
@@ -29,6 +43,7 @@ const outboxSchema = z.object({
   attachment_urls: z.union([z.string().url(), z.array(z.string().url())]).optional(),
   passport_id: z.string().uuid().optional().nullable(),
   data: z.record(z.any()).optional().nullable(),
+  shorten: shortenSchema,
 }).refine(d => d.html || d.text || d.template, {
   message: 'At least one of html, text, or template is required',
 })
@@ -63,13 +78,14 @@ let notify
 let config
 let logger
 let provider
+let getShortener   // () => shortener service (ctx.plugins.shortener?.service) | undefined
 
 // Module state set up in init()
 let attempts
 export let outboxQueue
 
 export function init(deps) {
-  ;({ db, q, templates, passports, sessions, awareness, notify, config, logger, provider } = deps)
+  ;({ db, q, templates, passports, sessions, awareness, notify, config, logger, provider, getShortener } = deps)
 
   const mailConfig = config.mail
   attempts = mailConfig.outbox?.attempts ?? DEFAULT_ATTEMPTS
@@ -123,9 +139,23 @@ async function buildMessage(row) {
   const session = row.session_id && sessions?.findById
     ? await sessions.findById(row.session_id).catch(() => null)
     : null
-  const html = row.html ?? (row.template && templates
+  let html = row.html ?? (row.template && templates
     ? await templates.renderText({ layout: row.template, ...row, session, ...(row.data || {}) })
     : null)
+
+  // Personalized short links: rewrite <a data-wb-shorten> into per-recipient
+  // short links (bound to this row's passport, UTM-decorated). Optional — needs
+  // the shortener plugin loaded and a resolved passport.
+  const shortener = getShortener?.()
+  if (html && shortener?.createLink && row.passport_id) {
+    html = await personalizeLinks(html, {
+      createLink: (input) => shortener.createLink(input),
+      passportId: row.passport_id,
+      utm: row.shorten?.utm || {},
+      onError: (err, href) => logger.warn({ err, href, outboxId: row.id }, 'shortener: link personalization failed; keeping original href'),
+    })
+  }
+
   return {
     to: row.to,
     replyTo: row.from || null,
@@ -270,7 +300,7 @@ async function preflightBlock(email) {
   return null
 }
 
-export async function create({ passportId, sessionId, from, to, subject, html, text, template, idempotencyKey, attachments, batchId, data }) {
+export async function create({ passportId, sessionId, from, to, subject, html, text, template, idempotencyKey, attachments, batchId, data, shorten }) {
   if (idempotencyKey) {
     const existing = await db(TABLE).where({ idempotency_key: idempotencyKey }).first()
     if (existing) return existing
@@ -290,6 +320,7 @@ export async function create({ passportId, sessionId, from, to, subject, html, t
       attachments: attachments?.length ? attachments : null,
       batch_id: batchId || null,
       data: data || null,
+      shorten: shorten || null,
     }).returning('*')
     return row
   } catch (err) {
@@ -315,6 +346,7 @@ export async function createMany(items) {
     attachments: item.attachments?.length ? item.attachments : null,
     batch_id: item.batchId || null,
     data: item.data || null,
+    shorten: item.shorten || null,
   }))).returning('*')
   return rows
 }
@@ -479,7 +511,7 @@ export async function outboxMail(req, res) {
 
   try {
     const body = parsed.data
-    const { passport_id: passportId, from, to, subject, html, text, template, attachment_urls: attachmentUrls, data } = body
+    const { passport_id: passportId, from, to, subject, html, text, template, attachment_urls: attachmentUrls, data, shorten } = body
     const utms = extractUtms(req.query)
     const idempotencyKey = req.get('idempotency-key') || null
 
@@ -509,6 +541,7 @@ export async function outboxMail(req, res) {
       idempotencyKey,
       attachments: resolvedAttachments.length ? resolvedAttachments : null,
       data: data || null,
+      shorten: shorten || null,
     })
 
     if (row.status === 'queued' && !row.sent_at) {

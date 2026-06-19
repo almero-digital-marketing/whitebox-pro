@@ -70,7 +70,10 @@ export function mail(options = {}) {
       suppressions.init({ db, logger })
       invalid.init({ db, logger })
 
-      outbox.init({ db, q, templates, passports, sessions, awareness, notify, config, logger, provider })
+      // Lazy lookup so plugin load order doesn't matter: the shortener may load
+      // after mail. Returns its service (for personalized short links) or undefined.
+      const getShortener = () => ctx.plugins?.shortener?.service
+      outbox.init({ db, q, templates, passports, sessions, awareness, notify, config, logger, provider, getShortener })
       inbox.init({ config, db, q, passports, sessions, awareness, notify, logger, provider })
       tracking.init({ notify, awareness, logger, provider })
       bulk.init({ notify, logger, provider })
