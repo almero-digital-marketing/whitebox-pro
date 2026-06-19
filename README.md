@@ -6,6 +6,8 @@
 
 **WhiteBox is a channel backend with memory.** Record every customer touch — email, voice call, web engagement, CRM event — against one identity, embed it into a per-customer semantic store, and ask grounded questions about it in natural language.
 
+📖 **[Documentation](docs/)** — operator & integrator guide: [overview](docs/01-overview.md) · [concepts](docs/02-concepts.md) · [getting started](docs/03-getting-started.md) · [configuration](docs/04-configuration.md) · [awareness & querying](docs/05-awareness-and-querying.md) · [MCP](docs/06-mcp.md) · [channels](docs/07-channels.md) · [integrations](docs/08-integrations.md) · [deployment](docs/09-deployment.md).
+
 ## Where it fits
 
 WhiteBox is a focused component, not your whole backend. It owns customer touchpoints and the memory of them: defined surface, channel-shaped responsibilities. Your app code lives separately and reaches in through HTTP or MCP — it never imports WhiteBox internals.
