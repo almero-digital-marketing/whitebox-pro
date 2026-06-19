@@ -13,6 +13,19 @@ const recipientSchema = z.object({
   data: z.record(z.any()).optional().nullable(),
 })
 
+// Send-level shortener config (UTM defaults for the link-personalization pass).
+// Defined locally to stay decoupled from the (test-mocked) outbox module.
+const shortenSchema = z.object({
+  utm: z.object({
+    source: z.string().optional(),
+    medium: z.string().optional(),
+    campaign: z.string().optional(),
+    term: z.string().optional(),
+    content: z.string().optional(),
+    id: z.string().optional(),
+  }).optional(),
+}).optional().nullable()
+
 const bulkSchema = z.object({
   subject: z.string().min(1),
   from: z.string().email().optional().nullable(),
@@ -21,6 +34,7 @@ const bulkSchema = z.object({
   template: z.string().optional().nullable(),
   attachment_urls: z.array(z.string().url()).optional(),
   recipients: z.array(recipientSchema).min(1).max(MAX_RECIPIENTS_PER_BATCH),
+  shorten: shortenSchema,
 }).refine(d => d.html || d.text || d.template, {
   message: 'At least one of html, text, or template is required',
 })
@@ -51,7 +65,7 @@ function chunkJobs(rows, batchId, size) {
   return jobs
 }
 
-export async function send({ subject, from, html, text, template, attachment_urls: attachmentUrls, recipients }) {
+export async function send({ subject, from, html, text, template, attachment_urls: attachmentUrls, recipients, shorten }) {
   const batchId = crypto.randomUUID()
 
   // Dedupe by normalized email — preserve first occurrence (with its data)
@@ -106,6 +120,7 @@ export async function send({ subject, from, html, text, template, attachment_url
     attachments: resolvedAttachments,
     batchId,
     data: r.data,
+    shorten: shorten || null,
   }))
 
   const rows = await outbox.createMany(items)

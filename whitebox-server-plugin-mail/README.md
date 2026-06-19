@@ -213,6 +213,29 @@ call:
   back to concurrent individual sends, which return real per-recipient ids.
 
 A provider without `sendBatch` keeps the original one-job-per-recipient fan-out.
+
+### Personalized short links
+
+If the [shortener](../whitebox-server-plugin-shortener) plugin is loaded, links in the HTML body marked with **`data-wb-shorten`** are rewritten at send time — once the recipient's passport is resolved — into per-recipient short links bound to that passport, with UTM baked into the destination. Clicking hard-binds the clicker to the recipient and 302s to the original URL (with the UTMs; claim token in the fragment).
+
+Author a link:
+```html
+<a href="https://clinic.com/whitening?ref=hero"
+   data-wb-shorten
+   data-wb-utm-campaign="spring-2026"
+   data-wb-utm-content="hero-cta">Book your whitening →</a>
+```
+
+Set send-level UTM defaults in the `POST /mail/outbox` or `/mail/bulk` body (stored on the row, applied per recipient):
+```json
+{ "subject": "…", "html": "…", "recipients": [ … ],
+  "shorten": { "utm": { "source": "email", "medium": "mail", "campaign": "spring-2026" } } }
+```
+
+- **Precedence:** per-link `data-wb-utm-*` > send-level `shorten.utm` > any `utm_*` already in the href.
+- The recipient receives `<a href="https://go.example.com/Api9AjAu">…</a>` — markers stripped, other attributes preserved.
+- **Requirements:** the shortener plugin must be loaded *and* the row must have a resolved `passport_id`; otherwise the link is left as authored. Only absolute `http(s)` links are rewritten. A `createLink` failure falls back to the original href (the send never fails over a link).
+- It's surgical: only the marked `<a …>` opening tags change; the rest of the HTML (and the plain-text part) is untouched.
 ```
 
 ### Inbound — contact form
