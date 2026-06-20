@@ -248,18 +248,23 @@ resolve(selector, asOf: "2026-11-29")   // who matched as of Black Friday — bo
 Note #2 and #3 use **only** `filter` — no semantic narrow, no LLM. A purely
 structured, deterministic segment is now first‑class (and free).
 
-## 8. Migration
+## 8. Migration — *done*
 
-1. **Seed** `whitebox_facts` from today's `whitebox_crm_records`: emit each
-   record's current fields as facts with `observed_at = updated_at` (or `starts_at`).
-2. **Switch** ingestion to append through `ctx.facts.record()`; the CRM adapter
-   still upserts an entity row for identity/dedup, but the *queryable truth* is the
-   core fact timeline.
-3. **Move** identity resolution into core/passports (shared by all ingesters).
+This shipped (the CRM plugin is now a thin facts adapter). How it actually landed:
+
+1. **CRM owns no store.** `whitebox_crm_records` was **dropped**. The CRM plugin
+   ingests structured records straight through `ctx.facts.record()` — a record's
+   `status` → a fact keyed by `kind`, each scalar in `data` → its own fact key,
+   `starts_at` → the fact's `observed_at`, `(kind, external_id)` → the fact's
+   `entity`. The *queryable truth* is the core fact timeline; the selector reads it
+   as `filter.fact` (the old `requires.crm` mapping).
+2. **Identity** stays in core: the adapter resolves passports via `ctx.passports`
+   (findByIdentity / link), shared by every ingester. Free-text CRM notes still go
+   to awareness (semantic), reachable via `about` / the judge's evidence.
 
 **Honesty note:** this buys history **from cutover forward**. The past you never
-recorded can't be reconstructed — `asOf` before the migration returns the value
-*as it was at migration*, not as it truly was then. An argument to land it sooner.
+recorded can't be reconstructed — `asOf` before the cutover returns the value *as
+it was at cutover*, not as it truly was then.
 
 ## 9. Where this leaves the architecture
 

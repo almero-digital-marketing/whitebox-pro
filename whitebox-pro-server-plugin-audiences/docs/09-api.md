@@ -30,10 +30,56 @@ Base: `/audiences`. All routes require `Authorization: Bearer <audiences.auth.se
 | `GET` | `/rules/:id` | | one rule |
 | `PATCH` | `/rules/:id` | partial rule | merged + saved |
 | `DELETE` | `/rules/:id` | | `{deleted}` |
-| `POST` | `/rules/:id/preview` | `{sample?}` | candidate pool, est matches, est cost, requires, sample reasons |
-| `POST` | `/rules/:id/evaluate` | `{dryRun=true}` | `{evaluated, matched, fired, suppressed}` |
+| `POST` | `/rules/:id/preview` | `{sample?}` | candidate pool, est matches, sampled reasons, full-scan / confirm flags (see [below](#preview)) |
+| `POST` | `/rules/:id/evaluate` | `{dryRun=true}` | `{evaluated, matched, fired, suppressed, dryRun}` |
 | `GET` | `/rules/:id/members` | `?limit&offset` | `{count, sample[]}` (privacy-gated) |
-| `GET` | `/rules/:id/stats` | | `{qualified}` |
+| `GET` | `/rules/:id/stats` | | `{rule_id, qualified}` |
+
+#### Rule body (create / PATCH)
+
+A rule is a **saved selector** with exactly one source — `select` **or** `funnel`+`slot`. The full
+schema, examples, and validation are in [03 · Rules](03-rules.md); the request body is that object:
+
+```jsonc
+// POST /audiences/rules
+{
+  "id": "churn_risk",
+  "name": "Pro accounts at churn risk",
+  "enabled": false,
+  "select": {
+    "about":  "competitor, alternatives, switching",
+    "filter": { "all": [ { "fact": { "plan_tier": { "eq": "pro" } } },
+                         { "metric": { "content": "pricing", "recency_days": { "lte": 30 } } } ] },
+    "judge":  { "criteria": "genuinely at risk of churning", "confidence": 0.7 }
+  },
+  "ttl_days": 30,
+  "policy": "non_sensitive",
+  "delivery": { "meta": { "event": "wb_churn_risk" } }
+}
+```
+
+A funnel source instead carries `funnel` + `slot` (+ optional `status`) — see
+[03 · Funnel source](03-rules.md#funnel-source). `POST` returns the saved rule; `PATCH /:id` merges the
+partial body onto the existing rule and re-validates.
+
+#### `preview`
+
+`POST /rules/:id/preview` (or pass a full rule body) runs the selector engine — no fire, no LLM beyond
+the small judge sample:
+
+```jsonc
+{
+  "candidate_pool":   1800,        // size after `about` (the similarity-floor cohort)
+  "est_matches":      120,         // projected qualifying count
+  "sampled":          20,          // judge calls made for the sample
+  "full_scan":        false,       // true when there's no positive anchor → walk the whole base
+  "confirm_required": false,       // true above the survivor cap → running/saving needs an explicit confirm
+  "sample_reasons":   [ "…", "…" ] // a few real "why" reasons from the sample
+}
+```
+
+For a **funnel** rule, the pool/matches reflect the slot size. (There is no "requires availability" in
+the response — the legacy `requires` contract is gone; see [03 · Rules](03-rules.md#validation--exactly-one-source).)
 
 ### Passports
 | method | path | returns |
@@ -80,7 +126,7 @@ Registered on the shared `/mcp` server (behind `config.mcp.auth.secret`). The AI
 | `audiences_explain_match` ★ | why a passport qualified — the audit trail |
 | `audiences_delivery_log` | recent fired events |
 | `audiences_draft_rule` ★ | NL → structured rule draft (no commit) |
-| `audiences_preview_rule` ★ | dry-run: pool, matches, reasons, cost, requires |
+| `audiences_preview_rule` ★ | dry-run a rule (or rule id): candidate pool, est matches, sampled reasons, full-scan flag |
 | `audiences_create_rule` | commit a rule |
 | `audiences_enable_rule` | enable / disable |
 | `audiences_evaluate` | run now; **`dryRun` defaults true** |

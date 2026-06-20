@@ -1,89 +1,105 @@
 # 07 · CRM integration
 
-The `crm` feature lets rules gate on **state** (`plan_tier`, `seat_count`, `mrr`, `hit seat limit`, …).
-The hard question: **how do you integrate with a CRM you don't know in advance?**
+Audiences gate on **state** (`plan_tier`, `seat_count`, `mrr`, subscription status, …) the same way
+they gate on anything else: through the selector's `filter`. The hard question — *"how do you
+integrate with a CRM you don't know in advance?"* — is answered entirely in core, not here.
 
-## You don't integrate with the CRM — you invert it
+## CRM state is core facts
 
-WhiteBox does **not** build a connector per CRM. It exposes a **generic, identity-keyed facts webhook**
-(the `/crm/facts` ingestion) and the customer's CRM (or an iPaaS) **pushes** into it.
+The CRM plugin **owns no store of its own.** It's a thin, identity-keyed webhook adapter: whatever
+your CRM pushes lands in one of the two core memories, and audiences query that — there is no
+audiences-side CRM machinery.
 
 ```
-   ANY CRM (Salesforce / HubSpot / Pipedrive / spreadsheet / custom)
+   ANY CRM (Salesforce / HubSpot / Stripe / Pipedrive / custom)
         │  native webhook · Zapier/Make/n8n · iPaaS · a 3-line script
         ▼
-   POST /crm/facts  { identity:{email|phone|external_id}, facts:{ any_key: value }, ts }
+   POST /crm/records  (structured state)   POST /crm/facts  (free-text notes)
         │  identity resolution → passport (mint or match)
-        ▼
-   per-passport facts (arbitrary key→value, typed, timestamped)
-        │  one generic provider registered as context 'crm'
-        ▼
-   context.collect(passport, { providers:['crm'] })  →  the crm feature
+        ▼                                  ▼
+   core FACTS (ctx.facts)              core AWARENESS (semantic)
+   typed key→value, timestamped        notes, tags, call summaries
+        │                                  │
+        ▼                                  ▼
+   select.filter.fact { … }           select.about / judge evidence
 ```
 
-Why this handles an **unknown** CRM with zero CRM-specific code:
+Two webhooks, two memories — and audiences read each through a different part of the selector:
 
-1. **Schema-light contract.** WhiteBox accepts a generic `{ identity, facts }` envelope. The customer
-   maps their CRM's fields to it once. WhiteBox never knows which CRM — it resolves the identity to a
-   passport and stores the facts.
-2. **Arbitrary key/value (schema-on-read).** No pre-defined keys. Whatever arrives is stored; rules
-   reference keys by name (`requires.crm: ['plan_tier']`).
-3. **Self-describing.** The plugin caches the distinct fact keys it sees
-   (`whitebox_audience_fact_keys`) so authoring isn't guesswork — `audiences_list_facts` /
-   `GET /audiences/facts` answer *"what do you know about my users?"*.
-4. **`requires` keeps it safe.** `preview` checks each `requires.crm` key against the discovered keys
-   and warns if a rule depends on a fact you're **not** ingesting (so it never silently under-matches).
-5. **Native connectors are optional sugar.** A one-click HubSpot/Salesforce connector is just something
-   that translates into the *same* `/crm/facts` shape. The baseline works with any CRM via the webhook.
+- **Structured state → core facts → `filter.fact`.** `POST /crm/records` writes a record's `status`
+  and each scalar in `data` into the core **facts** memory (`ctx.facts`), keyed by `kind`. Facts are
+  append-only, so a status change just appends a new row; the current value is the latest and the
+  history powers `asOf` time-travel and temporal operators.
+- **Notes → awareness → `about` / `judge`.** `POST /crm/facts` ingests *free-text things we know* —
+  a staff note, a tag, a call summary — into **awareness** (`channel: 'crm'`,
+  `direction: 'observation'`). They become searchable semantic memory, reachable via a selector's
+  `about` and citable as evidence the `judge` weighs.
 
-## The fact envelope
+That's the whole split: **typed, value-queryable state is a fact; free text is a note.** You never
+re-merge the two streams, and audiences never special-case the CRM.
 
-```json
-POST /crm/facts
-{
-  "identity": { "email": "ada@acme.com" },        // or phone / external_id — anything resolvable
-  "facts": { "plan_tier": "pro", "seat_count": 5, "mrr": 240, "seat_limit_hit": true,
-             "trial_ends_at": "2026-06-25" },
-  "ts": "2026-06-17T10:00:00Z"
-}
+## Targeting CRM state — `filter.fact`
+
+Because structured state is core facts, the core selector engine filters on it directly — no
+CRM-specific query path. A `fact` clause is `{ fact: { <key>: { <op>: <value> } } }`:
+
+```js
+// Pro accounts who haven't cancelled
+{ select: {
+    filter: { all: [ { fact: { plan_tier:    { eq: "pro" } } },
+                     { fact: { subscription: { ne: "cancelled" } } } ] } },
+  delivery: { meta: { event: "wb_pro_active" } } }
 ```
 
-- **Identity** must be something WhiteBox can resolve to a passport (the same resolution the CRM
-  records/facts ingestion already does — mint if new, match if known).
-- **Facts** are a flat bag. Latest-wins per key.
+The `key` is the record's `kind` (for its `status`) or a scalar field name from `data`. Ops are
+`eq` / `ne` / `in` / `gt` / `lt` / `present`, directional dates `next` / `last` / `before`, and the
+temporal operators `changed` / `transition` / `decreased` / `increased`.
 
-## How the plugin reads them
+The temporal ones are the CRM payoff — they read the fact's history, not just its current value:
 
-`features/crm.js` calls `context.collect(passport, { providers: ['crm'] })`, flattens the result to a
-key→value bag, and opportunistically records the keys it sees for discovery. The `crm` provider itself
-is registered by the CRM ingestion (or you register one that reads your facts table). The audiences
-plugin **consumes** context — it doesn't own the facts store.
+```js
+// Just-churned: subscription transitioned INTO "cancelled"
+{ select: {
+    filter: { fact: { subscription: { transition: { to: "cancelled" } } } } },
+  delivery: { meta: { event: "wb_just_churned" } } }
+```
 
-## Typing and freshness
+And `fact` composes with the rest of the selector — pair it with `about` and a `judge` for nuance,
+where the CRM **notes** in awareness become the evidence the judge reads:
 
-- **Type inference** (in the discovery cache): `number | bool | date | string`, so rules can do
-  `mrr > 500` and date comparisons. For strict typing, have the webhook declare types.
-- **Freshness:** facts carry `ts`. A rule can require a fact be *fresh* (add a `recency`-style check
-  in your provider, or compare `ts` in the judge). Stale state is a real risk for ad targeting —
-  prefer recent facts.
+```js
+// Pro accounts genuinely evaluating a competitor (notes inform the judge)
+{ select: {
+    about:  "competitor, alternatives, switching",
+    filter: { fact: { plan_tier: { eq: "pro" } } },
+    judge:  { criteria: "seriously evaluating a switch", confidence: 0.7 } } }
+```
 
-## Discovery in practice
+## Discovery
+
+To author from what's *actually* flowing rather than a guess, ask the base which fact keys exist —
+read straight from core facts (no per-plugin cache):
 
 ```
 GET /audiences/facts
-→ [ { key:"plan_tier", type:"string", sample:"pro", last_seen:"2026-06-17" },
-    { key:"seat_count", type:"number", sample:5 },
-    { key:"mrr", type:"number", sample:240 } ]
+→ [ { key: "plan_tier" }, { key: "subscription" }, { key: "seat_count" }, { key: "mrr" } ]
 ```
 
-Author rules from what's *actually* flowing, not from a guess. If a rule needs `renewal_date` and it's
-not in this list, `preview` will tell you before you ship it.
+## Typing and freshness
+
+- **Typed at the source.** A scalar arrives as a number, bool, date, or string and is stored as
+  that type, so `{ fact: { mrr: { gt: 500 } } }` and date comparisons work. Non-scalar `data` fields
+  aren't value-queryable (flatten upstream if you need to filter on them).
+- **Freshness.** Facts are timestamped (the record's `starts_at` is the fact's `observed_at`). The
+  current value is the latest write; use `asOf` to read a past state, and `last` / `before` windows
+  to gate on recency. Stale state is a real risk for ad targeting — prefer recent facts.
 
 ## The one gap to wire
 
-`awareness.recorded` fires on content exposures (web/mail/voip) but **not** on a CRM-fact-only update.
-So a passport whose only new signal is a fresh CRM fact won't be re-evaluated by the dirty trigger.
-Options:
+`awareness.recorded` fires on content exposures (web / mail / voip) but **not** on a CRM-state-only
+update. So a passport whose only new signal is a fresh CRM fact won't be re-evaluated by the dirty
+trigger. Options:
+
 - have the CRM ingestion **also** publish a dirty signal the audiences plugin subscribes to, or
-- rely on the **keep-warm / scheduled sweep** to re-evaluate periodically (good enough for slow-moving
-  CRM state like plan tier).
+- rely on the **keep-warm / scheduled sweep** to re-evaluate periodically (good enough for
+  slow-moving CRM state like plan tier).
