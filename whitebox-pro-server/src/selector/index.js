@@ -4,10 +4,12 @@ import * as judge from './judge.js'
 // The selector engine — resolve a `{ about, filter, judge }` predicate into a
 // projection. See docs/selector.md.
 //
-// So far: the `people` projection, with `about` (semantic narrow → candidate
-// gate) → `filter` (the deterministic boolean tree of fact + metric clauses) →
-// `judge` (LLM predicate). `preview()` makes the judge's cost visible before you
-// run/save (§9). The `knowledge` projection and funnels land in later increments.
+// Projections (§7): `people` returns ids (about gates → filter → judge), and
+// `knowledge` returns ranked evidence (chunks) — same selector, different thing
+// asked back. The one asymmetry is `about` (S1): it *gates* for people (a
+// similarity floor) but *ranks* for knowledge (orders content, no hard floor).
+// `preview()` makes the judge's cost visible before you run/save (§9). Funnels
+// and time-series `group` land in later increments.
 
 let db
 let logger
@@ -30,18 +32,28 @@ export function init(deps) {
     confirmCap: cfg.confirmCap ?? 5000,          // §9 — survivors above this need explicit confirm
     judgeConcurrency: cfg.judgeConcurrency ?? 6, // matches judge.evaluate's default
     judgeMsPerCall: cfg.judgeMsPerCall ?? 1200,  // coarse per-call latency for the estimate
+    knowledgeLimit: cfg.knowledgeLimit ?? 20,    // §7 — evidence rows returned by the knowledge projection
+    knowledgeSimilarity: cfg.knowledgeSimilarity ?? 0.3, // soft relevance floor — about *ranks* knowledge (S1)
   }
 }
 
-// resolve(selector, { projection, scope, asOf }) → result
-//   projection: "people"           (knowledge comes later)
-//   scope:      array of passport ids | undefined (whole base)
-//   asOf:       a point in time     (applies to the deterministic filter; `about`
-//               is a now-relative semantic narrow)
+// resolve(selector, opts) → a projection result
+//   projection: "people" (ids) | "knowledge" (evidence)
+//   scope:      people → passport-id array | undefined (whole base)
+//               knowledge → "passport" (with `passport`) | undefined (base)
+//   passport:   the passport id, for knowledge·passport scope
+//   asOf:       a point in time — applies to the deterministic filter; `about`
+//               is a now-relative semantic narrow/rank
+//   limit:      knowledge — evidence rows to return
 export async function resolve(selector = {}, opts = {}) {
   const { projection = 'people' } = opts
-  if (projection !== 'people') throw new Error(`selector: projection "${projection}" not implemented yet`)
+  if (projection === 'people') return resolvePeople(selector, opts)
+  if (projection === 'knowledge') return resolveKnowledge(selector, opts)
+  throw new Error(`selector: projection "${projection}" not implemented yet`)
+}
 
+// people — about gates → filter → judge → ids.
+async function resolvePeople(selector, opts) {
   const { candidateIds } = await narrow(selector, opts)
 
   // `judge` — the LLM predicate, last, on the already-narrowed candidates only
@@ -56,6 +68,47 @@ export async function resolve(selector = {}, opts = {}) {
   }
 
   return { count: candidateIds.length, passports: candidateIds.map(id => ({ id })) }   // matched_at (funnels) lands later
+}
+
+// knowledge — ranked evidence (chunks), never prose (prose is the /ask layer §7).
+// `about` is the *ranker* here, not a gate. Three shapes:
+//   · passport          → recall over one passport's memory, ranked by about
+//   · base + about      → about-ranked evidence across the base, intersected with
+//                         the deterministic filter cohort if a filter is present
+//   · base, no about    → a representative content sample of the base
+async function resolveKnowledge(selector, { scope, passport, asOf, limit } = {}) {
+  if (!awareness) throw new Error('selector: knowledge requires the awareness module')
+  const lim = limit ?? defaults.knowledgeLimit
+  const query = aboutQuery(selector.about)
+
+  // · passport
+  if (scope === 'passport' || passport != null) {
+    if (passport == null) throw new Error('selector: knowledge `passport` scope needs a `passport` id')
+    if (!query) throw new Error('selector: knowledge over a passport needs `about` to rank evidence')
+    const rows = await awareness.recall({ passport_id: passport, query, limit: lim })
+    return { projection: 'knowledge', scope: 'passport', passport, evidence: asEvidence(rows).slice(0, lim) }
+  }
+
+  // · base — the deterministic cohort (filter only; about ranks, never gates here)
+  let cohort = null
+  if (selector.filter) {
+    const at = asOf ? new Date(asOf) : null
+    cohort = new Set(await filter.evaluate(selector.filter, baseCtx(at)))
+  }
+
+  if (query) {
+    const pop = await awareness.population({ query, similarity: defaults.knowledgeSimilarity, limit: defaults.candidateLimit })
+    let hits = (pop?.passports || []).flatMap(p => (p.hits || []).map(h => ({ passport_id: p.passport_id, ...h })))
+    if (cohort) hits = hits.filter(h => cohort.has(h.passport_id))
+    hits.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
+    return { projection: 'knowledge', scope: 'base', count: hits.length, evidence: asEvidence(hits).slice(0, lim) }
+  }
+
+  // no about → nothing to rank by. A base-wide content sample is the honest
+  // fallback; a *filtered* cohort can't be sampled without a ranker (yet).
+  if (cohort) throw new Error('selector: knowledge over a filtered cohort needs `about` to rank evidence')
+  const rows = await awareness.sampleContent({ limit: lim })
+  return { projection: 'knowledge', scope: 'base', evidence: asEvidence(rows).slice(0, lim) }
 }
 
 // preview(selector, { projection, scope, asOf }) → cost metadata, NO commitment.
@@ -160,10 +213,48 @@ async function evidenceFor(id, selector) {
 // candidate passport ids. `about` may be a string, or `{ query, similarity?, limit? }`.
 async function aboutGate(about) {
   if (!awareness?.population) throw new Error('selector: `about` requires the awareness module (population)')
-  const query = typeof about === 'string' ? about : about?.query
+  const query = aboutQuery(about)
   if (!query) throw new Error('selector: `about` needs a query string')
   const similarity = (typeof about === 'object' ? about.similarity : undefined) ?? defaults.candidateSimilarity
   const limit = (typeof about === 'object' ? about.limit : undefined) ?? defaults.candidateLimit
   const res = await awareness.population({ query, similarity, limit })
   return (res?.passports || []).map(p => p.passport_id)
 }
+
+// `about` may be a bare string or `{ query, … }`; pull the query text out.
+function aboutQuery(about) {
+  return (typeof about === 'string' ? about : about?.query) || null
+}
+
+// A minimal ctx for evaluating a `filter` over the whole base (knowledge cohort).
+// scope null ⇒ universe() is a full population read (a positive filter anchor
+// avoids it; a pure-negative filter falls back to it — same rule as §5).
+function baseCtx(at) {
+  let cache
+  return {
+    at,
+    scope: null,
+    db,
+    universe: async () => {
+      if (!cache) cache = (await db('whitebox_passports').select('id')).map(r => r.id)
+      return cache
+    },
+  }
+}
+
+// Normalize a memory chunk (recall / population / sampleContent all differ
+// slightly) into one evidence shape, dropping absent fields.
+function asEvidence(rows) {
+  return (rows || []).map(r => prune({
+    passport_id: r.passport_id,
+    channel: r.channel,
+    direction: r.direction,
+    content: r.chunk_text ?? r.content ?? r.text,
+    similarity: r.similarity,
+    observed_at: r.ts ?? r.observed_at,
+    source: r.source,
+    reach: r.customers,                 // sampleContent: how many people the content reached
+  }))
+}
+
+const prune = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null))
