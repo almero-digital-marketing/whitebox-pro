@@ -34,6 +34,46 @@ You create a named audience and **add/remove members directly** with hashed iden
 > platform does the pooling. Promote a segment to Mode B when you need hard removal or first-party-only
 > signals. (Flip `delivery.<net>.mode` to `'membership'` in v2.)
 
+## A rule is a saved selector
+
+A rule no longer carries a `seed` / `criteria` / `requires` block of its own. **Selection moved
+to the core selector engine (`ctx.selector`)** — the same predicate analytics reads. A rule is just
+a *saved selector* (a people-cohort) with a delivery and a lifecycle attached. It has exactly **one
+source**:
+
+### `select` — a core selector
+A selector is `{ about, filter, judge }` (at least one):
+
+- **`about`** — a semantic topic, matched by vector similarity over awareness. As a people gate it
+  keeps everyone above a similarity floor. Answers *"interested in / worried about X?"*.
+- **`filter`** — a boolean tree (`all` / `any` / `not`) of deterministic clauses over the two core
+  memories: `fact` (structured state in core facts), `metric` (windowed awareness aggregates —
+  `count`, `distinct_sessions`, `sum_dwell_ms`, `recency_days`, `sum`), `channel` / `direction`.
+- **`judge`** — an optional LLM predicate (`{ criteria, confidence }`) for nuance the other two
+  can't express. It runs **once per candidate that survives `about` + `filter`**, weighing the
+  recalled evidence and computed values, and returns `{ match, score }`.
+
+The engine resolves the whole cohort — `about` → `filter` → `judge` — in **one call**, cheapest
+stages first, so the expensive judge only ever sees the already-narrowed set.
+
+### `funnel` + `slot` — a funnel cohort
+The other source is a **funnel** plus a **slot**: ordered, windowed steps (resolved by the engine),
+then the slot picks a people-cohort out of them.
+
+- **`slot: "step:N"`** — that step's completers.
+- **`slot: "gap:N→M"`** — the drop-off cohort between two steps, with optional
+  **`status`**: `pending` (still inside the window — act now, you can still save them) or `dropped`
+  (the window closed — win-back).
+
+The **gap** is the retargeting payoff: *"activated, didn't purchase within 14 days"* → push to
+Meta/TikTok. A gap audience is **self-draining** — keep-warm re-resolves the funnel, and as people
+convert they leave the gap and the platform ages them out.
+
+> **The evaluator is a thin adapter.** It owns no selection logic — it maps the rule's saved
+> source onto the engine: `select` → `selector.resolve(…, { projection: 'people' })`, `funnel` →
+> `selector.funnel(…)` + the slot. The engine produces the **why** and **score** for every member.
+> See [04 · Evaluator](04-evaluator.md).
+
 ## "Matches" are not "membership"
 
 In Mode A, WhiteBox does **not** hold a roster you push. The `whitebox_audience_matches` table is a
@@ -61,26 +101,18 @@ for each enabled rule, for each still-qualified match older than keepWarmDays:
 
 So **"remove someone from the audience" = stop re-firing.** There is no removal API call in Mode A.
 
-## The three evidence families
+## Audiences you can explain
 
-A rule's `requires` block declares which families the evaluator must assemble.
+Every member has a **why**. The selector engine produces it: a `people` resolve returns each
+passport with a `why` (the reason it qualified) and a `score`, and the evaluator stores that
+alongside the match. A gap cohort's reason is the slot itself (*"funnel gap:2→3"*). So the GDPR
+question — *"why is this person targeted?"* — always has a grounded answer, because the engine that
+selected them is the same engine that explains them.
 
-### `semantic` — meaning
-Vector recall over awareness embeddings. Answers *"are they interested in / worried about X?"*. The
-LLM judges this. Can't count or know exact state. Always available.
+That explainability falls out of how the engine narrows: cheap, deterministic stages first, the LLM
+last. The split is principled —
 
-### `metric` — math
-Deterministic SQL aggregates over `whitebox_awareness_exposures` (`count`, `distinct_sessions`,
-`sum_dwell_ms`, `recency_days`). Answers *"how often / how recent / how long?"*. Runs as a **hard gate
-before** the LLM, so you never pay for an LLM call on someone who structurally can't qualify. Always
-available.
-
-### `crm` — state
-Generic per-passport facts from the context registry (`plan_tier`, `seat_count`, `mrr`, …). Answers
-*"who are they?"*. **Availability is tenant-specific** — only exists if the customer pushes those
-facts (see [07](07-crm-integration.md)). That's why rules declare `requires.crm` and `preview`
-validates it.
-
-> **The LLM judges meaning; it never counts (metric) or invents state (crm).** That split is the whole
-> reason the evaluator assembles features instead of dumping everything into one prompt. See
-> [04 · Evaluator](04-evaluator.md).
+> **The judge decides meaning; it never counts and never invents state.** Counting is `filter.metric`
+> (windowed awareness aggregates), state is `filter.fact` (structured CRM-sourced facts — see
+> [07](07-crm-integration.md)), and only genuine nuance reaches the LLM `judge` — on the already-narrowed
+> set. See [04 · Evaluator](04-evaluator.md).

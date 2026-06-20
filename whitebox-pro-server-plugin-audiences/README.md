@@ -1,12 +1,12 @@
 # Audiences Plugin
 
-> Build ad-network audiences by reasoning over what WhiteBox knows about each person — describe a segment in plain language, and the plugin fires a custom event to Meta, TikTok and Google (GA4), which build the audience.
+> Build ad-network audiences from what WhiteBox knows about each person — save a core **selector** (or a funnel slot), let the engine resolve the cohort, and the plugin fires a custom event to Meta, TikTok and Google (GA4), which build the audience.
 
 ## What it is
 
-Describe a segment in plain language → the plugin reasons over each passport's cross-channel
-awareness (web, email, voip, CRM) against your rule → it reports a custom event to **Meta, TikTok
-and Google (GA4)**, and the platforms build the audience.
+Save a segment as a core **selector** — or source it from a **funnel slot** → the engine
+(`ctx.selector`) resolves the qualified people-cohort, carrying a per-person *"why"* → the plugin
+reports a custom event to **Meta, TikTok and Google (GA4)**, and the platforms build the audience.
 
 ## Why this exists
 
@@ -18,15 +18,20 @@ You target on **understanding**, and every person in an audience has a human-rea
 
 ## How it works (Mode A)
 
+Selection lives in **core**. The plugin no longer does its own matching — it **stores a saved
+selector, resolves it via the engine, and activates (delivers) the cohort.** The evaluator is now a
+thin adapter over `ctx.selector`.
+
 ```
- awareness (web · email · voip · crm)
-        │  declarative rule (you write it, or draft it by talking)
-        ▼
-   evaluator:  vector-narrow → AI-confirm   (semantic · metric · crm features)
-        │  a qualified match, with a reason
-        ▼
-   fire custom event  ──▶ { Meta CAPI · TikTok Events API · GA4 Measurement Protocol }
+ the two core memories  (awareness + facts)
         │
+        ▼
+   ctx.selector  ──  resolve(rule.select)  →  qualified people-cohort
+        │            about → filter → judge  (per person: why · score · matched_at)
+        │            ── OR ── funnel(rule.funnel) → slot(rule.slot)  (a step's completers, or a gap)
+        ▼
+   the plugin:  record the match  +  fire a custom event
+        │            ──▶ { Meta CAPI · TikTok Events API · GA4 Measurement Protocol }
         ▼
    the platform builds + ages the audience from a rule on your event
 ```
@@ -35,18 +40,64 @@ You target on **understanding**, and every person in an audience has a human-rea
 size, and its decay.** WhiteBox knows *who matched, why, and what it fired* — not a membership roster.
 (Direct membership upload — Mode B — is a v2 upgrade. See [docs/02-concepts.md](docs/02-concepts.md).)
 
-## Three kinds of evidence
+## A rule is a saved selector
 
-A rule blends three feature families, and the evaluator assembles whichever it needs:
+A rule has **exactly one source** — a `select` (a core selector) or a `funnel` slot — plus delivery
+and lifecycle. The engine owns all selection; the rule just names what to resolve and where to fire.
 
-| family | question | source |
-|---|---|---|
-| **semantic** | *what did they engage with?* (intent, topic, concern) | awareness embeddings — vector recall |
-| **metric** | *how often / how recent / how long?* | SQL aggregates over exposures |
-| **crm** | *who are they / what state?* (plan, usage, MRR) | generic CRM facts via the context registry |
+```js
+{ id: "enterprise_ready", name: "Ready for Enterprise", enabled: true,
 
-The LLM judges *meaning*; it never counts (metric does) or invents state (crm does). Details:
-[docs/04-evaluator.md](docs/04-evaluator.md).
+  // SOURCE A — a core selector (about → filter → judge; see the selector spec)
+  select: {
+    about:  "SSO, security, scale, seat limits",                    // semantic narrow — gates people
+    filter: { all: [ { fact: { plan_tier: { eq: "pro" } } },        // boolean tree over core facts…
+                     { metric: { content: "pricing", count: { gte: 1 }, last: "30d" } } ] }, // …+ metrics
+    judge:  { criteria: "genuinely evaluating an Enterprise upgrade", confidence: 0.7 },     // LLM predicate
+  },
+
+  ttl_days: 30, policy: "non_sensitive",
+  delivery: { meta: { event: "wb_enterprise_ready" }, tiktok: { event: "wb_enterprise_ready" } } }
+```
+
+The selector's three stages map cleanly to the old fields — `seed → select.about`,
+`criteria → select.judge.criteria`, `threshold → select.judge.confidence`,
+`requires.metric → filter.metric`, and **CRM state is now core facts**: `requires.crm → filter.fact`.
+
+- **`about`** — a semantic topic that *gates* the cohort (similarity floor), not just ranks.
+- **`filter`** — a boolean tree (`all`/`any`/`not`) of deterministic `fact` + `metric` clauses.
+- **`judge`** — an optional LLM membership predicate `{ criteria, confidence }` for the nuance the
+  other two can't express. It judges *meaning*; it never counts (`metric` does) or invents state
+  (`fact` does), and it runs **last**, only on what `about` + `filter` already narrowed.
+
+The engine resolves the whole cohort — judge included — in **one call**, and each person comes back
+with a `why`, a `score`, and (for deterministic matches) a `matched_at`. The plugin records that and
+fires; the "why" you preview is the "why" you deliver. Full spec: the core selector doc; adapter
+details: [docs/04-evaluator.md](docs/04-evaluator.md).
+
+### Sourcing from a funnel (retargeting)
+
+A rule can source from a **funnel slot** instead of a plain selector — the retargeting payoff. The
+engine resolves the ordered, windowed funnel; the rule picks a slot:
+
+```js
+{ id: "activated_not_purchased", name: "Activated, didn't buy", enabled: true,
+
+  // SOURCE B — a funnel slot
+  funnel: { within: "30d", steps: [
+    { select: "trial_started",            name: "trial" },
+    { select: "activated", within: "7d",  name: "activated" },
+    { select: "purchased", within: "14d", name: "purchased" } ] },
+  slot:   "gap:2→3",          // "did step 2, didn't do step 3 within the window" → retarget
+  status: "pending",          // still inside the window (act now) — vs "dropped" (window closed)
+
+  ttl_days: 30, policy: "non_sensitive",
+  delivery: { meta: { event: "wb_winback" } } }
+```
+
+`slot` is `"step:N"` (that step's completers) or `"gap:N→M"` (the drop-off cohort); `status`
+(`pending` | `dropped`) only applies to a gap. A gap audience **self-drains**: keep-warm re-resolves
+the funnel, so as people convert they leave the gap and stop being re-fired.
 
 ## Install
 
@@ -82,19 +133,21 @@ reasons) → refine → commit → fire → explain.** Below are real sessions (
 > ← meta:{event,eligible:true,coverage:0.74}  tiktok:{event,eligible:true,coverage:0.69}
 >   google:{event,transport:"ga4",eligible:false,reason:"GA4 stream not configured"}
 > ```
-> Meta + TikTok ready; Google's GA4 isn't wired, so I'll skip it. Drafting a rule and previewing it
-> against your real data before spending anything:
+> Meta + TikTok ready; Google's GA4 isn't wired, so I'll skip it. Drafting a selector and previewing
+> it against your real data before spending anything:
 > ```
 > → audiences_draft_rule { description:"ready for Enterprise: usage limits, SSO/security, scale" }
+> ← select:{ about:"SSO, security, scale, seat limits",
+>            judge:{ criteria:"genuinely evaluating an Enterprise upgrade", confidence:0.7 } }
 > → audiences_preview_rule { rule:<draft>, sample:50 }
-> ← candidate_pool:1830  est_matches:~240  est_cost:"$0.47"
->   requires:{ crm:"ok", warnings:[] }
+> ← candidate_pool:1830  est_matches:~240  full_scan:false  confirm_required:false
 >   sample_reasons:[ "Read /enterprise once — weak",
 >                    "Hit the 5-seat limit twice + read the SSO doc",
 >                    "On the Apr 28 call asked 'do you support SAML?'; viewed audit-log" ]
 > ```
-> ~240 would match, but the sample's loose — some just browsed. Want me to require a real scale
-> signal **and** a security interest?
+> `candidate_pool` is the survivor count *after* `about` + `filter` — exactly the number the judge
+> runs on. ~240 would match, but the sample's loose — some just browsed. Want me to add a hard
+> `filter` gate: a real scale signal **and** a security-doc visit?
 
 > **You:** Yes, tighten it.
 
@@ -147,21 +200,25 @@ reasons) → refine → commit → fire → explain.** Below are real sessions (
 > plan/seats/MRR/trial-window — plus anything topical from the content people read or said. What do
 > you want to build?
 
-### 3 · A rule that needs a fact you're not sending (the `requires` guard)
+### 3 · A rule that gates on a fact you're not sending
 
 > **You:** Build an audience of people whose **contract is up for renewal in 30 days** and who've been
 > reading competitor-comparison content.
 
-> **Claude:**
+> **Claude:** Let me check what facts exist before I add that gate:
 > ```
-> → audiences_preview_rule { rule:{ requires:{ crm:["renewal_date"], semantic:["competitor comparison"] } }, sample:50 }
-> ← candidate_pool:410  est_matches:~0
->   requires:{ crm:"missing", warnings:["No CRM facts seen for: renewal_date — rule will under-match until ingested."] }
+> → audiences_list_facts {}
+> ← [ {key:"plan_tier"}, {key:"seat_count"}, {key:"mrr"}, {key:"trial_ends_at"} ]
+> → audiences_preview_rule { rule:{ select:{
+>     about:"competitor comparison, alternatives",
+>     filter:{ fact:{ renewal_date:{ next:"30d" } } } } }, sample:50 }
+> ← candidate_pool:0  est_matches:~0
 > ```
-> Heads up — the competitor-reading part is fine (410 candidates), but **you're not sending a
-> `renewal_date` fact**, so this rule would match almost nobody. Two options: push `renewal_date` to
-> `/crm/facts` from your CRM, or I drop that requirement and target on the competitor-reading signal
-> alone. Which?
+> Heads up — the competitor-reading part is fine on its own, but there's **no `renewal_date` fact**
+> in the base (only `plan_tier`, `seat_count`, `mrr`, `trial_ends_at`), so the `filter` gates everyone
+> out and `candidate_pool` collapses to 0. Two options: push `renewal_date` to `/crm/facts` from your
+> CRM so it becomes a core fact, or I drop that clause and target the competitor-reading `about` alone.
+> Which?
 
 ### 4 · Explain why someone's in an audience (audit / compliance)
 
@@ -206,7 +263,7 @@ reasons) → refine → commit → fire → explain.** Below are real sessions (
 > `WB_GA4_API_SECRET` aren't set, and the client needs to capture the `_ga` `client_id`. Set those and
 > Google joins the same flow as Meta/TikTok. See `docs/networks/google-ga4.md`.
 
-### 7 · A different shape: win-back
+### 7 · A different shape: win-back (a pure-negative filter)
 
 > **You:** Customers who were active and engaged but have **gone quiet for 3+ weeks** and previously
 > looked at our higher tier — I want a win-back audience on Meta.
@@ -214,16 +271,19 @@ reasons) → refine → commit → fire → explain.** Below are real sessions (
 > **Claude:**
 > ```
 > → audiences_preview_rule { rule:{
->     seed:"premium plan, upgrade, advanced features",
->     criteria:"Previously showed upgrade interest but has gone inactive",
->     requires:{ semantic:["upgrade interest"], metric:[{content:"*",metric:"recency_days",gte:21}] },
+>     select:{
+>       about:"premium plan, upgrade, advanced features",
+>       filter:{ not:{ metric:{ content:"*", recency_days:{ lte:21 } } } },
+>       judge:{ criteria:"previously showed upgrade interest but has gone inactive", confidence:0.7 } },
 >     delivery:{ meta:{ event:"wb_winback" } } }, sample:50 }
-> ← candidate_pool:520  est_matches:~140  est_cost:"$0.31"
+> ← candidate_pool:520  est_matches:~140  full_scan:true
 >   sample_reasons:[ "Viewed the Premium page 2× in April, nothing since (28 days quiet)",
 >                    "Started an upgrade flow, dropped off; last seen 24 days ago" ]
 > ```
-> ~140 dormant upgrade-interested accounts. The `recency_days ≥ 21` is a hard metric gate (real SQL,
-> not a guess), and the upgrade-interest part is semantic. Commit it?
+> ~140 dormant upgrade-interested accounts. The `not recency_days ≤ 21` is a hard `filter` gate (real
+> SQL, not a guess), and the upgrade-interest part is `about` + the `judge`. Note `full_scan:true` —
+> a pure-negative filter has nothing to seek on, so the engine walks the whole base; it's flagged here
+> so it's never a silent surprise. Commit it?
 
 ---
 
@@ -267,9 +327,9 @@ Everything needed to make it work end-to-end lives in [`docs/`](docs/):
 | | |
 |---|---|
 | [01 · Architecture](docs/01-architecture.md) | components, data flow, data model |
-| [02 · Concepts](docs/02-concepts.md) | Mode A vs B, matches ≠ membership, the three families |
-| [03 · Rules](docs/03-rules.md) | rule schema, `requires`, authoring, lifecycle |
-| [04 · Evaluator](docs/04-evaluator.md) | vector-narrow → AI-confirm, feature assembly, cost, determinism |
+| [02 · Concepts](docs/02-concepts.md) | Mode A vs B, matches ≠ membership, selector vs funnel sources |
+| [03 · Rules](docs/03-rules.md) | rule schema (`select` / `funnel` slot), authoring, lifecycle |
+| [04 · Evaluator](docs/04-evaluator.md) | the thin adapter over `ctx.selector`, cohort resolve, cost, keep-warm |
 | [05 · Networks](docs/05-networks.md) + [meta](docs/networks/meta.md) · [tiktok](docs/networks/tiktok.md) · [ga4](docs/networks/google-ga4.md) | adapter contract + per-network setup |
 | [06 · Identity](docs/06-identity.md) | the manifest, the client capture shim, hashing, match keys |
 | [07 · CRM integration](docs/07-crm-integration.md) | the generic facts webhook, integrating with **any/unknown** CRM, discovery |
@@ -279,6 +339,6 @@ Everything needed to make it work end-to-end lives in [`docs/`](docs/):
 
 ## Status
 
-**v0.1 scaffold.** Mode A only; the evaluator's LLM judge and the network HTTP calls are wired but
-need your credentials + a tune-by-feel pass. No rule versioning, no Mode B yet. See each adapter doc
-for the exact API surface it calls.
+**v0.1 scaffold.** Mode A only; selection runs on the core selector engine (the `judge`'s similarity
+floor + confidence still want a tune-by-feel pass), and the network HTTP calls are wired but need your
+credentials. No rule versioning, no Mode B yet. See each adapter doc for the exact API surface it calls.
