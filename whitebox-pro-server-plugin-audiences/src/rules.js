@@ -20,18 +20,34 @@ const Selector = z.object({
   'select needs at least one of about / filter / judge',
 )
 
+// A funnel source: ordered windowed steps (resolved by the engine), then a slot.
+const FunnelStep = z.object({
+  select: z.union([z.string(), Selector]),   // a named ref or an inline selector
+  within: z.string().optional(),
+  name: z.string().optional(),
+}).passthrough()
+const Funnel = z.object({
+  within: z.string().optional(),
+  steps: z.array(FunnelStep).min(1),
+}).passthrough()
+
 const Delivery = z.object({
   // Mode A only in v1: fire a custom event; the platform builds the audience.
   event: z.string(),
   mode: z.literal('event').default('event'),
 }).partial({ mode: true })
 
+// A rule's source is EITHER a `select` (a selector) OR a `funnel` + `slot` (a
+// funnel cohort — a step's completers or a gap, the retargeting payoff §14).
 export const RuleSchema = z.object({
   id: z.string().regex(/^[a-z0-9_]+$/, 'id must be snake_case'),
   name: z.string().min(1),
   enabled: z.boolean().default(false),
 
-  select: Selector,                 // the core selector — the whole selection predicate
+  select: Selector.optional(),                          // source A: a selector
+  funnel: Funnel.optional(),                            // source B: a funnel …
+  slot:   z.string().regex(/^(step:\d+|gap:\d+→\d+)$/, 'slot must be "step:N" or "gap:N→M"').optional(),
+  status: z.enum(['pending', 'dropped']).optional(),    // … gap slots: still-in-window vs closed
 
   ttl_days: z.number().int().positive().default(30),
   policy: z.enum(['non_sensitive', 'unrestricted']).default('non_sensitive'),
@@ -39,6 +55,9 @@ export const RuleSchema = z.object({
   // One entry per target network: { meta:{event}, tiktok:{event}, google:{event} }
   delivery: z.record(z.enum(['meta', 'tiktok', 'google']), Delivery).default({}),
 }).strict()
+  .refine(r => (r.select != null) !== (r.funnel != null), 'a rule needs exactly one source: `select` or `funnel`')
+  .refine(r => r.funnel == null || r.slot != null, 'a `funnel` source needs a `slot` (e.g. "step:2" or "gap:2→3")')
+  .refine(r => r.status == null || (r.slot != null && r.slot.startsWith('gap:')), '`status` only applies to a gap slot')
 
 export function validate(input) {
   const parsed = RuleSchema.safeParse(input)
@@ -53,20 +72,25 @@ export function validate(input) {
 
 // Serialize jsonb columns for the store; the store expects plain values. The DB
 // column is `selector` (SELECT is a reserved word); the rule field is `select`.
+const j = v => (v == null ? null : JSON.stringify(v))
+const p = v => (typeof v === 'string' ? JSON.parse(v) : v) ?? undefined
+
 export function toRow(rule, updatedBy) {
   return {
     id: rule.id, name: rule.name, enabled: rule.enabled,
-    selector: JSON.stringify(rule.select),
+    selector: j(rule.select),
+    funnel: j(rule.funnel), slot: rule.slot ?? null, status: rule.status ?? null,
     ttl_days: rule.ttl_days, policy: rule.policy,
     delivery: JSON.stringify(rule.delivery),
     updated_by: updatedBy || null,
   }
 }
 
-export const fromRow = row => row && ({
+export const fromRow = row => row && {
   id: row.id, name: row.name, enabled: row.enabled,
-  select: typeof row.selector === 'string' ? JSON.parse(row.selector) : row.selector,
+  ...(row.selector != null ? { select: p(row.selector) } : {}),
+  ...(row.funnel != null ? { funnel: p(row.funnel), slot: row.slot ?? undefined, status: row.status ?? undefined } : {}),
   ttl_days: row.ttl_days, policy: row.policy,
-  delivery: typeof row.delivery === 'string' ? JSON.parse(row.delivery) : row.delivery,
+  delivery: p(row.delivery) ?? {},
   updated_at: row.updated_at, updated_by: row.updated_by,
-})
+}

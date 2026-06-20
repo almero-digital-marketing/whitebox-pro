@@ -29,25 +29,42 @@ export function init(deps) {
 
 const verdict = (qualified, score, reason, evidence) => ({ qualified, score, reason, evidence })
 
-// The rule's cohort — everyone the selector resolves (people projection).
-export async function candidates(rule) {
+// The rule's QUALIFIED cohort, with per-member metadata — for population eval +
+// keep-warm. The engine resolves the whole cohort (judge included) in ONE call,
+// so there's no candidates-then-judge-each double pass.
+//   · select source → the people resolve (carries why / score / matched_at)
+//   · funnel source → the funnel slot cohort (a step's completers or a gap)
+export async function resolveCohort(rule) {
+  if (rule.funnel) {
+    const result = await selector.funnel(rule.funnel, {})
+    const ids = selector.funnelSlot(result, rule.slot, { status: rule.status })
+    return ids.map(id => ({ id, qualified: true, score: 1, reason: `funnel ${rule.slot}`, evidence: { slot: rule.slot, status: rule.status } }))
+  }
   const res = await selector.resolve(rule.select, { projection: 'people' })
-  return res.passports.map(p => p.id)
+  return res.passports.map(p => ({
+    id: p.id, qualified: true, score: p.score ?? 1, reason: p.why ?? 'matched the selector',
+    evidence: p.matched_at ? { matched_at: p.matched_at } : {},
+  }))
 }
 
-// Membership of ONE passport: a scoped population resolve. The engine runs the
-// same about → filter → judge funnel against just this passport, so per-passport
-// (dirty) evaluation reuses the engine with zero duplicate logic.
+// Membership of ONE passport (the dirty/incremental path) — SELECT sources only.
+// A funnel is inherently a population computation, so funnel audiences keep warm
+// by population re-resolve (resolveCohort), never per-passport.
 export async function evaluate(rule, passportId) {
+  if (rule.funnel) return verdict(false, 0, 'funnel audiences evaluate by population (keep-warm), not per-passport', { funnel: true })
   const res = await selector.resolve(rule.select, { projection: 'people', scope: [passportId] })
   const hit = res.passports.find(p => p.id === passportId)
   if (!hit) return verdict(false, 0, 'did not match the selector', {})
   return verdict(true, hit.score ?? 1, hit.why ?? 'matched the selector', { matched_at: hit.matched_at })
 }
 
-// Cost preview — straight from the engine's preview (cohort, judge-call count,
-// sampled qualifying rate + reasons, full-scan flag). Never fires.
+// Cost preview — never fires. select → the engine's preview (cohort, judge-call
+// count, sampled rate + reasons, full-scan flag); funnel → the slot cohort size.
 export async function preview(rule /*, { sample } */) {
+  if (rule.funnel) {
+    const cohort = await resolveCohort(rule)
+    return { candidate_pool: cohort.length, est_matches: cohort.length, sampled: 0, full_scan: false, confirm_required: false, sample_reasons: [], source: rule.slot }
+  }
   const p = await selector.preview(rule.select, {})
   return {
     candidate_pool: p.filter.survivors,
