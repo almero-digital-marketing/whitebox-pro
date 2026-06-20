@@ -4,9 +4,10 @@
 [temporal facts](temporal-facts.md). Ready to build, no code yet.
 
 > **Naming.** A **selector** is the shared predicate ("who / what"). A
-> **projection** is what you ask back (knowledge / people / answer). An
-> **audience** is a saved *people* selector with a delivery attached. Analytics
-> *reads* a selector; audiences *activates* one — same query, different verb.
+> **projection** is what you ask back — `knowledge` or `people` (answering is a
+> *layer on top*, not a projection — §7). An **audience** is a saved *people*
+> selector with a delivery attached. Analytics *reads* a selector; audiences
+> *activates* one — same query, different verb.
 
 ---
 
