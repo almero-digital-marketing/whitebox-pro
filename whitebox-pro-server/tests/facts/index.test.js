@@ -112,6 +112,39 @@ describe('passport merge resolution', () => {
   })
 })
 
+describe('facts.matches (population) + facts.test (per-passport)', () => {
+  it('value op: who currently matches, per-passport test', async () => {
+    const a = await newPassport(); const b = await newPassport(); const c = await newPassport()
+    await facts.record({ passport_id: a, key: 'plan_tier', value: 'pro', observed_at: d('2026-04-10') })
+    await facts.record({ passport_id: b, key: 'plan_tier', value: 'free', observed_at: d('2026-04-10') })
+    await facts.record({ passport_id: c, key: 'plan_tier', value: 'pro', observed_at: d('2026-04-10') })
+    expect(new Set(await facts.matches('plan_tier', { eq: 'pro' }))).toEqual(new Set([a, c]))
+    expect(await facts.test(a, 'plan_tier', { eq: 'pro' })).toBe(true)
+    expect(await facts.test(b, 'plan_tier', { eq: 'pro' })).toBe(false)
+  })
+
+  it('value op honors scope and as-of', async () => {
+    const a = await newPassport(); const b = await newPassport()
+    await facts.record({ passport_id: a, key: 'plan_tier', value: 'free', observed_at: d('2026-03-01') })
+    await facts.record({ passport_id: a, key: 'plan_tier', value: 'pro', observed_at: d('2026-04-10') })
+    await facts.record({ passport_id: b, key: 'plan_tier', value: 'pro', observed_at: d('2026-02-01') })
+    expect(new Set(await facts.matches('plan_tier', { eq: 'pro' }))).toEqual(new Set([a, b]))   // now: both
+    expect(await facts.matches('plan_tier', { eq: 'pro' }, { scope: [a] })).toEqual([a])
+    expect(await facts.matches('plan_tier', { eq: 'pro' }, { at: '2026-03-15' })).toEqual([b])  // a was 'free' then
+  })
+
+  it('temporal op: transition into a state within a window', async () => {
+    const a = await newPassport(); const b = await newPassport()
+    await facts.record({ passport_id: a, key: 'subscription_status', value: 'active', observed_at: d('2026-04-10') })
+    await facts.record({ passport_id: a, key: 'subscription_status', value: 'cancelled', observed_at: d('2026-06-15') })
+    await facts.record({ passport_id: b, key: 'subscription_status', value: 'active', observed_at: d('2026-04-10') })
+    const pred = { transition: { to: 'cancelled', within: '90d' } }
+    expect(await facts.matches('subscription_status', pred, { at: '2026-06-20' })).toEqual([a])
+    expect(await facts.test(a, 'subscription_status', pred, { at: '2026-06-20' })).toBe(true)
+    expect(await facts.test(b, 'subscription_status', pred, { at: '2026-06-20' })).toBe(false)
+  })
+})
+
 describe('validation', () => {
   it('throws on missing passport_id / key / value', async () => {
     await expect(facts.record({ key: 'k', value: 1 })).rejects.toThrow(/passport_id/)

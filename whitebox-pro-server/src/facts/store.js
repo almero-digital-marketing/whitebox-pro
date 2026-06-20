@@ -43,3 +43,27 @@ export async function historyRows(passportId, key) {
     .orderBy('observed_at', 'asc')
     .select('value', 'type', 'observed_at', 'source')
 }
+
+// --- population (across passports), for the selector's filter.fact ---
+
+// Current (or as-of `at`) value of `key` for every passport, optionally
+// restricted to `scope` (passport ids). One row per passport.
+export async function currentByKey(key, { at, scope } = {}) {
+  let q = db(TABLE).distinctOn('passport_id').where({ key })
+  if (at) q = q.where('observed_at', '<=', at)
+  if (scope?.length) q = q.whereIn('passport_id', scope)
+  return q
+    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
+    .select('passport_id', 'value')
+}
+
+// Every row for `key` (optionally up to `at`, restricted to `scope`), ordered so
+// the caller can group into per-passport histories for temporal operators.
+export async function keyRows(key, { at, scope } = {}) {
+  let q = db(TABLE).where({ key })
+  if (at) q = q.where('observed_at', '<=', at)
+  if (scope?.length) q = q.whereIn('passport_id', scope)
+  return q
+    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }])
+    .select('passport_id', 'value', 'observed_at')
+}
