@@ -51,12 +51,13 @@ export function audiences(options = {}) {
       // or an ineligible entry is simply skipped by delivery/manifest.)
       const adapters = cfg.networks || []
 
+      // The selector engine owns all selection now — the evaluator is a thin
+      // adapter over ctx.selector. ai is kept only for draft_rule; db for fact-key
+      // discovery (distinct keys from core facts).
       evaluator.init({
-        awareness: ctx.awareness,   // recall() + population()
-        ai: ctx.ai,         // prompt() / embed()
-        context: ctx.context,       // collect() → CRM facts
-        db: ctx.db,                 // metric aggregates over exposures
-        config: cfg.evaluation || {},
+        selector: ctx.selector,
+        ai: ctx.ai,
+        db: ctx.db,
         logger,
       })
 

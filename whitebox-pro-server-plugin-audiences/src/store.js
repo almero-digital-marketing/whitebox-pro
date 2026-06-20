@@ -7,7 +7,6 @@ const MATCHES = 'whitebox_audience_matches'
 const DELIVERIES = 'whitebox_audience_deliveries'
 const SUPPRESSION = 'whitebox_audience_suppression'
 const IDENTITIES = 'whitebox_audience_identities'
-const FACT_KEYS = 'whitebox_audience_fact_keys'
 
 export function init({ db: knex }) { db = knex }
 
@@ -60,17 +59,4 @@ export const getIdentities = passportId => db(IDENTITIES).where({ passport_id: p
 export async function saveIdentities(passportId, signals) {
   await db(IDENTITIES).insert({ passport_id: passportId, signals }).onConflict('passport_id')
     .merge({ signals: db.raw('?? || ?', [`${IDENTITIES}.signals`, JSON.stringify(signals)]), updated_at: db.fn.now() })
-}
-
-// --- CRM fact-key discovery cache ---
-export const listFactKeys = () => db(FACT_KEYS).orderBy('last_seen', 'desc')
-export async function recordFactKeys(facts = {}) {
-  for (const [key, value] of Object.entries(facts)) {
-    const type = value == null ? 'null'
-      : typeof value === 'number' ? 'number'
-      : typeof value === 'boolean' ? 'bool'
-      : /^\d{4}-\d{2}-\d{2}/.test(String(value)) ? 'date' : 'string'
-    await db(FACT_KEYS).insert({ key, type, sample: JSON.stringify(value), seen_count: 1 })
-      .onConflict('key').merge({ type, sample: JSON.stringify(value), last_seen: db.fn.now(), seen_count: db.raw('?? + 1', [`${FACT_KEYS}.seen_count`]) })
-  }
 }

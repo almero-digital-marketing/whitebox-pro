@@ -21,7 +21,7 @@ export function register(mcp, { service, logger }) {
 
   // --- author (AI-native) ---
   tool('audiences_draft_rule', 'Draft a structured rule from a natural-language description. Does NOT commit.', { description: z.string() }, ({ description }) => service.draft(description))
-  tool('audiences_preview_rule', 'Dry-run a rule (or rule id) against real awareness: candidate pool, projected matches, sample reasons, est cost, requires availability. Never fires.', { rule: z.any().optional(), id: z.string().optional(), sample: z.number().optional() }, ({ rule, id, sample }) => service.preview(rule ?? id, { sample }))
+  tool('audiences_preview_rule', 'Dry-run a rule (or rule id) through the selector engine: candidate pool, projected matches, sampled judge reasons, full-scan flag. Never fires.', { rule: z.any().optional(), id: z.string().optional(), sample: z.number().optional() }, ({ rule, id, sample }) => service.preview(rule ?? id, { sample }))
   tool('audiences_create_rule', 'Create/replace a rule (commit).', { rule: z.any() }, ({ rule }) => service.saveRule(rule, 'mcp'))
   tool('audiences_enable_rule', 'Enable or disable a rule.', { id: z.string(), enabled: z.boolean() }, ({ id, enabled }) => service.setEnabled(id, enabled))
 
