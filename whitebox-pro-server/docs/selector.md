@@ -181,10 +181,23 @@ The query engine **retrieves data — it never writes prose.** Two projections:
 | projection | returns | scope | REST | MCP |
 |---|---|---|---|---|
 | `knowledge` | ranked content / evidence (chunks) | passport or base | ✅ | ✅ |
-| `people` | `{ count, passports: [{ id, why }] }` | base only | ✅ | ✅ |
+| `people` | `{ count, passports: [{ id, why, matched_at? }] }` | base only | ✅ | ✅ |
 
 The selector is identical for both; the projection is *what you ask back*, not part
 of the predicate. A `people` projection saved + given a delivery **is an audience.**
+
+#### `matched_at` — the funnel seam (reserved)
+
+Each person in a `people` result carries an optional **`matched_at`** — the
+timestamp of the *qualifying event*. It's the anchor windowed/ordered funnels hang
+off (§14), so it's reserved now even though nothing reads it yet:
+
+- **Defined** for deterministic steps — the threshold-crossing `metric` event, a
+  `fact`'s `observed_at`.
+- **Null** for `about` / `judge` — a fuzzy or LLM match has no clean event time.
+
+Costs ~nothing to populate today; leaving it out would make funnels-later a
+breaking change to the result shape.
 
 ### `answer` is a layer on top, not a projection
 
@@ -300,23 +313,50 @@ plugins    write     (mail / sms / voip / engagement / conversions / crm → the
 analytics  the UI — query builder + segment / audience manager, over core QUERY + audiences
 ```
 
-So **core exposes QUERY** (resolve → knowledge | people | answer) as REST + MCP;
+So **core exposes QUERY** (resolve → knowledge | people; answering is a layer on
+top) as REST + MCP;
 **analytics becomes the UI** (build → preview → save-as-audience — the "view + act"
 console); **audiences stays the activation backend** (the data-egress boundary:
 networks, consent, keep-warm). A *saved selector / segment* is a thin **core**
 concept; audiences attaches delivery to it. (See [temporal facts §9](temporal-facts.md).)
 
-## 14. Out of scope (named so the gap is a choice)
+## 14. Funnels — the seam (mostly already covered; ordered part is v2)
 
-- **Sequencing / funnels** — "pricing **then** demo **within** 2 days." The model is
-  set-based, not sequence-based. Separate axis, later.
-- **Saved/named selectors as first-class objects** beyond audiences — possible, but
-  v2; for now a selector is either run live (analytics) or saved as an audience.
+Most "funnels" are **already a single selector** — no new machinery:
+
+- *did A, not B* → `{ all: [ A, { not: B } ] }` (set difference, via the S2 `not`).
+- *did A and B* → `{ all: [ A, B ] }` (intersection).
+
+The **only** thing the boolean tree can't say is **windowed / ordered** steps —
+*"started a trial, then did NOT purchase within 14 days **of starting**"* — because
+`not B` means "never B," not "not B in the window after A." That needs a per-passport
+**anchor** + a temporal join, and it's the retargeting gold ("abandoned within the
+activation window" beats "never bought, ever").
+
+That's **v2**, but its two hooks are **reserved now** so it stays additive:
+
+1. **`matched_at`** on each person in a `people` result (§7) — the anchor.
+2. **`scope: a candidate set`** on `resolve()` (alongside `passport` | `base`) — feed
+   one step's cohort as the next step's candidates. Also gives unordered cohort
+   chaining for free.
+
+A funnel then = an ordered list of **named selectors** + inter-step windows;
+deterministic steps only (semantic/`judge` steps have no clean `matched_at`). The
+drop-off *report* is just a count at each step.
+
+### Still out of scope
+
+- **The ordered temporal-join engine itself** — reserved (hooks above), not built.
+- **Sequence patterns beyond "next step within W"** (arbitrary event regex/paths).
+- **Saved/named selectors as first-class objects** beyond audiences + funnel steps —
+  v2; for now a selector is run live (analytics), saved as an audience, or used as a
+  funnel step.
 
 ---
 
 **Build order (after [facts](temporal-facts.md)):** core `selector` schema +
-`resolve()` (the funnel) + the three projections + `preview()` → **expose QUERY as
-REST `/query` `/preview` + MCP** → audiences-on-selector (activation + delivery) →
-the **analytics UI** (query builder + segment manager) last. The facts brick goes
-in first.
+`resolve()` (the funnel) + the two projections (`knowledge` | `people`, with
+`matched_at` reserved) + `preview()` → **expose QUERY as REST `/query` `/preview`
++ MCP**, plus the thin **`/ask`** layer (REST) → audiences-on-selector (activation
++ delivery) → the **analytics UI** (query builder + segment manager) last. The
+facts brick goes in first.
