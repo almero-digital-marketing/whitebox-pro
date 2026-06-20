@@ -174,15 +174,24 @@ set. Cost is governed entirely by how much `about` + `filter` narrowed first.
 
 ## 7. Projections + scope
 
-| projection | returns | scope |
-|---|---|---|
-| `knowledge` | ranked content / evidence (chunks) | passport or base |
-| `answer` | LLM synthesis over the knowledge + citations | passport or base |
-| `people` | `{ count, passports: [{ id, why }] }` | base only |
+| projection | returns | scope | REST | MCP |
+|---|---|---|---|---|
+| `knowledge` | ranked content / evidence (chunks) | passport or base | ✅ | ✅ |
+| `people` | `{ count, passports: [{ id, why }] }` | base only | ✅ | ✅ |
+| `answer` | LLM synthesis over the knowledge + citations | passport or base | ✅ | ❌ |
 
 The selector is identical across all three; the projection is *what you ask back*,
 not part of the predicate. A `people` projection saved + given a delivery **is an
 audience.**
+
+**`answer` is REST-only — not exposed over MCP.** Over MCP the caller is already an
+LLM agent, so a server-side `answer` would be a *nested* LLM call: the server burns
+a model round-trip (with a possibly weaker model) to synthesize what the calling
+agent does natively. `answer` exists for **non-agent** REST clients — a dashboard, a
+"summarize this customer" button — that want a ready answer without running their
+own model. An MCP agent takes `knowledge` and answers in its own context. The MCP
+`query` tool's description says so: *returns evidence (`knowledge`) or cohorts
+(`people`) — answer natural-language questions yourself from the evidence.*
 
 ## 8. Time
 
