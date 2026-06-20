@@ -2,6 +2,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import * as store from './store.js'
+import { matchValue, matchTemporal, isTemporal } from './operators.js'
 
 // Facts — the core structured memory: an append-only, typed, value-queryable
 // per-passport fact timeline (the structured twin of awareness). Channel-
@@ -94,4 +95,44 @@ export async function get(passport_id, key, { at } = {}) {
 export async function history(passport_id, key) {
   const pid = await resolveId(passport_id)
   return store.historyRows(pid, key)
+}
+
+// --- predicate evaluation (the read layer the selector's filter.fact uses) ---
+
+// Does one passport's `key` satisfy `predicate` (current, or as of `at`)?
+// predicate is a value op (eq/ne/in/gt/gte/lt/lte/within/since/before/present)
+// or a temporal op (changed/transition/decreased/increased).
+export async function test(passport_id, key, predicate, { at } = {}) {
+  const pid = await resolveId(passport_id)
+  const now = at ? new Date(at) : new Date()
+  if (isTemporal(predicate)) {
+    let hist = await store.historyRows(pid, key)
+    if (at) hist = hist.filter(r => new Date(r.observed_at) <= now)
+    return matchTemporal(hist, predicate, now)
+  }
+  const rows = at ? await store.asOfRows(pid, now, [key]) : await store.currentRows(pid, [key])
+  return matchValue(rows.length ? rows[0].value : undefined, predicate, now)
+}
+
+// Population: the passport ids whose `key` matches `predicate` (current or as-of),
+// optionally restricted to `scope` (an array of passport ids).
+export async function matches(key, predicate, { at, scope } = {}) {
+  const now = at ? new Date(at) : new Date()
+  const scopeArr = scope == null ? undefined : [].concat(scope)
+
+  if (isTemporal(predicate)) {
+    const rows = await store.keyRows(key, { at: at && now, scope: scopeArr })
+    const byPassport = new Map()
+    for (const r of rows) {
+      let h = byPassport.get(r.passport_id)
+      if (!h) byPassport.set(r.passport_id, (h = []))
+      h.push(r)
+    }
+    const out = []
+    for (const [pid, hist] of byPassport) if (matchTemporal(hist, predicate, now)) out.push(pid)
+    return out
+  }
+
+  const rows = await store.currentByKey(key, { at: at && now, scope: scopeArr })
+  return rows.filter(r => matchValue(r.value, predicate, now)).map(r => r.passport_id)
 }
