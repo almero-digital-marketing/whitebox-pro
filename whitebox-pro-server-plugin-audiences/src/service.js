@@ -36,29 +36,31 @@ export async function preview(input, { sample = 50 } = {}) {
 }
 
 // --- evaluation + delivery ---
+// Population eval (manual run + keep-warm): the engine resolves the whole
+// qualified cohort in one call (select or funnel slot), then we record + fire
+// each. No candidates-then-judge-each double pass.
 export async function evaluateRule(id, { dryRun = false, limit = 5000 } = {}) {
   const rule = await getRule(id)
   if (!rule) { const e = new Error('rule not found'); e.status = 404; throw e }
-  const cand = [...await evaluator.candidates(rule)].slice(0, limit)
-  let matched = 0, fired = 0, suppressed = 0
-  for (const pid of cand) {
-    const v = await evaluator.evaluate(rule, pid)
+  const cohort = (await evaluator.resolveCohort(rule)).slice(0, limit)
+  let fired = 0, suppressed = 0
+  for (const m of cohort) {
     await store.upsertMatch({
-      rule_id: rule.id, passport_id: pid, qualified: v.qualified,
-      score: v.score, reason: v.reason, evidence: JSON.stringify(v.evidence || {}),
-      first_matched_at: v.qualified ? new Date().toISOString() : null,
+      rule_id: rule.id, passport_id: m.id, qualified: true,
+      score: m.score, reason: m.reason, evidence: JSON.stringify(m.evidence || {}),
+      first_matched_at: new Date().toISOString(),
     })
-    if (!v.qualified) continue
-    matched++
-    const r = await delivery.fireMatch(rule, pid, v, { dryRun })
+    const r = await delivery.fireMatch(rule, m.id, m, { dryRun })
     if (r.skipped) suppressed++
     else if (Object.values(r.fired).some(Boolean)) fired++
   }
-  return { evaluated: cand.length, matched, fired, suppressed, dryRun }
+  return { evaluated: cohort.length, matched: cohort.length, fired, suppressed, dryRun }
 }
 
+// Dirty/incremental eval — one passport changed. SELECT rules only; funnel rules
+// are population-only (they keep warm via evaluateRule), so we skip them here.
 export async function evaluatePassport(passportId) {
-  const enabled = (await store.enabledRules()).map(fromRow)
+  const enabled = (await store.enabledRules()).map(fromRow).filter(r => !r.funnel)
   const out = []
   for (const rule of enabled) {
     const v = await evaluator.evaluate(rule, passportId)
