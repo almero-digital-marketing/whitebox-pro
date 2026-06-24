@@ -18,11 +18,23 @@ function toTime(v) {
   const t = Date.parse(v)
   return Number.isNaN(t) ? null : t
 }
+
+// An actual number, or a string that is ENTIRELY numeric. Returns the number, or
+// null. ISO dates ("2024-01-15") are NOT purely numeric, so they still fall
+// through to date parsing in cmp — only bare numerics short-circuit here. This is
+// what keeps a fact stored as the string "1820" from being read as the YEAR 1820.
+function asNumber(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v)
+  return null
+}
+
 function cmp(a, b) {
-  if (typeof a === 'number' && typeof b === 'number') return a - b
-  const ta = toTime(a), tb = toTime(b)
+  const na = asNumber(a), nb = asNumber(b)
+  if (na != null && nb != null) return na - nb          // both purely numeric → numeric order
+  const ta = toTime(a), tb = toTime(b)                  // else date-ish?
   if (ta != null && tb != null) return ta - tb
-  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0
+  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0   // else lexical
 }
 
 const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased']
