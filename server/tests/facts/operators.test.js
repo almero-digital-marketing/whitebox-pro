@@ -24,6 +24,29 @@ describe('matchValue — value operators', () => {
     expect(mv(500, { gte: 200, lte: 300 })).toBe(false)
   })
 
+  it('numeric STRING values order numerically, not as dates', () => {
+    // Regression: cmp → toTime → Date.parse read "1820" as the YEAR 1820 (a large
+    // negative epoch), so a stringified lifetime_value silently inverted gte/lt.
+    expect(mv('1820', { gte: 500 })).toBe(true)
+    expect(mv('1820', { lt: 500 })).toBe(false)
+    expect(mv('450', { gte: 0, lt: 500 })).toBe(true)
+    expect(mv('500', { gte: 500 })).toBe(true)             // boundary
+    expect(mv('99', { gt: '100' })).toBe(false)            // both stringified numbers
+  })
+
+  it('non-numeric strings still order by date then lexically', () => {
+    expect(mv('2024-06-01', { gte: '2024-01-01' })).toBe(true)   // ISO date ordering intact
+    expect(mv('2024-01-01', { gt: '2024-06-01' })).toBe(false)
+    expect(mv('gold', { gt: 'bronze' })).toBe(true)              // lexical intact
+    expect(mv('bronze', { gt: 'gold' })).toBe(false)
+  })
+
+  it('directional date ops still parse numeric-ish strings via toTime (not cmp)', () => {
+    // `last`/`next`/`before` use toTime, not cmp — a bare number stays "unparseable
+    // as a window-relative date" and simply doesn't match, unchanged by this fix.
+    expect(mv('5', { last: '30d' })).toBe(false)
+  })
+
   it('present / absent', () => {
     expect(mv('x', { present: true })).toBe(true)
     expect(mv(undefined, { present: false })).toBe(true)
