@@ -29,6 +29,16 @@ function asNumber(v) {
   return null
 }
 
+// Equality for eq/ne/in: exact match, OR numerically equal when BOTH sides are
+// purely numeric — so a fact stored as the string "123" matches { eq: 123 }, and
+// "08" matches { eq: 8 }. Non-numeric strings ("08-A", "active") only ever match
+// exactly, so distinct string categories are never coerced together.
+function numEq(a, b) {
+  if (a === b) return true
+  const na = asNumber(a), nb = asNumber(b)
+  return na != null && nb != null && na === nb
+}
+
 function cmp(a, b) {
   const na = asNumber(a), nb = asNumber(b)
   if (na != null && nb != null) return na - nb          // both purely numeric → numeric order
@@ -63,9 +73,9 @@ export function matchValue(value, predicate, now = new Date()) {
     let ok
     switch (op) {
       case 'present': continue                                   // already handled
-      case 'eq':  ok = value === bound; break
-      case 'ne':  ok = value !== bound; break
-      case 'in':  ok = Array.isArray(bound) && bound.includes(value); break
+      case 'eq':  ok = numEq(value, bound); break
+      case 'ne':  ok = !numEq(value, bound); break
+      case 'in':  ok = Array.isArray(bound) && bound.some(b => numEq(value, b)); break
       case 'gt':  ok = cmp(value, bound) > 0; break
       case 'gte': ok = cmp(value, bound) >= 0; break
       case 'lt':  ok = cmp(value, bound) < 0; break

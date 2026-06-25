@@ -16,6 +16,18 @@ describe('matchValue — value operators', () => {
     expect(mv('free', { in: ['pro', 'enterprise'] })).toBe(false)
   })
 
+  it('eq / ne / in coerce numeric facts stored as strings', () => {
+    expect(mv('active', { eq: 'active' })).toBe(true)     // string equality intact
+    expect(mv('123', { eq: 123 })).toBe(true)             // cross-type numeric match
+    expect(mv(123, { eq: '123' })).toBe(true)             // …both directions
+    expect(mv('08', { eq: 8 })).toBe(true)                // leading zeros
+    expect(mv('123', { ne: 123 })).toBe(false)            // ne is the exact negation
+    expect(mv('123', { in: [123, 456] })).toBe(true)      // in matches either type
+    expect(mv('789', { in: [123, 456] })).toBe(false)
+    expect(mv('08-A', { eq: 8 })).toBe(false)             // non-numeric string NOT coerced
+    expect(mv('active', { eq: 0 })).toBe(false)           // label vs number stays distinct
+  })
+
   it('numeric gt / gte / lt / lte and ranges', () => {
     expect(mv(240, { gte: 200 })).toBe(true)
     expect(mv(240, { gt: 240 })).toBe(false)
