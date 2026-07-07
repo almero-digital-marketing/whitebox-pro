@@ -36,6 +36,13 @@ import { maxmind } from 'whitebox-geolocation-maxmind'
 export default async (runtime) => ({
   port: Number(process.env.WB_PORT || 3000),
 
+  // Set this behind a reverse proxy (nginx, an ALB, Cloudflare) so req.ip /
+  // req.hostname reflect the VISITOR, not the proxy — required for
+  // server-plugin-geolocation's IP lookup and the shortener's public-host
+  // detection. Use a hop count (1 = exactly one reverse proxy) or an explicit
+  // trusted address/subnet — NEVER a bare `true` (see docs/04-configuration.md).
+  // trustProxy: 1,
+
   logger: {
     level: process.env.WB_LOG_LEVEL || 'info',   // trace | debug | info | warn | error | fatal
     // transport: null                            // set to null to disable pretty-print in production

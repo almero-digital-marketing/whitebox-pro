@@ -49,7 +49,7 @@ await awareness.migrate()
 facts.init({ db: db.get(), passports, logger, config }); await facts.migrate()
 selector.init({ db: db.get(), passports, logger, awareness, ai, config })
 
-const app = createApp()
+const app = createApp({ trustProxy: config.trustProxy })
 const server = http.createServer(app)
 connect.init({ server, events, sessions })
 sessions.register(app)

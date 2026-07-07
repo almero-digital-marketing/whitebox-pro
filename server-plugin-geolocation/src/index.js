@@ -69,9 +69,9 @@ export function geolocation(options = {}) {
       }
 
       sessions.onResolve(async ({ passportId, req }) => {
-        // trust proxy must be configured at the app level for req.ip to reflect
-        // X-Forwarded-For behind a reverse proxy — same requirement the
-        // shortener plugin's README already flags for req.hostname.
+        // Set `trustProxy` in whitebox.config.js (a hop count, never a bare
+        // `true`) behind a reverse proxy — otherwise req.ip is the proxy's own
+        // address, not the visitor's. See docs/04-configuration.md#trust-proxy.
         const ip = req?.ip
         if (!ip) return null
 
