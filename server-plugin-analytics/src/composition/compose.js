@@ -247,7 +247,10 @@ ${task}
 Rules:
 - Output ONLY a JSON array of 4–6 short strings. No prose, no keys, no code fences.
 - Each is a plain question a marketer would type, ≤ 9 words, no trailing punctuation.
-- Reference ONLY the real vocabulary below, and vary the shape (count / trend / breakdown / funnel / distribution / who-list).
+- Reference ONLY the real vocabulary below, but phrase it in plain human words — NEVER the raw
+  snake_case key. Say "city" not "geo_city", "region" not "geo_region", "status" not "client_status".
+  The vocabulary is for grounding what data exists, not for verbatim wording.
+- Vary the shape (count / trend / breakdown / funnel / distribution / who-list).
 - Keep them concrete and clickable, e.g. "Revenue per month", "Lapsed clients by preferred treatment".
 
 Available data vocabulary:
