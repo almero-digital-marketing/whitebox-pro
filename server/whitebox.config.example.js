@@ -19,6 +19,7 @@ import { shortener } from 'whitebox-pro-server-plugin-shortener'
 import { voip } from 'whitebox-pro-server-plugin-voip'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
+import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos
@@ -30,6 +31,7 @@ import { mailgun } from 'whitebox-pro-mail-mailgun'
 // import { postmark } from 'whitebox-pro-mail-postmark'      // swap the mail provider below
 import { twilio } from 'whitebox-pro-sms-twilio'
 import { mobica } from 'whitebox-pro-sms-mobica'
+import { maxmind } from 'whitebox-geolocation-maxmind'
 
 export default async (runtime) => ({
   port: Number(process.env.WB_PORT || 3000),
@@ -195,6 +197,15 @@ export default async (runtime) => ({
       },
       defaultCountry: 'BG',                                                // for normalizing national numbers
       auth: { secret: process.env.WB_SMS_TOKEN },                         // Bearer for /sms/outbox + /sms/bulk
+    }),
+
+    // Passive, no-permission-prompt IP geolocation — piggybacks on the
+    // /sessions/resolve call every client SDK already makes (see
+    // sessions.onResolve in core). No REST route, no auth of its own.
+    process.env.WB_GEOIP_DB_PATH && geolocation({
+      provider: maxmind({ dbPath: process.env.WB_GEOIP_DB_PATH }),
+      // recordFacts: true (default) — geo_country/geo_region/geo_city/geo_lat/
+      // geo_lon become core facts, queryable via the selector for segmentation.
     }),
   ].filter(Boolean),
 })
