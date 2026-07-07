@@ -1,0 +1,24 @@
+{
+  "name": "whitebox-pro-server-plugin-geolocation",
+  "version": "0.1.0",
+  "description": "WhiteBox server plugin — passive, no-permission-prompt IP geolocation. Piggybacks on the /sessions/resolve call every client SDK already makes (via sessions.onResolve), so the visitor's coarse location is known immediately, and records it as core facts (geo_country/geo_region/geo_city/geo_lat/geo_lon) for selector/audience segmentation.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "whitebox-pro-server": "^2.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}
