@@ -27,6 +27,19 @@ const FACT_KEYS = {
   lon: 'geo_lon',
 }
 
+// Human labels for the keys above — registered as DEFAULTS (ctx.facts.describe
+// only sets a key that's still unset), so an operator's whitebox.config.js
+// `facts.labels` entry always wins over these. Consumed by anything that shows
+// a fact to a person or an AI: analytics compose vocabulary, audience rule
+// authoring — see docs/02-concepts.md.
+const FACT_LABELS = {
+  geo_country: 'Country',
+  geo_region: 'Region',
+  geo_city: 'City',
+  geo_lat: 'Latitude',
+  geo_lon: 'Longitude',
+}
+
 export function geolocation(options = {}) {
   return {
     name: 'geolocation',
@@ -45,6 +58,10 @@ export function geolocation(options = {}) {
       }
 
       const recordFacts = config.recordFacts !== false   // on by default — unlocks segmentation
+
+      if (recordFacts) {
+        for (const [key, humanLabel] of Object.entries(FACT_LABELS)) facts.describe(key, humanLabel)
+      }
 
       if (!sessions?.onResolve) {
         logger.warn('geolocation: core sessions.onResolve is unavailable — plugin has nothing to hook into')

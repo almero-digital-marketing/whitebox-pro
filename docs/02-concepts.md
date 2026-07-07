@@ -116,6 +116,13 @@ Sources write facts; no source *owns* them. The CRM plugin is just the most comm
 source — it ingests external records and turns each scalar into a `ctx.facts`
 call (see [the context registry](#the-context-registry) below).
 
+A fact key is machine vocabulary (`geo_city`, `lifetime_value`) — anywhere it's
+shown to a person or an AI (analytics compose, audience rule authoring) prefers a
+**human label** instead. A plugin registers a default for the keys it owns via
+`ctx.facts.describe(key, label)`; `whitebox.config.js`'s `facts.labels` overrides or
+adds to that — the only option for a key no plugin could ever anticipate, like one
+of CRM's user-defined field names. See [04 · Configuration](04-configuration.md#fact-labels).
+
 ## Direction — the most important field
 
 `direction` captures **who acted and how strong the signal is**. It's the axis you

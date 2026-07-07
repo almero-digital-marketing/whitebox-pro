@@ -30,7 +30,7 @@ export function analytics(options = {}) {
     },
 
     async register(app, ctx) {
-      const { awareness, context, selector, ai, db, connect, passports, logger: rootLogger } = ctx
+      const { awareness, context, selector, ai, db, connect, passports, facts, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'analytics' })
       const analyticsConfig = options
 
@@ -44,7 +44,7 @@ export function analytics(options = {}) {
       // selector + AI. Guarded: db + selector are absent in some unit tests.
       if (db && selector) {
         compositionStore.init({ db, connect })   // store broadcasts every mutation → all clients live
-        compose.init({ db, ai, selector, awareness, logger })
+        compose.init({ db, ai, selector, awareness, facts, logger })
         mountComposition(app, { requireAuth, selector, awareness, passports, logger })
         logger.info('Analytics composition surface ready (reports · resolve · compose)')
       } else {

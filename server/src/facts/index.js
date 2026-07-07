@@ -16,12 +16,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let db
 let logger
 let passports
+let labels
 
 export function init(deps) {
   db = deps.db
   passports = deps.passports
   logger = deps.logger.child({ component: 'facts' })
   store.init({ db })
+  // Config always wins: seed from whitebox.config.js's `facts.labels` FIRST, so
+  // a plugin's own describe() call (below) — which only sets a key that's still
+  // unset — can never override an operator's explicit choice. This is also the
+  // only way to label a key no plugin author could ever anticipate, like a
+  // user's custom CRM field (whitebox-pro-server-plugin-crm writes arbitrary
+  // external field names as fact keys — there's no fixed vocabulary to default).
+  labels = new Map(Object.entries(deps.config?.facts?.labels || {}))
+}
+
+// Register a human-readable label for a fact key — e.g. a plugin calling
+// describe('geo_city', 'City') for a key it owns. First write wins, so a
+// config-seeded label (see init() above) is never clobbered by a plugin default.
+export function describe(key, humanLabel) {
+  if (!labels.has(key)) labels.set(key, humanLabel)
+}
+
+// The human label for `key`, or the raw key when nothing is registered.
+export function label(key) {
+  return labels.get(key) || key
+}
+
+// Every registered { key, label } pair — for vocabulary/discovery surfaces (AI
+// compose, audience rule authoring) that want to show people a name, not a key.
+export function describedKeys() {
+  return [...labels.entries()].map(([key, humanLabel]) => ({ key, label: humanLabel }))
 }
 
 export async function migrate() {

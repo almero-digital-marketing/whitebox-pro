@@ -66,9 +66,15 @@ describe('audiences evaluator — funnel source', () => {
 })
 
 describe('audiences evaluator — discovery + authoring', () => {
-  it('availableFacts reads distinct keys from core facts', async () => {
-    expect(await evaluator.availableFacts()).toEqual([{ key: 'plan_tier' }])
+  it('availableFacts reads distinct keys from core facts, label falls back to the key without a facts dep', async () => {
+    expect(await evaluator.availableFacts()).toEqual([{ key: 'plan_tier', label: 'plan_tier' }])
     expect(db).toHaveBeenCalledWith('whitebox_facts')
+  })
+
+  it('availableFacts uses facts.label() for a human label when the dep is wired', async () => {
+    const facts = { label: vi.fn((key) => ({ plan_tier: 'Plan' }[key] || key)) }
+    evaluator.init({ selector, ai, db, facts, logger })
+    expect(await evaluator.availableFacts()).toEqual([{ key: 'plan_tier', label: 'Plan' }])
   })
   it('draftRule asks the LLM for a selector-shaped rule', async () => {
     expect(await evaluator.draftRule('about to churn')).toEqual({ name: 'X', select: { about: 'x' } })
