@@ -1,0 +1,24 @@
+{
+  "name": "whitebox-pro-client-plugin-geolocation",
+  "version": "0.1.0",
+  "description": "Whitebox browser client — geolocation plugin. Exposes the passive IP-geolocation lookup that rides along on the /sessions/resolve response — no permission prompt, no extra request.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "whitebox-pro-client": "^0.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}
