@@ -16,8 +16,9 @@
 //
 // Scenarios covered: UTM acquisition campaigns (email/social/cpc), marketing email
 // sends·opens·clicks, an SMS flash sale, outbound VoIP win-back calls, marketing
-// opt-in — plus the booking/treatment/membership lifecycle. It also seeds pre-built
-// dashboards (Campaign Performance · Email & SMS Marketing · Retention & Win-back).
+// opt-in, IP geolocation (city/region/lat/lon across the clinic chain's footprint) —
+// plus the booking/treatment/membership lifecycle. It also seeds pre-built dashboards
+// (Campaign Performance · Email & SMS Marketing · Retention & Win-back · Geolocation).
 //
 // Requires the same env as the server (server/.env): WB_DB_*, WB_REDIS_*,
 // WB_OPENAI_API_KEY. Run from the server package:
@@ -81,6 +82,26 @@ const TREATMENTS = [
   { key: 'facial', label: 'Signature facial', price: [70, 150], read: 'Hydrating signature facial and chemical-free deep cleanse — what to expect.' },
   { key: 'microneedling', label: 'Microneedling', price: [150, 320], read: 'Microneedling for acne scars and skin texture — collagen induction therapy.' },
   { key: 'peel', label: 'Chemical peel', price: [120, 260], read: 'Chemical peel for pigmentation and dull skin — downtime and aftercare.' },
+]
+
+// Clinic-chain locations. Fields/keys mirror EXACTLY what
+// whitebox-pro-server-plugin-geolocation resolves from a real IP lookup
+// (geo_country/geo_region/geo_city/geo_lat/geo_lon — see server-plugin-geolocation
+// and the whitebox-geolocation-maxmind provider), so this seed data is a truthful
+// preview of the real feature, not a stand-in shape. Sofia repeated 3x, Plovdiv/Varna
+// 2x — weights toward the HQ city via plain array repetition, same idiom as pick().
+const LOCATIONS = [
+  { country: 'BG', region: 'Sofia-Capital', city: 'Sofia', lat: 42.6977, lon: 23.3219 },
+  { country: 'BG', region: 'Sofia-Capital', city: 'Sofia', lat: 42.6977, lon: 23.3219 },
+  { country: 'BG', region: 'Sofia-Capital', city: 'Sofia', lat: 42.6977, lon: 23.3219 },
+  { country: 'BG', region: 'Plovdiv', city: 'Plovdiv', lat: 42.1354, lon: 24.7453 },
+  { country: 'BG', region: 'Plovdiv', city: 'Plovdiv', lat: 42.1354, lon: 24.7453 },
+  { country: 'BG', region: 'Varna', city: 'Varna', lat: 43.2141, lon: 27.9147 },
+  { country: 'BG', region: 'Varna', city: 'Varna', lat: 43.2141, lon: 27.9147 },
+  { country: 'BG', region: 'Burgas', city: 'Burgas', lat: 42.5048, lon: 27.4626 },
+  { country: 'BG', region: 'Ruse', city: 'Ruse', lat: 43.8564, lon: 25.9704 },
+  { country: 'BG', region: 'Stara Zagora', city: 'Stara Zagora', lat: 42.4258, lon: 25.6345 },
+  { country: 'BG', region: 'Pleven', city: 'Pleven', lat: 43.4170, lon: 24.6067 },
 ]
 
 // Marketing campaigns with UTM attribution. Acquisition campaigns (email/social/
@@ -171,6 +192,16 @@ async function seedClient(i) {
   await fct(pid, 'client_status', 'lead', daysAgo(firstSeen))
   await fct(pid, 'preferred_treatment', fav.key, daysAgo(firstSeen))
   await fct(pid, 'marketing_opt_in', optIn ? 'yes' : 'no', daysAgo(firstSeen))
+
+  // geolocation — resolved once, at first touch, exactly like the real plugin does on
+  // the first /sessions/resolve call. `source: 'geolocation'` (not the wrapper's default
+  // 'seed') so these rows are indistinguishable from what production would have written.
+  const loc = pick(LOCATIONS)
+  await fct(pid, 'geo_country', loc.country, daysAgo(firstSeen), { source: 'geolocation' })
+  await fct(pid, 'geo_region', loc.region, daysAgo(firstSeen), { source: 'geolocation' })
+  await fct(pid, 'geo_city', loc.city, daysAgo(firstSeen), { source: 'geolocation' })
+  await fct(pid, 'geo_lat', loc.lat, daysAgo(firstSeen), { source: 'geolocation' })
+  await fct(pid, 'geo_lon', loc.lon, daysAgo(firstSeen), { source: 'geolocation' })
 
   // entry event on the acquiring channel (in the acquisition session)
   if (acq) {
@@ -274,6 +305,8 @@ async function resetDemo() {
 // (`session:`), per-event action (`attrs:{event}`), exposure columns, and facts.
 const ACQ_UTMS = ACQ_CAMPAIGNS.map(c => c.utm)   // campaign utm_campaign values
 const SOURCES = ['newsletter', 'instagram', 'google', 'promo', 'outbound', 'walk-in', 'referral']
+const GEO_CITIES = [...new Set(LOCATIONS.map(l => l.city))]
+const GEO_REGIONS = [...new Set(LOCATIONS.map(l => l.region))]
 const REPORT_DEFS = [
   ['Campaign Performance', [
     { title: 'Reached by a campaign', kind: 'stat', query: { selector: { filter: { metric: { session: { utm_campaign: ACQ_UTMS }, count: { gte: 1 } } } }, projection: 'people' } },
@@ -322,6 +355,18 @@ const REPORT_DEFS = [
     { title: 'Booking retention by month', kind: 'cohort', query: { cohort: { event: 'booking', grain: 'month', periods: 5 } } },
     { title: 'Clients by membership', kind: 'breakdown', query: { breakdownFact: { key: 'membership', values: ['gold', 'silver'] } } },
     { title: 'Lapsed client list', kind: 'table', query: { selector: { filter: { fact: { client_status: { eq: 'lapsed' } } } }, projection: 'people' } },
+  ]],
+  ['Geolocation', [
+    // headline split by resolved city — geo_city is written on every client's first
+    // session by server-plugin-geolocation (or, here, seeded to match it exactly)
+    { title: 'Clients by city', kind: 'breakdown', query: { breakdownFact: { key: 'geo_city', values: GEO_CITIES } } },
+    // share-of-total by region, drawn as a ring (same convention as 'Client lifecycle mix')
+    { title: 'Location mix by region', kind: 'donut', query: { breakdownFact: { key: 'geo_region', values: GEO_REGIONS } } },
+    { title: 'Clients from Sofia', kind: 'stat', query: { selector: { filter: { fact: { geo_city: { eq: 'Sofia' } } } }, projection: 'people' } },
+    { title: 'Clients outside Sofia', kind: 'stat', query: { selector: { filter: { fact: { geo_city: { ne: 'Sofia' } } } }, projection: 'people' } },
+    // scatter: one dot per person at (lon, lat) — the only fact pair that's inherently
+    // spatial, tinted by lifecycle stage so it doubles as a crude customer map
+    { title: 'Customer locations (lat vs lon)', kind: 'scatter', query: { scatter: { x: 'geo_lon', y: 'geo_lat', colorBy: 'client_status' } } },
   ]],
 ]
 
