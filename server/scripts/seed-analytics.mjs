@@ -84,7 +84,10 @@ const TREATMENTS = [
   { key: 'peel', label: 'Chemical peel', price: [120, 260], read: 'Chemical peel for pigmentation and dull skin — downtime and aftercare.' },
 ]
 
-// Clinic-chain locations. Fields/keys mirror EXACTLY what
+// Candidate geolocated positions across the clinic chain's footprint — NOT a CRM
+// "customer address"/branch field, those are a different axis entirely (see
+// server-plugin-crm, which writes fully dynamic external field names). Fields/keys
+// mirror EXACTLY what
 // whitebox-pro-server-plugin-geolocation resolves from a real IP lookup
 // (geo_country/geo_region/geo_city/geo_lat/geo_lon — see server-plugin-geolocation
 // and the whitebox-geolocation-maxmind provider), so this seed data is a truthful
@@ -361,12 +364,12 @@ const REPORT_DEFS = [
     // session by server-plugin-geolocation (or, here, seeded to match it exactly)
     { title: 'Clients by city', kind: 'breakdown', query: { breakdownFact: { key: 'geo_city', values: GEO_CITIES } } },
     // share-of-total by region, drawn as a ring (same convention as 'Client lifecycle mix')
-    { title: 'Location mix by region', kind: 'donut', query: { breakdownFact: { key: 'geo_region', values: GEO_REGIONS } } },
+    { title: 'Geolocated mix by region', kind: 'donut', query: { breakdownFact: { key: 'geo_region', values: GEO_REGIONS } } },
     { title: 'Clients from Sofia', kind: 'stat', query: { selector: { filter: { fact: { geo_city: { eq: 'Sofia' } } } }, projection: 'people' } },
     { title: 'Clients outside Sofia', kind: 'stat', query: { selector: { filter: { fact: { geo_city: { ne: 'Sofia' } } } }, projection: 'people' } },
     // scatter: one dot per person at (lon, lat) — the only fact pair that's inherently
     // spatial, tinted by lifecycle stage so it doubles as a crude customer map
-    { title: 'Customer locations (lat vs lon)', kind: 'scatter', query: { scatter: { x: 'geo_lon', y: 'geo_lat', colorBy: 'client_status' } } },
+    { title: 'Geolocated customers (lat vs lon)', kind: 'scatter', query: { scatter: { x: 'geo_lon', y: 'geo_lat', colorBy: 'client_status' } } },
   ]],
 ]
 
