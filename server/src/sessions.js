@@ -6,10 +6,24 @@ const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm
 
 let db
 let passports
+const resolveHooks = []
+
+// Register a callback to run on every /sessions/resolve, merging its returned
+// object into the response. Lets a plugin piggyback data onto the one request
+// every client SDK already makes on load — e.g. an ad-identity manifest
+// (server-plugin-audiences), or a geolocation lookup — without a second
+// round-trip. Called with { passportId, sessionId, req }; may return a plain
+// object or a Promise of one. A hook that throws is logged and skipped — one
+// misbehaving plugin never breaks session resolution for everyone else.
+export function onResolve(fn) {
+  if (typeof fn !== 'function') throw new Error('sessions.onResolve: fn must be a function')
+  resolveHooks.push(fn)
+}
 
 export async function init(options) {
   db = options.db
   passports = options.passports
+  resolveHooks.length = 0   // fresh boot ⇒ no hooks registered yet; plugins re-add theirs during their own init
   const exists = await db.schema.hasTable(TABLE)
   if (!exists) {
     await db.schema.createTable(TABLE, t => {
@@ -80,7 +94,17 @@ export function register(app) {
       const resolvedPassport = await passports.identify(passportId || null)
       let session = await findActive(resolvedPassport).catch(() => null)
       if (!session) session = await start(resolvedPassport, utms)
-      res.json({ passportId: resolvedPassport, sessionId: session.id })
+
+      const extra = {}
+      for (const hook of resolveHooks) {
+        try {
+          const result = await hook({ passportId: resolvedPassport, sessionId: session.id, req })
+          if (result && typeof result === 'object') Object.assign(extra, result)
+        } catch (err) {
+          logger.warn({ err }, 'sessions.onResolve hook failed')
+        }
+      }
+      res.json({ passportId: resolvedPassport, sessionId: session.id, ...extra })
     } catch (err) {
       logger.error({ err }, 'Failed to resolve session')
       res.status(500).json({ error: 'Failed to resolve session' })
