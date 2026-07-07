@@ -85,7 +85,7 @@ Images are **parallel** (no `sequential`) and **don't** use the velocity gate.
 | `minViewportRatio` | `0.5` | how much of the player must be visible to count playback |
 | `rootMargin` | `'0% 0% 0% 0%'` | full viewport |
 | `countMuted` | `true` | count muted playback as watched |
-| `selector` / `idAttribute` | `'[data-wb-video]'` | discovery |
+| `selector` / `idAttribute` | `'video[data-wb-video], [data-wb-video] video'` | discovery |
 
 > The first time a video is watched, the server may transcribe the watched portion (Whisper + frame
 > vision), which calls a model. Set `video:false` to skip video entirely.

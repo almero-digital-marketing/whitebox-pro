@@ -9,6 +9,32 @@ import createLink from './link.js'
 const DEFAULT_FLUSH_INTERVAL_MS = 5000
 const DEFAULT_BATCH_SIZE = 10
 
+function preview(text, max = 60) {
+  if (!text) return ''
+  const trimmed = text.trim()
+  return trimmed.length > max ? trimmed.slice(0, max) + '…' : trimmed
+}
+
+// One readable line per captured event, regardless of kind — logged the
+// moment something is detected (enqueue), separate from the flush log below
+// (which only says how many/how, not what).
+function describeEvent(e) {
+  switch (e.type) {
+    case 'engagement.text':
+      return `text "${e.id}" (${e.length_chars} chars, ${e.ms_spent}ms${e.partial ? ', partial' : ''}): ${preview(e.text)}`
+    case 'engagement.image':
+      return `image "${e.id}" ${e.src} (${e.ms_spent}ms${e.partial ? ', partial' : ''})`
+    case 'engagement.video':
+      return `video "${e.id}" ${e.total_watched_s}s/${e.duration_s}s (${e.completion_pct}%${e.partial ? ', partial' : ''})`
+    case 'engagement.link':
+      return `link "${e.id}" -> ${e.href}`
+    case 'engagement.section':
+      return `section "${e.id}" (${e.dwell_ms}ms): ${preview(e.text)}`
+    default:
+      return e.type
+  }
+}
+
 export default function engagementPlugin(localOptions = {}) {
   return {
     name: 'engagement',
@@ -24,6 +50,7 @@ export default function engagementPlugin(localOptions = {}) {
       let linkTracker = null
 
       function enqueue(event) {
+        logger?.debug?.('whitebox: %s', describeEvent(event))
         buffer.push(event)
         if (buffer.length >= (options.batchSize ?? DEFAULT_BATCH_SIZE)) flush()
         else if (!flushTimer) scheduleFlush()
@@ -33,12 +60,47 @@ export default function engagementPlugin(localOptions = {}) {
         flushTimer = setTimeout(flush, options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS)
       }
 
+      // Progress ticks fire every ~250ms while a block is being read — far too
+      // noisy to log every tick, but logging *nothing* meant there was no way
+      // to tell "not tracked at all" apart from "tracked, just hasn't reached
+      // the dwell threshold yet". Log only the reading/paused transitions.
+      const readingIds = new Set()
+      function makeProgressHandler(kind) {
+        return (p) => {
+          const wasReading = readingIds.has(p.id)
+          if (p.reading && !wasReading) {
+            readingIds.add(p.id)
+            logger?.debug?.('whitebox: %s reading started: "%s" (%d%% of %dms required)', kind, p.id, Math.round(p.ratio * 100), p.required_ms)
+          } else if (!p.reading && wasReading) {
+            readingIds.delete(p.id)
+            logger?.debug?.('whitebox: %s reading paused: "%s" (%d%% of %dms required)', kind, p.id, Math.round(p.ratio * 100), p.required_ms)
+          }
+          emitter.emit('engagement.progress', { kind, ...p })
+        }
+      }
+
+      // The WS path resolves the passport/session from the socket connection
+      // itself (see server connect.js), but the HTTP fallback (and sendBeacon,
+      // which can't set headers) has no connection to key off — the server's
+      // /engagement/events route requires passport_id as a query param.
+      function eventsPath() {
+        const params = new URLSearchParams()
+        const passportId = core.getPassportId?.()
+        const sessionId = core.getSessionId?.()
+        if (passportId) params.set('passport_id', passportId)
+        if (sessionId) params.set('session_id', sessionId)
+        const qs = params.toString()
+        return qs ? `/engagement/events?${qs}` : '/engagement/events'
+      }
+
       function flush() {
         if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
         if (!buffer.length) return
         const batch = buffer.splice(0)
-        if (transport?.isConnected?.() && transport.send('engagement.batch', { events: batch })) return
-        http.request('/engagement/events', { method: 'POST', body: { events: batch } })
+        const viaTransport = transport?.isConnected?.() && transport.send('engagement.batch', { events: batch })
+        logger?.debug?.('whitebox: flushing %d engagement event(s) via %s', batch.length, viaTransport ? 'transport' : 'http')
+        if (viaTransport) return
+        http.request(eventsPath(), { method: 'POST', body: { events: batch } })
           .catch(err => logger?.warn?.('engagement flush failed', err))
       }
 
@@ -47,7 +109,7 @@ export default function engagementPlugin(localOptions = {}) {
         const beaconFlush = () => {
           if (!buffer.length) return
           const batch = buffer.splice(0)
-          http.beacon('/engagement/events', { events: batch })
+          http.beacon(eventsPath(), { events: batch })
         }
         window.addEventListener('pagehide', beaconFlush)
         window.addEventListener('visibilitychange', () => {
@@ -75,7 +137,7 @@ export default function engagementPlugin(localOptions = {}) {
             })
             emitter.emit('engagement.text', { id, kind, level, text: chunk, length_chars, ms_spent, url, partial })
           },
-          onProgress: (p) => emitter.emit('engagement.progress', { kind: 'text', ...p }),
+          onProgress: makeProgressHandler('text'),
         })
         if (typeof window !== 'undefined') queue(async () => textTracker.start())
       }
@@ -93,7 +155,7 @@ export default function engagementPlugin(localOptions = {}) {
             })
             emitter.emit('engagement.image', { id, kind, src, alt, width, height, ms_spent, url, partial })
           },
-          onProgress: (p) => emitter.emit('engagement.progress', { kind: 'image', ...p }),
+          onProgress: makeProgressHandler('image'),
         })
         if (typeof window !== 'undefined') queue(async () => imageTracker.start())
       }

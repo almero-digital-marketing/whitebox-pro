@@ -55,6 +55,7 @@ export async function resolveImage(url, providedDescription) {
   const { buf } = await fetchAndResize(url)
   const dataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`
   const description = await ai.vision(IMAGE_PROMPT, dataUrl, { detail: image.detail, maxTokens: 200 })
+  logger.info({ url }, 'Image described: %s', description)
 
   return upsert({
     url, kind: 'image', text: description, source_kind: 'auto',
@@ -103,8 +104,11 @@ export async function resolveVideo(url, providedTranscript) {
     const audioPath = await extractAudio(videoPath, tmp)
 
     const [whisper, frames] = await Promise.all([
-      ai.transcribe(audioPath, { response_format: 'verbose_json' }),
-      video.extractVisual ? extractAndDescribeFrames(videoPath, tmp) : Promise.resolve([]),
+      ai.transcribe(audioPath, { response_format: 'verbose_json' }).then(w => {
+        logger.info({ url }, 'Video transcribed: %s', w.text || '(no speech detected)')
+        return w
+      }),
+      video.extractVisual ? extractAndDescribeFrames(videoPath, tmp, url) : Promise.resolve([]),
     ])
 
     const segments = mergeSegments(whisper.segments || [], frames)
@@ -152,7 +156,7 @@ function extractAudio(videoPath, tmpDir) {
   })
 }
 
-async function extractAndDescribeFrames(videoPath, tmpDir) {
+async function extractAndDescribeFrames(videoPath, tmpDir, url) {
   const framesDir = path.join(tmpDir, 'frames')
   await mkdtemp(framesDir).catch(() => {})
 
@@ -163,7 +167,13 @@ async function extractAndDescribeFrames(videoPath, tmpDir) {
     const result = []
     ffmpeg(videoPath)
       .outputOptions([
-        `-vf select='gt(scene\\,${scene})+lt(prev_selected_t\\,t-${period})',scale=768:768:force_original_aspect_ratio=decrease,showinfo`,
+        // format=yuvj420p forces full-range YUV before the mjpeg encoder opens.
+        // Without it, source video encoded with standard tv-range (limited)
+        // YUV — the common case — makes the encoder refuse to open at all
+        // ("ff_frame_thread_encoder_init failed"), which fluent-ffmpeg surfaces
+        // as a hard process failure even when zero frames matched the scene
+        // filter (an otherwise harmless, valid outcome for static/slow clips).
+        `-vf select='gt(scene\\,${scene})+lt(prev_selected_t\\,t-${period})',scale=768:768:force_original_aspect_ratio=decrease,format=yuvj420p,showinfo`,
         '-vsync', 'vfr',
         '-q:v', '5',
       ])
@@ -185,6 +195,7 @@ async function extractAndDescribeFrames(videoPath, tmpDir) {
       const buf = await sharp(framePath).jpeg({ quality: 80 }).toBuffer()
       const dataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`
       const desc = await ai.vision(FRAME_PROMPT, dataUrl, { detail: video.visionDetail, maxTokens: 80 })
+      logger.info({ url, t: frame.t }, 'Frame described [%ds]: %s', Math.round(frame.t), desc)
       return { t: frame.t, description: desc }
     } catch (err) {
       logger.warn({ err, t: frame.t }, 'Frame describe failed')
@@ -277,7 +288,17 @@ export function sliceVideo(content, intervalsOrStart, endS) {
 // -------- store --------
 
 async function upsert(row) {
-  const [out] = await db(TABLE).insert(row).onConflict('url').merge().returning('*')
+  // Explicit JSON.stringify for the jsonb columns rather than relying on the
+  // driver to serialize plain objects/arrays — segments/meta hold free-form
+  // AI-generated text (Whisper transcripts, vision captions) that can embed
+  // quotes/newlines, and letting those through un-stringified has produced
+  // invalid JSON at the wire level ("invalid input syntax for type json").
+  const prepared = {
+    ...row,
+    segments: row.segments != null ? JSON.stringify(row.segments) : row.segments,
+    meta: row.meta != null ? JSON.stringify(row.meta) : row.meta,
+  }
+  const [out] = await db(TABLE).insert(prepared).onConflict('url').merge().returning('*')
   return out
 }
 

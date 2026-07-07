@@ -22,7 +22,7 @@ function setup({ prov = provider } = {}) {
     passports: { identify: vi.fn(async () => 'p1'), link: vi.fn(async () => {}) },
     sessions: { resolve: vi.fn(async () => ({ id: 7 })) },
     awareness, notify,
-    logger: { warn: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     router: { byName: () => prov },
   })
   return { inserted, awareness, notify }

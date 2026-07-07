@@ -85,6 +85,10 @@ export async function handle(req, res) {
       return null
     })
     if (row) {
+      logger.info(
+        { outboxId: row.id, to: row.to, status, severity: severity || null },
+        'Mail %s: %s', status, row.to,
+      )
       await notify(`mail.${status}`, { type: `mail.${status}`, data: row })
       if (RECORDED_STATUSES.has(status)) await recordTrackedEvent(row, status)
     }

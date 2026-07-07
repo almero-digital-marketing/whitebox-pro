@@ -26,6 +26,11 @@ export function readDepth({ length_chars = 0, partial = false } = {}) {
   return { engagement: Math.round(engagement * 100) / 100, depth }
 }
 
+function preview(text, max = 100) {
+  const trimmed = (text || '').trim()
+  return trimmed.length > max ? trimmed.slice(0, max) + '…' : trimmed
+}
+
 export async function consume(visitor, msg) {
   if (!msg?.text) return
   const length_chars = msg.length_chars ?? msg.text.length
@@ -50,5 +55,11 @@ export async function consume(visitor, msg) {
       engagement,                            // 0–1 depth weight (heading ≈ 0.05, full paragraph ≈ 1)
       depth,                                 // 'glance' | 'read' | 'deep'
     },
-  }).catch(err => logger.warn({ err }, 'text.consume failed'))
+  })
+    .then(() => logger.info(
+      { url: msg.url },
+      'Text read: "%s" (%s, %d chars%s): %s',
+      msg.id, depth, length_chars, partial ? ', partial' : '', preview(msg.text),
+    ))
+    .catch(err => logger.warn({ err }, 'text.consume failed'))
 }

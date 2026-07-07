@@ -148,6 +148,64 @@ describe('tracker state machine', () => {
     tracker.stop()
   })
 
+  it('sequential mode: a carousel (horizontal-scrolling ancestor) reads left-to-right, not by top', async () => {
+    const onRead = vi.fn()
+    const tracker = makeTracker({
+      requiredMs: () => 60,
+      onRead,
+      options: { tickMs: 20, minPartialRatio: 0.5, sequential: true },
+    })
+    tracker.start()
+    document.body.innerHTML = `<div id="carousel"><p>left</p><p>right</p></div>`
+    const carousel = document.getElementById('carousel')
+    // jsdom has no real layout engine — simulate a horizontally-scrolling
+    // container the way the browser would report one.
+    carousel.style.overflowX = 'auto'
+    Object.defineProperty(carousel, 'scrollWidth', { value: 2000, configurable: true })
+    Object.defineProperty(carousel, 'clientWidth', { value: 800, configurable: true })
+    const [a, b] = carousel.children
+    // Same vertical position (side by side) — only left/right distinguishes them.
+    a.getBoundingClientRect = () => ({ top: 100, bottom: 120, left: 0, right: 400, height: 20 })
+    b.getBoundingClientRect = () => ({ top: 100, bottom: 120, left: 400, right: 800, height: 20 })
+    tracker.observe(a); tracker.observe(b)
+    FakeIO.last.trigger(a, 1.0); FakeIO.last.trigger(b, 1.0)
+    await new Promise(r => setTimeout(r, 100))
+    expect(onRead).toHaveBeenCalledTimes(1)
+    expect(onRead.mock.calls[0][0].text).toBe('left')
+    await new Promise(r => setTimeout(r, 100))
+    expect(onRead).toHaveBeenCalledTimes(2)
+    expect(onRead.mock.calls[1][0].text).toBe('right')
+    tracker.stop()
+  })
+
+  it('sequential mode: horizontal-axis elements ignore the vertical reading-line release', async () => {
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true })
+    Object.defineProperty(window, 'scrollY', { value: 2000, configurable: true })
+    const tracker = createTracker({
+      gates: [{ isOpen: () => true }],
+      requiredMs: () => 10_000,
+      buildPayload: (el) => ({ text: el.textContent }),
+      onRead: vi.fn(),
+      options: { tickMs: 20, sequential: true, readingLineRatio: 0.25 },
+    })
+    tracker.start()
+    document.body.innerHTML = `<div id="carousel"><p>A</p><p>B</p></div>`
+    const carousel = document.getElementById('carousel')
+    carousel.style.overflowX = 'auto'
+    Object.defineProperty(carousel, 'scrollWidth', { value: 2000, configurable: true })
+    Object.defineProperty(carousel, 'clientWidth', { value: 800, configurable: true })
+    const [a, b] = carousel.children
+    // Same rect shape that releases a VERTICAL block in the test above
+    // (center way above the reading line) — must not release a horizontal one.
+    a.getBoundingClientRect = () => ({ top: -250, bottom: 50, left: 0, right: 400, height: 300 })
+    b.getBoundingClientRect = () => ({ top: 150, bottom: 450, left: 400, right: 800, height: 300 })
+    tracker.observe(a); tracker.observe(b)
+    FakeIO.last.trigger(a, 1.0); FakeIO.last.trigger(b, 1.0)
+    await new Promise(r => setTimeout(r, 60))
+    expect([...tracker._active]).toContain(a)   // leftmost still holds focus, unaffected by vertical position
+    tracker.stop()
+  })
+
   it('sequential mode: each group has an independent focus', async () => {
     const onRead = vi.fn()
     const tracker = createTracker({

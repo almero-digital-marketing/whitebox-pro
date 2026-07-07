@@ -22,7 +22,7 @@ const provider = {
 
 function setup({ prov = provider } = {}) {
   const notify = vi.fn(async () => {})
-  status.init({ awareness: { record: vi.fn() }, notify, logger: { error: vi.fn() }, router: { byName: () => prov } })
+  status.init({ awareness: { record: vi.fn() }, notify, logger: { info: vi.fn(), error: vi.fn() }, router: { byName: () => prov } })
   return { notify }
 }
 

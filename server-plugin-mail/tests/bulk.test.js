@@ -76,11 +76,11 @@ function makeBulk({ outbox: outboxOverrides, suppressedEmails = [], invalidEmail
   attachments.saveUrl.mockReset().mockImplementation(async (url) => `/mail/attachments/${url.split('/').pop()}`)
   // Init the suppression/invalid singletons with a db that yields the seeded sets.
   const db = makeListDb({ suppressedEmails, invalidEmails })
-  suppressions.init({ db, logger: { error: vi.fn() } })
-  invalid.init({ db, logger: { error: vi.fn() } })
+  suppressions.init({ db, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } })
+  invalid.init({ db, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } })
   bulk.init({
     notify: notify ?? vi.fn(async () => {}),
-    logger: { warn: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     provider,
   })
   return { bulk, outbox: ob }

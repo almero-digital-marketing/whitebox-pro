@@ -32,7 +32,7 @@ function makeTracking({ parsed = {}, verifyResult = true, trackResult = { id: 1,
   }
   const notify = vi.fn(async () => {})
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { error: vi.fn(), warn: vi.fn() }
+  const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() }
   tracking.init({ notify, awareness, logger, provider })
   return { tracking, provider, outbox, suppressions, invalid, notify, awareness, logger }
 }
@@ -238,7 +238,7 @@ describe('tracking.handle awareness recording (user-story interleaving)', () => 
     outbox.track.mockReset().mockImplementation(async () => row)
     const notify = vi.fn(async () => {})
     const awareness = { record: vi.fn(async () => { throw new Error('vector store down') }) }
-    const logger = { error: vi.fn(), warn: vi.fn() }
+    const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() }
     tracking.init({ notify, awareness, logger, provider })
     const res = makeRes()
     await tracking.handle(req(), res)
@@ -251,7 +251,7 @@ describe('tracking.handle awareness recording (user-story interleaving)', () => 
     const provider = { name: 'mailgun', verifySignature: vi.fn(() => true), parseTracking: vi.fn(() => ({ event: 'opened', messageId: 'mg-1' })) }
     outbox.track.mockReset().mockImplementation(async () => row)
     const notify = vi.fn(async () => {})
-    const logger = { error: vi.fn(), warn: vi.fn() }
+    const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() }
     tracking.init({ notify, /* awareness omitted */ logger, provider })
     const res = makeRes()
     await expect(tracking.handle(req(), res)).resolves.not.toThrow()

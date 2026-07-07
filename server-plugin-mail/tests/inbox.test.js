@@ -51,7 +51,7 @@ function makeInbox({ notify, sessions, passports, attachments: attachmentsOverri
     passports: passports ?? { identify: vi.fn(async () => 'passport-1'), link: vi.fn(async () => {}) },
     sessions: sessions ?? { resolve: vi.fn(async () => ({ id: 1, passport_id: 'passport-1' })) },
     notify: notify ?? vi.fn(async () => {}),
-    logger: { warn: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     provider: {
       name: 'mailgun',
       ownsAddress: (a) => typeof a === 'string' && a.endsWith(`@${DOMAIN}`),

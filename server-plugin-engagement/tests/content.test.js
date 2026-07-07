@@ -22,13 +22,21 @@ function makeDb() {
         onConflict: () => ({
           merge: () => ({
             returning: async () => {
-              const existing = rows.find(r => r.url === data.url)
+              // Real jsonb columns round-trip: the driver stores whatever
+              // JSON text it's given and parses it back into JS on read —
+              // mirror that instead of storing the raw (possibly stringified) value.
+              const parsed = {
+                ...data,
+                segments: typeof data.segments === 'string' ? JSON.parse(data.segments) : data.segments,
+                meta: typeof data.meta === 'string' ? JSON.parse(data.meta) : data.meta,
+              }
+              const existing = rows.find(r => r.url === parsed.url)
               if (existing) {
-                Object.assign(existing, data)
+                Object.assign(existing, parsed)
                 return [existing]
               }
-              rows.push(data)
-              return [data]
+              rows.push(parsed)
+              return [parsed]
             },
           }),
         }),

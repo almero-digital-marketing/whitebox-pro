@@ -32,6 +32,10 @@ export async function handle(req, res) {
       return null
     })
     if (row) {
+      logger.info(
+        { outboxId: row.id, to: row.to, status, provider: provider.name, errorMessage },
+        'SMS %s: %s', status, row.to,
+      )
       await notify(`sms.${status}`, { type: `sms.${status}`, data: row })
 
       // A hard non-delivery / blacklist means don't retry — but blocklist only

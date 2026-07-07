@@ -8,6 +8,11 @@ export function init(deps) {
   logger = deps.logger
 }
 
+function preview(text, max = 100) {
+  const trimmed = (text || '').trim()
+  return trimmed.length > max ? trimmed.slice(0, max) + '…' : trimmed
+}
+
 export async function consume(visitor, msg) {
   if (!msg?.text) return
   await awareness.record({
@@ -22,5 +27,11 @@ export async function consume(visitor, msg) {
     text: msg.text,
     dwell_ms: msg.dwell_ms || null,
     meta: msg.meta || null,
-  }).catch(err => logger.warn({ err }, 'section.consume failed'))
+  })
+    .then(() => logger.info(
+      { url: msg.url },
+      'Section read: "%s" (%dms): %s',
+      msg.id || msg.url, msg.dwell_ms || 0, preview(msg.text),
+    ))
+    .catch(err => logger.warn({ err }, 'section.consume failed'))
 }

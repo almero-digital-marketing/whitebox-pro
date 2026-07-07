@@ -106,6 +106,10 @@ export async function ingestRecords({ source, customer, records: incoming = [] }
     }
   }
 
+  logger.info(
+    { source, passportId, passportCreated: created, accepted, dropped: incoming.length - accepted },
+    'CRM records ingested: %d from %s', accepted, source,
+  )
   return {
     passport_id: passportId,
     passport_created: created,
@@ -155,6 +159,10 @@ export async function ingestFacts({ source, customer, facts: incoming = [] }) {
     }
   }
 
+  logger.info(
+    { source, passportId, passportCreated: created, accepted, dropped: incoming.length - accepted },
+    'CRM facts ingested: %d from %s', accepted, source,
+  )
   return {
     passport_id: passportId,
     passport_created: created,

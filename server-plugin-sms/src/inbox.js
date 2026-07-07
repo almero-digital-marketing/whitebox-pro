@@ -64,6 +64,10 @@ export async function handle(req, res) {
     keyword,
   }).returning('*')
 
+  logger.info(
+    { inboxId: row.id, from, provider: provider.name, keyword },
+    'SMS received: %s%s', from, keyword ? ` (${keyword})` : '',
+  )
   await notify('sms.received', { type: 'sms.received', data: row })
 
   if (awareness && row.passport_id) {

@@ -108,6 +108,10 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
     payload:  clean,
   }).catch(err => logger?.warn?.({ err }, 'conversions: audit insert failed'))
 
+  logger?.info?.(
+    { eventId, name, kind, passportId, value: clean.value ?? null, currency: clean.currency ?? null, networks },
+    'Conversion %s: %s', name, networks.skipped ? `skipped (${networks.skipped})` : Object.keys(networks).join(', ') || 'awareness-only',
+  )
   return { event_id: eventId, name, status: 'recorded', networks }
 }
 
