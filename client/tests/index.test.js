@@ -35,6 +35,27 @@ describe('whitebox factory', () => {
     expect(localStorage.getItem('wb:passport_id')).toBe('p-1')
   })
 
+  it('emits session.resolved with the FULL response (extra keys a server onResolve hook added)', async () => {
+    mockFetch(async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ sessionId: 7, passportId: 'p-1', geo: { country: 'BG', city: 'Sofia' } }),
+    }))
+    const wb = whitebox({ url: 'https://api.example.com', transport: false, logger: { warn: () => {} } })
+    const seen = vi.fn()
+    wb.on('session.resolved', seen)
+    await wb.ready
+    expect(seen).toHaveBeenCalledWith({ sessionId: 7, passportId: 'p-1', geo: { country: 'BG', city: 'Sofia' } })
+  })
+
+  it('does not emit session.resolved when the resolve call fails', async () => {
+    mockFetch(async () => ({ ok: false, status: 500, text: async () => '{}' }))
+    const wb = whitebox({ url: 'https://api.example.com', transport: false, logger: { warn: () => {} } })
+    const seen = vi.fn()
+    wb.on('session.resolved', seen)
+    await wb.ready
+    expect(seen).not.toHaveBeenCalled()
+  })
+
   it('emits ready event after init', async () => {
     mockFetch(async () => ({ ok: true, status: 200, text: async () => '{}' }))
     const wb = whitebox({ url: 'https://api.example.com', transport: false, logger: { warn: () => {} } })

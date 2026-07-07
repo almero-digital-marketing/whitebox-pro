@@ -100,6 +100,11 @@ export default function whitebox(options = {}) {
         passportId = res.passportId
         identity.setPassportId(res.passportId)
       }
+      // The full response — anything a server-side sessions.onResolve hook
+      // added (ad_identity_manifest, a geolocation lookup, …) rides along here.
+      // Symmetric with the server hook: plugins subscribe instead of the core
+      // knowing about each one. `wb.on('session.resolved', res => { … })`.
+      if (res) emitter.emit('session.resolved', res)
     } catch (err) {
       logger?.warn?.('whitebox: session resolve failed', err)
     }
