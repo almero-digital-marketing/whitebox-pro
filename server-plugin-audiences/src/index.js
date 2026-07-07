@@ -58,6 +58,7 @@ export function audiences(options = {}) {
         selector: ctx.selector,
         ai: ctx.ai,
         db: ctx.db,
+        facts: ctx.facts,
         logger,
       })
 

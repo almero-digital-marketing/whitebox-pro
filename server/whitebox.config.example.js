@@ -74,6 +74,19 @@ export default async (runtime) => ({
     },
   },
 
+  // Human labels for fact keys, shown wherever a fact is surfaced to a person or
+  // an AI (analytics compose vocabulary, audience rule authoring) instead of the
+  // raw key. Plugins register sensible defaults for the keys they own (e.g.
+  // server-plugin-geolocation → geo_city: "City") — this is only for keys with
+  // no such owner, above all whitebox-pro-server-plugin-crm's fact keys, which
+  // come straight from YOUR external CRM's field names and can't have a
+  // built-in default. An entry here always wins over a plugin's default.
+  facts: {
+    labels: {
+      // loyalty_tier: 'Loyalty tier',
+    },
+  },
+
   // MCP endpoint + auth. `auth` is a pluggable verifier: a static Bearer secret
   // by default (string or { secret }), or a composed one from an external
   // package. For Auth0, add at the top:

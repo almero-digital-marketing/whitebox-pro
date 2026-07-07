@@ -152,3 +152,43 @@ describe('validation', () => {
     await expect(facts.record({ passport_id: 'p', key: 'k' })).rejects.toThrow(/value/)
   })
 })
+
+describe('facts.describe / label — human labels for fact keys', () => {
+  it('label() falls back to the raw key when nothing is registered', () => {
+    facts.init({ db, passports, logger })
+    expect(facts.label('geo_city')).toBe('geo_city')
+  })
+
+  it('describe() registers a label that label() then returns', () => {
+    facts.init({ db, passports, logger })
+    facts.describe('geo_city', 'City')
+    expect(facts.label('geo_city')).toBe('City')
+  })
+
+  it('a later describe() for the same key is a no-op — first write wins', () => {
+    facts.init({ db, passports, logger })
+    facts.describe('geo_city', 'City')
+    facts.describe('geo_city', 'Town')   // e.g. a second plugin describing the same key
+    expect(facts.label('geo_city')).toBe('City')
+  })
+
+  it('config-seeded labels (init deps.config.facts.labels) win over a plugin default', () => {
+    facts.init({ db, passports, logger, config: { facts: { labels: { geo_city: 'Location' } } } })
+    facts.describe('geo_city', 'City')   // a plugin's default, registered after boot
+    expect(facts.label('geo_city')).toBe('Location')
+  })
+
+  it('describedKeys() lists every registered { key, label } pair', () => {
+    facts.init({ db, passports, logger, config: { facts: { labels: { geo_city: 'City' } } } })
+    facts.describe('geo_region', 'Region')
+    expect(facts.describedKeys()).toEqual(
+      expect.arrayContaining([{ key: 'geo_city', label: 'City' }, { key: 'geo_region', label: 'Region' }])
+    )
+  })
+
+  it('init() resets the registry — a fresh boot has no labels until re-registered', () => {
+    facts.init({ db, passports, logger, config: { facts: { labels: { geo_city: 'City' } } } })
+    facts.init({ db, passports, logger })   // simulate a reboot with no config labels
+    expect(facts.label('geo_city')).toBe('geo_city')
+  })
+})

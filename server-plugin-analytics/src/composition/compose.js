@@ -4,11 +4,11 @@
 // and content tags discovered from the DB. We use ctx.ai.prompt (text) + strict
 // JSON parsing rather than generateObject, to avoid coupling to a zod version.
 
-let db, ai, selector, awareness, logger
+let db, ai, selector, awareness, facts, logger
 let schemaCache = null
 
 export function init(deps) {
-  ({ db, ai, selector, awareness, logger } = deps)
+  ({ db, ai, selector, awareness, facts, logger } = deps)
 }
 
 // Discover the queryable vocabulary so the model only references real keys/tags.
@@ -19,7 +19,10 @@ export async function discoverSchema({ refresh = false } = {}) {
   for (const { key } of keyRows.slice(0, 20)) {
     const vals = await db('whitebox_facts').where({ key }).distinct('value').limit(8)
     const sample = vals.map(v => v.value).filter(v => v != null && typeof v !== 'object').slice(0, 8)
-    factKeys.push({ key, sample })
+    // The human label a plugin registered (or an operator set in whitebox.config.js's
+    // facts.labels) — falls back to the raw key when nothing is registered, so an
+    // unlabeled fact degrades to the prior (prompt-guessed) behavior, not a crash.
+    factKeys.push({ key, label: facts?.label ? facts.label(key) : key, sample })
   }
   // Event dimensions reach their typed homes (docs/event-attributes.md): the action
   // is meta.event; campaign/source are session UTM columns; channel is on the event.
@@ -36,7 +39,11 @@ export async function discoverSchema({ refresh = false } = {}) {
 }
 
 function systemPrompt({ factKeys, events, attrKeys, campaigns, sources, channels }) {
-  const keyList = factKeys.map(k => `  - ${k.key}${k.sample.length ? ` (e.g. ${k.sample.map(JSON.stringify).join(', ')})` : ''}`).join('\n')
+  const keyList = factKeys.map(k => {
+    const sample = k.sample.length ? ` (e.g. ${k.sample.map(JSON.stringify).join(', ')})` : ''
+    const named = k.label !== k.key ? ` — call it "${k.label}" in titles` : ''
+    return `  - ${k.key}${named}${sample}`
+  }).join('\n')
   return `You compose analytics widgets for a beauty-clinic customer database (WhiteBox).
 Turn the user's question into 1–4 widgets. Output ONLY a JSON array — no prose, no code fences.
 
@@ -99,7 +106,8 @@ HARD RULES for measures (count / sum / distinct_passports):
   top-level "scope" (a people sub-filter) — NEVER fold it into the metric's filter. A campaign metric is already
   scoped by "session":{"utm_campaign":"<c>"}; only add "scope" for an ADDITIONAL audience constraint.
 
-FACT keys:
+FACT keys — a key marked "call it ... in titles" has a human label: use that label when
+writing a widget's "title", but ALWAYS use the raw key (before the —) inside "query":
 ${keyList}
 Event actions (attr:event): ${events.join(', ')}
 Other event attributes (attr:<key>): ${attrKeys.join(', ')}
@@ -218,7 +226,7 @@ const isMeaningfulName = (n) => !!n && !UNTITLED.test(n) && n.trim().length > 1
 function suggestPrompt(schema, { name, widgets }) {
   const { factKeys, events, attrKeys, campaigns, sources, channels } = schema
   const vocab = [
-    `Facts: ${factKeys.map((k) => k.key).join(', ')}`,
+    `Facts: ${factKeys.map((k) => k.label).join(', ')}`,
     `Events: ${events.join(', ')}`,
     attrKeys.length ? `Event attributes: ${attrKeys.join(', ')}` : '',
     campaigns.length ? `Campaigns: ${campaigns.join(', ')}` : '',

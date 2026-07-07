@@ -18,12 +18,13 @@ const DRAFT = z.object({
   }),
 })
 
-let selector, ai, db, logger
+let selector, ai, db, facts, logger
 
 export function init(deps) {
   selector = deps.selector
   ai = deps.ai
   db = deps.db
+  facts = deps.facts
   logger = deps.logger
 }
 
@@ -77,10 +78,12 @@ export async function preview(rule /*, { sample } */) {
 }
 
 // Fact keys the base has — for rule authoring + discovery (was a bespoke cache;
-// now read straight from core facts).
+// now read straight from core facts). `label` is a plugin-registered or
+// config-set human name (whitebox.config.js facts.labels) — falls back to the
+// raw key when nothing is registered, so the UI always has something to show.
 export async function availableFacts() {
   const rows = await db('whitebox_facts').distinct('key').orderBy('key')
-  return rows.map(r => ({ key: r.key }))
+  return rows.map(r => ({ key: r.key, label: facts?.label ? facts.label(r.key) : r.key }))
 }
 
 // A segment's source ({ select } | { funnel, slot, status }) is rule-shaped, so the

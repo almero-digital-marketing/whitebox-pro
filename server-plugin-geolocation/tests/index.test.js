@@ -7,7 +7,7 @@ import { geolocation } from '../src/index.js'
 // core would on a real /sessions/resolve.
 function makeCtx({ lookupImpl, providerName = 'test-provider' } = {}) {
   let hook
-  const facts = { record: vi.fn(async () => {}) }
+  const facts = { record: vi.fn(async () => {}), describe: vi.fn() }
   const sessions = { onResolve: vi.fn(fn => { hook = fn }) }
   const logger = { child: () => logger, info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const provider = { name: providerName, lookup: vi.fn(lookupImpl ?? (async () => null)) }
@@ -27,6 +27,24 @@ describe('geolocation() — provider contract', () => {
   it('throws when the provider is missing lookup()', async () => {
     const { ctx } = makeCtx()
     await expect(geolocation({ provider: { name: 'bad' } }).register({}, ctx)).rejects.toThrow(/missing required method lookup/)
+  })
+})
+
+describe('geolocation() — registers default fact labels', () => {
+  it('describes all 5 geo_* keys with a human label when recordFacts is on (default)', async () => {
+    const { ctx, provider } = makeCtx()
+    await geolocation({ provider }).register({}, ctx)
+    expect(ctx.facts.describe).toHaveBeenCalledWith('geo_country', 'Country')
+    expect(ctx.facts.describe).toHaveBeenCalledWith('geo_region', 'Region')
+    expect(ctx.facts.describe).toHaveBeenCalledWith('geo_city', 'City')
+    expect(ctx.facts.describe).toHaveBeenCalledWith('geo_lat', 'Latitude')
+    expect(ctx.facts.describe).toHaveBeenCalledWith('geo_lon', 'Longitude')
+  })
+
+  it('skips registering labels when recordFacts: false — nothing to label', async () => {
+    const { ctx, provider } = makeCtx()
+    await geolocation({ provider, recordFacts: false }).register({}, ctx)
+    expect(ctx.facts.describe).not.toHaveBeenCalled()
   })
 })
 
@@ -119,7 +137,7 @@ describe('geolocation() — recordFacts (default on)', () => {
 describe('geolocation() — defensive when core sessions.onResolve is unavailable', () => {
   it('warns and does not throw', async () => {
     const logger = { child: () => logger, info: vi.fn(), warn: vi.fn(), error: vi.fn() }
-    const ctx = { sessions: {}, facts: { record: vi.fn() }, logger }
+    const ctx = { sessions: {}, facts: { record: vi.fn(), describe: vi.fn() }, logger }
     await expect(geolocation({ provider: { name: 'p', lookup: async () => null } }).register({}, ctx)).resolves.not.toThrow()
     expect(logger.warn).toHaveBeenCalled()
   })

@@ -32,6 +32,7 @@ the factory form is preferred.
 | `webhooks` | no | outbound webhook worker: `{ concurrency, retries, timeout }` |
 | `passports` | no | `{ lifespans: { fingerprint, phone, email } }` in **days** (merge freshness) |
 | `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, concurrency) |
+| `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
 
 ## The plugin pattern
 
@@ -64,6 +65,32 @@ factory — `mail({ provider: mailgun({…}) })`, `sms({ provider: twilio({…})
 
 Each plugin's full option set is documented in [07 · Channels](07-channels.md) and
 in the plugin's own README.
+
+## Fact labels
+
+Anything that shows a **fact** to a person or an AI — the analytics compose agent's
+vocabulary, the audience rule-authoring panel — prefers a human label over the raw
+key (`geo_city` → "City"). Labels come from two places:
+
+- **Plugin defaults.** A plugin registers a label for the keys it owns (e.g.
+  `server-plugin-geolocation` → `geo_city: "City"`) via `ctx.facts.describe(key, label)`
+  when it registers.
+- **`facts.labels` in `whitebox.config.js`** — for anything a plugin author could
+  never anticipate, above all `server-plugin-crm`'s fact keys, which come straight
+  from *your* external CRM's field names:
+  ```js
+  facts: {
+    labels: {
+      loyalty_tier: 'Loyalty tier',
+    },
+  },
+  ```
+
+**Config always wins.** Labels are seeded from `facts.labels` before any plugin
+registers, and a plugin's `describe()` call only sets a key that's still unset — so
+an entry here can never be clobbered by a plugin default, but a plugin default fills
+in anything you haven't named yourself. A fact with no label anywhere still works
+everywhere; it just falls back to showing its raw key.
 
 ## Auth model
 
