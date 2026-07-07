@@ -91,7 +91,7 @@ async function start() {
     logger.warn('Awareness data wiped (--reset)')
   }
 
-  const app = createApp()
+  const app = createApp({ trustProxy: config.trustProxy })
   const server = http.createServer(app)
 
   connect.init({ server, events, sessions })

@@ -33,6 +33,7 @@ the factory form is preferred.
 | `passports` | no | `{ lifespans: { fingerprint, phone, email } }` in **days** (merge freshness) |
 | `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, concurrency) |
 | `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
+| `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
 
 ## The plugin pattern
 
@@ -91,6 +92,38 @@ registers, and a plugin's `describe()` call only sets a key that's still unset �
 an entry here can never be clobbered by a plugin default, but a plugin default fills
 in anything you haven't named yourself. A fact with no label anywhere still works
 everywhere; it just falls back to showing its raw key.
+
+## Trust proxy
+
+Behind a reverse proxy (nginx, an ALB, Cloudflare — virtually any real
+deployment), Express's `req.ip` and `req.hostname` reflect the **proxy**, not
+the visitor, unless you tell Express how many hops to trust. Two features
+depend on this being set correctly:
+
+- **`server-plugin-geolocation`** reads `req.ip` to look up the visitor's
+  location — without `trustProxy`, every visitor resolves to your proxy's own
+  IP (or `null`, if that's a private address).
+- **`server-plugin-shortener`** reads `req.hostname` to detect the public host
+  for the bare `/:code` redirect.
+
+Set it in `whitebox.config.js`:
+
+```js
+export default async (runtime) => ({
+  trustProxy: 1,   // exactly one reverse proxy in front of this server
+  // …
+})
+```
+
+**Use a hop count or an explicit trusted address/subnet list — never a bare
+`true`.** `true` makes Express trust whatever `X-Forwarded-For` value arrives
+with no verification; if there's no proxy in front actually stripping a
+client-supplied header first (or if a request reaches this server directly,
+bypassing your proxy), anyone can forge that header and spoof an arbitrary IP.
+A hop count of `1` means "trust exactly the immediate one hop, ignore anything
+further left in the header" — see [Express's `trust proxy`
+docs](https://expressjs.com/en/guide/behind-proxies.html) for the full value
+grammar (hop count, IP/subnet, or a custom function).
 
 ## Auth model
 

@@ -15,8 +15,9 @@ single-use claim token in the redirect.
 One whitebox-pro-server, one port. The short host (`go.clinic.com`) is a second
 vhost in the reverse proxy pointing at this server; `baseUrl`'s hostname gates
 the bare `/:code` redirect, and management/claim live under `/shortener/*` on the
-normal API host. The proxy must forward the public `Host` (or set
-`X-Forwarded-Host` + `trust proxy`) so `req.hostname` is the public host.
+normal API host. The proxy must forward the public `Host` header, and the server
+needs `trustProxy` set in `whitebox.config.js` (a hop count, never a bare `true`)
+so `req.hostname` reflects it — see docs/04-configuration.md#trust-proxy.
 
 ## Config
 
