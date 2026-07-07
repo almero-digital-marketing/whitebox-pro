@@ -193,6 +193,10 @@ export async function inboxMail(req, res) {
       logger.error({ err }, 'Failed to enqueue form forward: %d', row.id)
     })
 
+    logger.info(
+      { inboxId: row.id, from, subject, source: 'form', attachments: savedAttachments.length },
+      'Form submission received: %s — %s', from, subject || '(no subject)',
+    )
     await notify('mail.received', { type: 'mail.received', data: row })
 
     if (awareness && row.passport_id) {
@@ -268,6 +272,10 @@ export async function handle(req, res) {
     attachments: savedAttachments.length ? savedAttachments : null,
   }).returning('*')
 
+  logger.info(
+    { inboxId: row.id, from, to, subject, source: 'inbound' },
+    'Mail received: %s — %s', from, subject || '(no subject)',
+  )
   await notify('mail.received', { type: 'mail.received', data: row })
 
   if (awareness && row.passport_id) {

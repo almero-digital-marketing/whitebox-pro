@@ -3,7 +3,7 @@ import * as text from '../src/text.js'
 
 function makeText() {
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   text.init({ awareness, logger })
   return { text, awareness, logger }
 }
@@ -60,5 +60,16 @@ describe('engagement.text.consume', () => {
     const { text, awareness } = makeText()
     await text.consume({ passportId: 'p1' }, { id: 'x' })
     expect(awareness.record).not.toHaveBeenCalled()
+  })
+
+  it('logs a readable line on success, not a warning', async () => {
+    const { text, logger } = makeText()
+    await text.consume({ passportId: 'p1' }, { id: 'imp-1', text: 'Dental implants replace a missing tooth.', length_chars: 41, ms_spent: 3000 })
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.anything(),
+      'Text read: "%s" (%s, %d chars%s): %s',
+      'imp-1', expect.any(String), 41, '', 'Dental implants replace a missing tooth.',
+    )
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 })

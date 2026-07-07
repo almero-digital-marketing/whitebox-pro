@@ -18,7 +18,11 @@ export const DEFAULT_IMAGE_SELECTOR = '[data-wb-image]'
 export const DEFAULT_IMAGE_EXCLUDE = '[data-wb-noimage]'
 export const DEFAULT_IMAGE_ID_ATTR = 'data-wb-image'
 
-export const DEFAULT_VIDEO_SELECTOR = 'video[data-wb-video]'
+// Matches a literal opted-in <video> directly, or one nested inside a marked
+// wrapper — third-party player components (e.g. vue-autoplay's AutoplayVideo)
+// often root on a <div> and don't expose their inner <video>, so the
+// attribute has to be placeable on that wrapper instead.
+export const DEFAULT_VIDEO_SELECTOR = 'video[data-wb-video], [data-wb-video] video'
 export const DEFAULT_VIDEO_EXCLUDE = '[data-wb-novideo]'
 export const DEFAULT_VIDEO_ID_ATTR = 'data-wb-video'
 
@@ -74,6 +78,11 @@ export function elementId(el, options = {}) {
   if (c.idAttribute) {
     const explicit = el.getAttribute?.(c.idAttribute)
     if (explicit && explicit !== '') return explicit
+    // Wrapper placement: the tracked element itself doesn't carry the
+    // attribute (e.g. a resolved <video> whose id lives on its wrapper).
+    const ancestor = el.closest?.(`[${c.idAttribute}]`)
+    const fromAncestor = ancestor?.getAttribute(c.idAttribute)
+    if (fromAncestor && fromAncestor !== '') return fromAncestor
   }
   // Hash basis: src for <img>, otherwise textContent
   const tag = el.tagName?.toLowerCase()

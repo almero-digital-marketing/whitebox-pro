@@ -29,4 +29,19 @@ export function init(options) {
   })
 }
 
-export default logger
+// The default export must track init()'s reassignment. `export default logger`
+// would snapshot the pre-init instance (ESM default-exports an identifier's
+// VALUE, not a live binding), silently discarding config.logger.level/transport
+// for every `import logger from './logger.js'` in the codebase — so we export
+// a thin proxy that always delegates to the current instance instead.
+export default new Proxy({}, {
+  get(_, prop) {
+    const value = logger[prop]
+    return typeof value === 'function' ? value.bind(logger) : value
+  },
+  set(_, prop, value) {
+    logger[prop] = value
+    return true
+  },
+  has: (_, prop) => prop in logger,
+})

@@ -46,7 +46,7 @@ function makeDb() {
 // Re-init the module singleton with a fresh db per test, return the namespace
 // so existing `s.add()` / `s.check()` call sites are unchanged.
 function makeSuppressions() {
-  suppressions.init({ db: makeDb(), logger: { error: vi.fn() } })
+  suppressions.init({ db: makeDb(), logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } })
   return suppressions
 }
 

@@ -142,6 +142,10 @@ async function processSingle(id, attemptsMade) {
 
   if (!info.messageId) logger.error({ outboxId: id }, 'Provider returned no messageId — DLR/status will not match')
   const sentRow = await sent(id, { providerMessageId: info.messageId, provider: info.provider, segments: msg.segments })
+  logger.info(
+    { outboxId: id, to: row.to, provider: info.provider, providerMessageId: info.messageId, segments: msg.segments, attempts: attemptsMade },
+    'SMS sent: %s via %s', row.to, info.provider,
+  )
   await recordSent(sentRow)
 }
 

@@ -50,6 +50,8 @@ const outboxSchema = z.object({
 
 const STATUS_RANK = { queued: 0, sent: 1, delivered: 2, opened: 3, engaged: 4, bounced: 5, complained: 5, failed: 6, cancelled: 7 }
 
+const TIMESTAMP_FIELD = { bounced: 'failed_at', complained: 'failed_at' }
+
 const ADVANCEABLE_FROM = Object.entries(STATUS_RANK)
   .filter(([, rank]) => rank < STATUS_RANK.complained)
   .map(([status]) => status)
@@ -241,6 +243,10 @@ async function processSingle(id, attemptsMade) {
   const messageId = info?.messageId || null
   if (!messageId) logger.error({ outboxId: id }, 'Provider returned no messageId — tracking webhooks will not match')
   const sentRow = await sent(id, messageId)
+  logger.info(
+    { outboxId: id, to: row.to, subject: row.subject, template: row.template || null, providerMessageId: messageId, attempts: attemptsMade },
+    'Mail sent: %s — %s', row.to, row.subject,
+  )
   await recordSent(sentRow)
 }
 
@@ -357,7 +363,7 @@ export async function markStuck(thresholdMs = 10 * 60 * 1000) {
   const cutoff = new Date(Date.now() - thresholdMs)
   const stuck = await db(TABLE)
     .where('status', 'queued')
-    .where('created_at', '<', cutoff)
+    .where('queued_at', '<', cutoff)
     .update({
       status: 'failed',
       failed_at: new Date(),
@@ -468,7 +474,10 @@ export async function track(providerMessageId, status, { recipient } = {}) {
   const advanceableFrom = ADVANCEABLE_FROM.filter(s => STATUS_RANK[s] < targetRank)
   if (!advanceableFrom.length) return null
 
-  const field = `${status}_at`
+  // Most statuses have a same-named timestamp column (delivered → delivered_at,
+  // opened → opened_at, engaged → engaged_at). bounced/complained don't — the
+  // schema (migration 002) only has `failed_at` for terminal failure states.
+  const field = TIMESTAMP_FIELD[status] || `${status}_at`
 
   if (providerMessageId) {
     const [updated] = await db(TABLE)

@@ -3,7 +3,7 @@ import * as links from '../src/link.js'
 
 function makeLinks() {
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   links.init({ awareness, logger })
   return { links, awareness, logger }
 }
@@ -37,9 +37,20 @@ describe('engagement.link.consume', () => {
 
   it('swallows awareness errors and logs', async () => {
     const awareness = { record: vi.fn(async () => { throw new Error('db down') }) }
-    const logger = { warn: vi.fn(), error: vi.fn() }
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     links.init({ awareness, logger })
     await links.consume({ passportId: 'p1' }, { text: 'Learn more' })
     expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('logs a readable line on success, not a warning', async () => {
+    const { links, logger } = makeLinks()
+    await links.consume({ passportId: 'p1' }, { id: 'imp', text: 'dental implant pricing and financing', href: 'https://x.com/implants' })
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.anything(),
+      'Link clicked: "%s" -> %s',
+      'dental implant pricing and financing', 'https://x.com/implants',
+    )
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 })

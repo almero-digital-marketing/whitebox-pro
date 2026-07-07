@@ -29,6 +29,12 @@ A partial fires if the image leaves the viewport after ≥ `minPartialRatio` of 
 Opt in with `data-wb-video`. Video is **not** viewport-dwell — "the player was on screen" says nothing
 about watching. So `video.js` is its own state machine that tracks **what was actually played**.
 
+The attribute can go directly on the `<video>`, or on a wrapping element that contains it — useful
+when a player component's root isn't the `<video>` itself (e.g. vue-autoplay's `AutoplayVideo`). The
+actual `<video>` is still what gets observed (play/pause/timeupdate, viewport, PiP, fullscreen); the
+stable id just falls back to the nearest ancestor carrying `data-wb-video` when the `<video>` doesn't
+have its own value.
+
 ### What it measures
 
 It listens to `play / pause / timeupdate / seeking / seeked / ended`, Picture-in-Picture, fullscreen,

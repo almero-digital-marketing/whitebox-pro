@@ -123,11 +123,44 @@ export default function createTracker({
     })
   }
 
+  // Reading axis per element: 'vertical' (default — the page itself scrolls,
+  // reading order is top-to-bottom) or 'horizontal' (the element lives inside
+  // a carousel-like ancestor that scrolls sideways instead — e.g. a slider of
+  // cards under a video). Auto-detected from the nearest scrollable ancestor
+  // so callers don't need to mark anything up; cached per element since the
+  // DOM relationship doesn't change during a tracked element's lifetime.
+  const axisCache = new WeakMap()
+  function elementAxis(el) {
+    let cached = axisCache.get(el)
+    if (cached) return cached
+    cached = 'vertical'
+    let node = el.parentElement
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node)
+      const scrollableX = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1
+      const scrollableY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1
+      if (scrollableY) break            // a vertical scroller wins if found first (nearest ancestor)
+      if (scrollableX) { cached = 'horizontal'; break }
+      node = node.parentElement
+    }
+    axisCache.set(el, cached)
+    return cached
+  }
+
   // The set of elements that should be accumulating in sequential mode: the
-  // topmost (highest on screen) visible, not-yet-fired element in each group.
-  // Without a sequentialGroup key everything shares one group → a single focus.
-  // Ties — and the layout-less test environment, where every rect is 0 — fall
-  // back to observe order, which is DOM order.
+  // foremost (topmost for vertical groups, leftmost for horizontal ones)
+  // visible, not-yet-fired element in each group. Without a sequentialGroup
+  // key everything shares one group → a single focus. Ties — and the
+  // layout-less test environment, where every rect is 0 — fall back to
+  // observe order, which is DOM order.
+  //
+  // The reading-line release band and the end-of-document extension below
+  // are page-scroll concepts (they reason about document height and the
+  // whole window scrolling) — they only apply to vertical-axis elements.
+  // Horizontal groups (carousels) are usually a small, discrete set navigated
+  // by clicks rather than continuous scroll, so plain intersection-ratio
+  // visibility (s.visible) is sufficient: a slide you've navigated away from
+  // naturally stops meeting minRatio.
   function pickFocus() {
     const vh = typeof window !== 'undefined' ? window.innerHeight : 0
     const scrollY = typeof window !== 'undefined' ? window.scrollY : 0
@@ -138,20 +171,22 @@ export default function createTracker({
     // lost when there's no whitespace below them.
     const docH = (cfg.endOfDocument && typeof document !== 'undefined') ? document.documentElement.scrollHeight : 0
     const nearEnd = docH > 0 && scrollY + vh > docH - vh
-    const best = new Map()   // groupKey -> { s, top }
+    const best = new Map()   // groupKey -> { s, pos }
     for (const el of observed) {
       const s = states.get(el)
       if (!s || s.fired) continue
-      if (!s.visible && !nearEnd) continue
+      const axis = elementAxis(el)
+      const isVertical = axis === 'vertical'
+      if (!s.visible && !(isVertical && nearEnd)) continue
       const rect = el.getBoundingClientRect()
       let eligible = s.visible
-      if (!eligible && rect.height > 0) {
+      if (isVertical && !eligible && rect.height > 0) {
         // in the document's last screen and substantially on screen
         const onScreen = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0))
         if (rect.bottom + scrollY > docH - vh && onScreen >= cfg.minRatio * rect.height) eligible = true
       }
       if (!eligible) continue
-      if (lineY > 0 && rect.height > 0) {
+      if (isVertical && lineY > 0 && rect.height > 0) {
         // Above-the-fold blocks (in the document's first screen) always count —
         // they're never released by the reading line. Anything further down
         // releases focus once you've scrolled it up so its middle passes above
@@ -161,9 +196,13 @@ export default function createTracker({
         const aboveFold = rect.top + scrollY < vh
         if (!aboveFold && (rect.top + rect.bottom) / 2 <= lineY) continue
       }
-      const key = sequentialGroup ? sequentialGroup(el) : ''
+      // Axis folded into the key so a group never compares a vertical
+      // element's top against a horizontal one's left — each axis gets its
+      // own independent focus even if sequentialGroup() returns the same kind.
+      const key = (sequentialGroup ? sequentialGroup(el) : '') + ':' + axis
+      const pos = isVertical ? rect.top : rect.left
       const cur = best.get(key)
-      if (!cur || rect.top < cur.top) best.set(key, { s, top: rect.top })
+      if (!cur || pos < cur.pos) best.set(key, { s, pos })
     }
     // Pointer attention (desktop): a tracked element the mouse has rested on is
     // most likely what's being read, so it takes focus for its group regardless
@@ -172,8 +211,10 @@ export default function createTracker({
       const att = attendedElement()
       const s = att && states.get(att)
       if (s && !s.fired) {
-        const key = sequentialGroup ? sequentialGroup(att) : ''
-        best.set(key, { s, top: att.getBoundingClientRect().top })
+        const axis = elementAxis(att)
+        const key = (sequentialGroup ? sequentialGroup(att) : '') + ':' + axis
+        const rect = att.getBoundingClientRect()
+        best.set(key, { s, pos: axis === 'vertical' ? rect.top : rect.left })
       }
     }
     const focus = new Set()

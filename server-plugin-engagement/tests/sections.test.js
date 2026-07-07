@@ -5,7 +5,7 @@ import * as sections from '../src/sections.js'
 // so existing `sections.consume()` call sites are unchanged.
 function makeSections() {
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   sections.init({ awareness, logger })
   return { sections, awareness, logger }
 }
@@ -56,9 +56,20 @@ describe('engagement.sections.consume', () => {
 
   it('swallows awareness errors and logs', async () => {
     const awareness = { record: vi.fn(async () => { throw new Error('db down') }) }
-    const logger = { warn: vi.fn(), error: vi.fn() }
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     sections.init({ awareness, logger })
     await sections.consume({ passportId: 'p1', sessionId: null }, { text: 'hi' })
     expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('logs a readable line on success, not a warning', async () => {
+    const { sections, logger } = makeSections()
+    await sections.consume({ passportId: 'p1', sessionId: 7 }, { id: 'pricing', text: 'Our Pro tier costs $9/mo', dwell_ms: 12000 })
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.anything(),
+      'Section read: "%s" (%dms): %s',
+      'pricing', 12000, 'Our Pro tier costs $9/mo',
+    )
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 })

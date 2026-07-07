@@ -31,7 +31,7 @@ function makeOutbox({ db, outboxQueue, notify, sessions } = {}) {
     passports: { identify: vi.fn(), link: vi.fn() },
     sessions: sessions ?? { resolve: vi.fn(async () => ({ id: 99, passport_id: 42 })) },
     notify: notify ?? vi.fn(async () => {}),
-    logger: { warn: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   })
   return outbox
 }

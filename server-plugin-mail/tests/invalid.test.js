@@ -44,7 +44,7 @@ function makeDb() {
 // Re-init the module singleton with a fresh db per test, return the namespace
 // so existing `inv.add()` / `inv.check()` call sites are unchanged.
 function makeInvalid() {
-  invalid.init({ db: makeDb(), logger: { error: vi.fn() } })
+  invalid.init({ db: makeDb(), logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } })
   return invalid
 }
 

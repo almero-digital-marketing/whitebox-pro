@@ -48,6 +48,10 @@ export async function createLink(input = {}) {
     expires_at:          ttlSec         ? new Date(now.getTime() + ttlSec * 1000) : null,
     identity_expires_at: identityTtlSec ? new Date(now.getTime() + identityTtlSec * 1000) : null,
   })
+  logger?.info?.(
+    { code, url: finalUrl, label, passportId: bound, personalized: !!(bound || identify) },
+    'Shortlink created: %s → %s', code, finalUrl,
+  )
   return { code, short_url: shortUrl(code), expires_at: row.expires_at }
 }
 
@@ -62,8 +66,12 @@ export async function resolveRedirect(code, ctx = {}) {
 
   store.bumpClicks(code).catch(() => {})
 
-  if (!bindable(link)) return { location: link.url }   // campaign / consumed / window-passed → plain redirect
+  if (!bindable(link)) {
+    logger?.info?.({ code, url: link.url, bindable: false }, 'Shortlink click: %s', code)
+    return { location: link.url }   // campaign / consumed / window-passed → plain redirect
+  }
 
+  logger?.info?.({ code, url: link.url, bindable: true }, 'Shortlink click: %s', code)
   const token = newClaimToken()
   await store.insertClick({
     code, claim_token: token,
@@ -115,6 +123,10 @@ export async function claim(token, visitorPassportId) {
     text: arrivalText(link), meta: { code: link.code, label: link.label, ...(link.data || {}) },
   }).catch?.(err => logger?.warn?.({ err }, 'shortener: awareness record failed'))
 
+  logger?.info?.(
+    { code: link.code, passportId: bound, merged: !!(target && visitor && visitor !== target) },
+    'Shortlink claimed: %s → passport %s', link.code, bound,
+  )
   return { bound: true, passport_id: bound, data: link.data || {} }
 }
 

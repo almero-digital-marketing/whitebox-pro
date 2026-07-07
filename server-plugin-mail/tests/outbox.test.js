@@ -116,6 +116,27 @@ describe('outbox.track status rank', () => {
     const row = await outbox.track('msg1', 'bogus')
     expect(row).toBeNull()
   })
+
+  // bounced/complained have no same-named timestamp column in the schema
+  // (migration 002 only has `failed_at`) — track() maps both onto it instead
+  // of the naive `${status}_at`.
+  it('stamps bounced onto failed_at, not a nonexistent bounced_at', async () => {
+    const { outbox, db } = makeOutbox()
+    await db('whitebox_mail_outbox').insert({ provider_message_id: 'msg1', status: 'delivered' })
+    const row = await outbox.track('msg1', 'bounced')
+    expect(row?.status).toBe('bounced')
+    expect(row?.failed_at).toBeTruthy()
+    expect(row?.bounced_at).toBeUndefined()
+  })
+
+  it('stamps complained onto failed_at, not a nonexistent complained_at', async () => {
+    const { outbox, db } = makeOutbox()
+    await db('whitebox_mail_outbox').insert({ provider_message_id: 'msg1', status: 'delivered' })
+    const row = await outbox.track('msg1', 'complained')
+    expect(row?.status).toBe('complained')
+    expect(row?.failed_at).toBeTruthy()
+    expect(row?.complained_at).toBeUndefined()
+  })
 })
 
 describe('outbox.track recipient backfill (batched rows with no provider id yet)', () => {
@@ -139,7 +160,7 @@ describe('outbox.track recipient backfill (batched rows with no provider id yet)
     q: { createQueue: () => ({}), createWorker: () => ({ on: () => {} }) },
     notify: vi.fn(async () => {}),
     config: { mail: {} },
-    logger: { error: vi.fn(), warn: vi.fn() },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   })
 
   it('matches by recipient and backfills the provider_message_id', async () => {
@@ -197,10 +218,10 @@ describe('outbox.markStuck', () => {
     const { outbox, db, notify } = makeOutbox()
     const old = new Date(Date.now() - 60 * 60 * 1000) // 1h ago
     const recent = new Date()
-    await db('whitebox_mail_outbox').insert({ status: 'queued', created_at: old })
-    await db('whitebox_mail_outbox').insert({ status: 'queued', created_at: old })
-    await db('whitebox_mail_outbox').insert({ status: 'queued', created_at: recent })
-    await db('whitebox_mail_outbox').insert({ status: 'sent', created_at: old })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: old })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: old })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: recent })
+    await db('whitebox_mail_outbox').insert({ status: 'sent', queued_at: old })
 
     const count = await outbox.markStuck(10 * 60 * 1000) // 10 min threshold
     expect(count).toBe(2)
@@ -209,7 +230,7 @@ describe('outbox.markStuck', () => {
     expect(all.filter(r => r.failure_reason === 'stuck')).toHaveLength(2)
     expect(all.filter(r => r.failure_reason === 'stuck').every(r => r.status === 'failed')).toBe(true)
     // Recent queued row untouched
-    expect(all.find(r => r.created_at === recent)?.status).toBe('queued')
+    expect(all.find(r => r.queued_at === recent)?.status).toBe('queued')
     // Already-sent row untouched
     expect(all.find(r => r.status === 'sent')).toBeDefined()
     // Notify fired once per stuck row

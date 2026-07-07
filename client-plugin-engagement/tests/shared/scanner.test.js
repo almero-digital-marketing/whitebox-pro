@@ -189,6 +189,20 @@ describe('scanner.elementId', () => {
     expect(elementId(r.firstElementChild, { idAttribute: 'data-section-id' })).toBe('intro')
   })
 
+  it('falls back to an ancestor carrying idAttribute (wrapper placement)', () => {
+    const r = root()
+    r.innerHTML = `<div data-wb-video="hero"><video src="/a.mp4"></video></div>`
+    const video = r.querySelector('video')
+    expect(elementId(video, { idAttribute: 'data-wb-video' })).toBe('hero')
+  })
+
+  it('prefers the element\'s own idAttribute over an ancestor\'s', () => {
+    const r = root()
+    r.innerHTML = `<div data-wb-video="wrapper-id"><video data-wb-video="own-id" src="/a.mp4"></video></div>`
+    const video = r.querySelector('video')
+    expect(elementId(video, { idAttribute: 'data-wb-video' })).toBe('own-id')
+  })
+
   it('produces stable hashes', () => {
     expect(hashText('Hello world')).toBe(hashText('Hello world'))
     expect(hashText('Hello')).not.toBe(hashText('World'))

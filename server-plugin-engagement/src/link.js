@@ -30,5 +30,7 @@ export async function consume(visitor, msg) {
       engagement: 1,                          // a click is full intent
       depth: 'click',
     },
-  }).catch(err => logger.warn({ err }, 'link.consume failed'))
+  })
+    .then(() => logger.info({ href: msg.href }, 'Link clicked: "%s" -> %s', msg.text, msg.href))
+    .catch(err => logger.warn({ err }, 'link.consume failed'))
 }

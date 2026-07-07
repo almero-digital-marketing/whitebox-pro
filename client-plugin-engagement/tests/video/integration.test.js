@@ -38,6 +38,18 @@ function fire(video, event) {
   video.dispatchEvent(new Event(event))
 }
 
+// Moves an already-created <video> under a wrapper carrying data-wb-video —
+// simulates a third-party player component whose root isn't the <video>
+// itself (e.g. vue-autoplay's AutoplayVideo).
+function wrapVideo(video, id) {
+  video.removeAttribute('data-wb-video')
+  const wrapper = document.createElement('div')
+  wrapper.setAttribute('data-wb-video', id)
+  document.body.appendChild(wrapper)
+  wrapper.appendChild(video)
+  return wrapper
+}
+
 describe('video.mergeIntervals', () => {
   it('merges overlapping intervals', () => {
     expect(mergeIntervals([{ start_s: 0, end_s: 10 }, { start_s: 5, end_s: 15 }]))
@@ -85,6 +97,15 @@ describe('video engagement (opt-in only)', () => {
     const t = createVideo({ onRead: vi.fn() })
     t.start()
     expect(FakeIO.latest().observed.size).toBe(2)
+    t.stop()
+  })
+
+  it('observes a <video> nested inside a data-wb-video wrapper (parent placement)', () => {
+    const video = fakeVideo({ src: '/wrapped.mp4' })
+    wrapVideo(video, 'hero')
+    const t = createVideo({ onRead: vi.fn() })
+    t.start()
+    expect(FakeIO.latest().observed.has(video)).toBe(true)
     t.stop()
   })
 
@@ -241,6 +262,26 @@ describe('video engagement (opt-in only)', () => {
     const ids = onRead.mock.calls.map(c => c[0].id)
     expect(ids[0]).toBe('first-video')
     expect(ids[1]).toMatch(/^wb:/)
+    t.stop()
+  })
+
+  it('reads the stable id from a data-wb-video wrapper when the <video> has none', async () => {
+    const video = fakeVideo({ src: 'https://x/wrapped.mp4' })
+    wrapVideo(video, 'hero')
+    const onRead = vi.fn()
+    const t = createVideo({ onRead })
+    t.start()
+    FakeIO.latest().triggerIntersect(video, 1.0)
+
+    video.paused = false
+    video.currentTime = 0
+    fire(video, 'play')
+    video.currentTime = 5
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
+    expect(onRead.mock.calls[0][0].id).toBe('hero')
     t.stop()
   })
 

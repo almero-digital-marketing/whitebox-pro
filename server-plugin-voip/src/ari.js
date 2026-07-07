@@ -37,6 +37,10 @@ let client = null
 // channelId → { vaultId, recordingName, passportId, sessionId, visitor, ringDate, pickDate }
 const calls_ = new Map()
 
+const DEFAULT_WATCHDOG_INTERVAL_MS = 60_000
+let watchdogTimer = null
+let reconnecting = false
+
 export function init(deps) {
   voipConfig = deps.config.voip
   ariCfg = voipConfig.ari || {}
@@ -51,11 +55,65 @@ export function init(deps) {
   return start()
 }
 
+// ari-client's swagger-client dependency (old, unmaintained) has a bug: on a
+// bad URL/auth/unreachable host, SwaggerApi.prototype.fail() correctly calls
+// its failure callback (rejecting connect()'s promise) but then *also*
+// synchronously re-throws the same error — from inside an HTTP response
+// callback, not the promise chain, so it becomes a genuine uncaught
+// exception that kills the whole process regardless of any surrounding
+// try/catch or .catch(). voip.js's own contract is that a PBX is optional
+// and its absence/misconfiguration must degrade gracefully, so we trap that
+// specific redundant throw for the duration of the connect() call only.
+//
+// Same scope, second nuisance: while parsing Asterisk's api-docs (which are
+// served as ancient Swagger 1.1 — inherent to Asterisk's ARI, not fixable
+// here), swagger-client prints "This API is using a deprecated version of
+// Swagger!" via a bare console.log(argsArray), bypassing our logger. Purely
+// cosmetic and unavoidable, so we drop exactly that line, only while
+// connect() runs.
+const SWAGGER_NOISE = 'deprecated version of Swagger'
+
+function connectAri(url, user, password) {
+  return new Promise((resolve, reject) => {
+    const consoleLog = console.log
+    console.log = (...args) => {
+      // swagger-client logs as console.log([msg, ...]) — check both shapes.
+      const first = Array.isArray(args[0]) ? args[0][0] : args[0]
+      if (typeof first === 'string' && first.includes(SWAGGER_NOISE)) return
+      consoleLog(...args)
+    }
+
+    let settled = false
+    const settle = (fn, value) => {
+      if (settled) return
+      settled = true
+      process.removeListener('uncaughtException', onUncaught)
+      console.log = consoleLog
+      fn(value)
+    }
+    const onUncaught = err => settle(reject, err)
+    process.on('uncaughtException', onUncaught)
+
+    connect(url, user, password).then(
+      client => settle(resolve, client),
+      err => settle(reject, err),
+    )
+  })
+}
+
 async function start() {
   if (!ariCfg.url || !ariCfg.user || !ariCfg.password) {
     throw new Error('voip.ari requires { url, user, password } in config')
   }
-  client = await connect(ariCfg.url, ariCfg.user, ariCfg.password)
+  await connectAndStart()
+  startWatchdog()
+}
+
+// Connect + attach listeners + register the Stasis app. Split out from
+// start() so reconnect() (the watchdog's recovery path) can redo exactly
+// this without re-validating config or re-arming the watchdog interval.
+async function connectAndStart() {
+  client = await connectAri(ariCfg.url, ariCfg.user, ariCfg.password)
   logger.info('ARI connected at %s', ariCfg.url)
 
   client.on('StasisStart',       wrap(onStasisStart))
@@ -68,6 +126,75 @@ async function start() {
   const appName = ariCfg.app || 'whitebox'
   await client.start(appName)
   logger.info('ARI Stasis app started: %s', appName)
+}
+
+// A plain ARI GET over the REST API (not the WebSocket) — used by the
+// watchdog specifically because it must not trust the same transport it's
+// checking. Resolves the parsed JSON body, or rejects on any non-2xx/network
+// failure.
+function ariGet(pathname) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(`${ariCfg.url.replace(/\/$/, '')}${pathname}`)
+    const lib = u.protocol === 'https:' ? https : http
+    const req = lib.request({
+      method: 'GET',
+      host: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + u.search,
+      timeout: 5000,
+      headers: {
+        authorization: 'Basic ' + Buffer.from(`${ariCfg.user}:${ariCfg.password}`).toString('base64'),
+      },
+    }, res => {
+      let body = ''
+      res.on('data', chunk => { body += chunk })
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`ARI GET ${pathname} → ${res.statusCode}`))
+        }
+        try { resolve(JSON.parse(body)) } catch (err) { reject(err) }
+      })
+    })
+    req.on('timeout', () => req.destroy(new Error(`ARI GET ${pathname} timed out`)))
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+// Watchdog: ari-client's WebSocket can die silently — no 'WebSocketReconnecting',
+// no error event, nothing — leaving the Stasis app unregistered on Asterisk's
+// side while whitebox believes it's still connected (observed in production:
+// fresh start → app registered; hours later, zero log activity → app gone
+// from `GET /ari/applications`). client.on('WebSocketReconnecting') only
+// fires for disconnects ari-client itself detects, which doesn't cover this
+// case — hence a REST-based external check, independent of that same socket.
+function startWatchdog() {
+  const intervalMs = ariCfg.watchdogIntervalMs ?? DEFAULT_WATCHDOG_INTERVAL_MS
+  if (!intervalMs) return   // 0/false disables it (e.g. tests)
+
+  const appName = ariCfg.app || 'whitebox'
+  watchdogTimer = setInterval(() => {
+    ariGet(`/ari/applications/${encodeURIComponent(appName)}`).catch(err => {
+      logger.warn({ err }, 'ARI watchdog: app %s unreachable/unregistered — reconnecting', appName)
+      reconnect()
+    })
+  }, intervalMs)
+  watchdogTimer.unref?.()
+}
+
+async function reconnect() {
+  if (reconnecting) return   // a check already in flight triggered this
+  reconnecting = true
+  try {
+    if (client) { try { await client.stop() } catch { /* already dead — fine */ } }
+    calls_.clear()   // in-flight call state is meaningless across a reconnect
+    await connectAndStart()
+    logger.info('ARI watchdog: reconnected')
+  } catch (err) {
+    logger.error({ err }, 'ARI watchdog: reconnect failed — will retry next tick')
+  } finally {
+    reconnecting = false
+  }
 }
 
 // Wrap an async handler so it can't crash the event loop. Logs and swallows
@@ -125,6 +252,11 @@ async function onStasisStart(event, channel) {
 
   await calls.ring({ vaultId: v, passportId, sessionId: visitor?.sessionId || null, caller, line, tag, date })
 
+  logger.info(
+    { vaultId: v, caller, line, tag, passportId, attributed: !!visitor },
+    'Call ring: %s → %s (%s)', caller, line, tag,
+  )
+
   if (visitor) pool.notifyRing(visitor.connectionId, { tag, caller })
 
   const call = await calls.find(v)
@@ -136,6 +268,10 @@ async function onStasisStart(event, channel) {
   const recordingName = `wb-${v}-${Date.now()}`
   try {
     await channel.answer()
+  } catch (err) {
+    logger.error({ err, channelId: channel.id }, 'Failed to answer channel; continuing anyway')
+  }
+  try {
     await channel.record({
       name: recordingName,
       format: 'wav',
@@ -146,7 +282,7 @@ async function onStasisStart(event, channel) {
       terminateOn: 'none',
     })
   } catch (err) {
-    logger.error({ err }, 'Failed to answer/record channel; continuing anyway')
+    logger.error({ err, channelId: channel.id, recordingName }, 'Failed to record channel; continuing anyway')
   }
 
   calls_.set(id, {
@@ -186,6 +322,11 @@ async function onStateChange(event, channel) {
 
   await calls.pick({ vaultId: entry.vaultId, destination, date })
 
+  logger.info(
+    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, destination, waitMs: entry.ringDate ? date - entry.ringDate : null },
+    'Call picked: %s', entry.caller,
+  )
+
   const call = await calls.find(entry.vaultId)
   const session = await sessionFor(call)
   await notify('voip.pick', { type: 'voip.pick', date, data: call, session })
@@ -213,6 +354,10 @@ async function onChannelDestroyed(event, channel) {
 
   if (!localFile) {
     await calls.end({ vaultId: entry.vaultId, date })
+    logger.info(
+      { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, recorded: false },
+      'Call ended (no recording): %s', entry.caller,
+    )
     return
   }
 
@@ -227,10 +372,18 @@ async function onChannelDestroyed(event, channel) {
     transcription = await speech.transcribe(mp3).catch(err => {
       logger.error({ err }, 'Transcription failed')
     })
+    if (transcription) {
+      logger.info({ vaultId: entry.vaultId, caller: entry.caller }, 'Call transcribed: %s', transcription)
+    }
   }
 
   const link = `${voipConfig.url}/voip/records/${mp3}`
   const call = await calls.end({ vaultId: entry.vaultId, duration: dur, record: mp3, link, transcription, date })
+
+  logger.info(
+    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, duration: dur, recorded: true, transcribed: !!transcription },
+    'Call ended: %s (%ds%s)', entry.caller, dur, transcription ? ', transcribed' : '',
+  )
 
   if (call) {
     const session = await sessionFor(call)
@@ -303,6 +456,7 @@ async function sessionFor(call) {
 }
 
 export async function stop() {
+  if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null }
   if (!client) return
   try { await client.stop() } catch { /* ignore */ }
   client = null
