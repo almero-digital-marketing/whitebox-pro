@@ -216,7 +216,10 @@ export default async (runtime) => ({
     // /sessions/resolve call every client SDK already makes (see
     // sessions.onResolve in core). No REST route, no auth of its own.
     process.env.WB_GEOIP_DB_PATH && geolocation({
-      provider: maxmind({ dbPath: process.env.WB_GEOIP_DB_PATH }),
+      // watch: true polls the .mmdb file's mtime (every 5 min by default) and
+      // hot-reloads it once your deploy's geoipupdate cron/sidecar replaces it
+      // on disk — no restart needed. See whitebox-geolocation-maxmind's README.
+      provider: maxmind({ dbPath: process.env.WB_GEOIP_DB_PATH, watch: true }),
       // recordFacts: true (default) — geo_country/geo_region/geo_city/geo_lat/
       // geo_lon become core facts, queryable via the selector for segmentation.
     }),
