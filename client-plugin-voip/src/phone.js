@@ -132,7 +132,14 @@ export default function createPhoneTracker({ transport, http, emitter, logger, o
     if (s.state === 'assigned' || s.state === 'clicked' || s.state === 'requesting') return
     if (Date.now() < s.backoffUntil) return
     s.state = 'requesting'
-    transport?.send?.('voip.pick', { tag })
+    // transport.send() is false when the socket hasn't finished connecting
+    // yet — a real race right at page load, since core only awaits the
+    // socket's construction, not the handshake. Revert to idle so a later
+    // request() (mount-time retry, or a click landing after the transport
+    // is up) can actually resend instead of finding this tag permanently
+    // wedged in 'requesting' with no message ever having gone out.
+    const sent = transport?.send?.('voip.pick', { tag })
+    if (!sent) s.state = 'idle'
   }
 
   function release(tag, { silent = false } = {}) {
@@ -325,5 +332,20 @@ export default function createPhoneTracker({ transport, http, emitter, logger, o
     return { tag, number: s.number, formatted: s.formatted, state: s.state }
   }
 
-  return { start, stop, observe, unobserve, request, release, current, _tags: tags }
+  // Same signal attachClickHandler sends for an observe()'d element — for a
+  // consumer managing its own click-to-call markup (e.g. a non-text CTA
+  // where the automatic textContent swap would blow away its graphics),
+  // this is the manual equivalent: locks the tag against auto-release and
+  // tells the server to extend the hold (CLICKED_HOLD_TIMEOUT) so a real
+  // phone call has time to happen, and fires the click analytics webhook.
+  function click(tag) {
+    const s = tags.get(tag)
+    if (!s || (s.state !== 'assigned' && s.state !== 'clicked')) return
+    transport?.send?.('voip.click', { tag, number: s.number, ts: Date.now() })
+    emitter?.emit?.('voip.click', { tag, number: s.number })
+    s.state = 'clicked'
+    cancelTimers(s)
+  }
+
+  return { start, stop, observe, unobserve, request, release, current, click, _tags: tags }
 }

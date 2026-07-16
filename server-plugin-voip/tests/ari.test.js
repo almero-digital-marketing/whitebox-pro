@@ -1,32 +1,64 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { EventEmitter } from 'node:events'
 
-// Mock ari-client BEFORE importing the module under test, so the real
-// WebSocket connection is never attempted.
-const mockClient = {
-  handlers: {},
-  on(name, fn) { this.handlers[name] = fn },
-  start: vi.fn(async () => {}),
-  stop:  vi.fn(async () => {}),
-  recordings: {
-    deleteStored: vi.fn(async () => {}),
-  },
+// Mock `ws` BEFORE importing the module under test, so the real WebSocket
+// connection is never attempted. Tests drive it by emitting 'message' with a
+// JSON-stringified ARI event — exactly what the real Asterisk WS would send.
+let wsBehavior = 'open'   // 'open' | 'error' — controls what happens on construction
+const wsInstances = []
+class MockWebSocket extends EventEmitter {
+  constructor(url) {
+    super()
+    this.url = url
+    this.closed = false
+    wsInstances.push(this)
+    queueMicrotask(() => {
+      if (wsBehavior === 'error') this.emit('error', new Error('connect ECONNREFUSED'))
+      else this.emit('open')
+    })
+  }
+  close() { this.closed = true; this.emit('close') }
 }
+vi.mock('ws', () => ({ default: MockWebSocket }))
 
-// Hoisted so both the vi.mock factory and test assertions share one spy —
-// needed to count reconnect attempts (ari.js uses the named import).
-const { mockConnect } = vi.hoisted(() => ({ mockConnect: vi.fn() }))
-mockConnect.mockImplementation(async () => mockClient)
-vi.mock('ari-client', () => ({
-  connect: mockConnect,
-  default: { connect: mockConnect },
-}))
+// Mock global fetch — used for the REST calls (answer/record/continue/
+// deleteStored/snoop). Keyed by a pathname substring so individual tests can
+// make one specific call fail without affecting the others.
+let fetchBehavior = {}
+global.fetch = vi.fn((url) => {
+  const pathname = new URL(url).pathname
+  const match = Object.entries(fetchBehavior).find(([k]) => pathname.includes(k))
+  if (match) {
+    const behavior = match[1]
+    return Promise.resolve({
+      ok: behavior.ok,
+      status: behavior.status,
+      json: async () => behavior.json ?? null,
+      text: async () => behavior.text ?? '',
+    })
+  }
+  // Real ARI's POST .../snoop returns the newly created snoop channel as a
+  // JSON body (200, not 204) — onStasisStart reads its `id` to record +
+  // later hang it up. Every other call this file makes is fire-and-forget,
+  // so a bare 204 is the right default for anything that isn't a snoop.
+  if (pathname.endsWith('/snoop')) {
+    const snoopId = `snoop-${pathname.split('/').at(-2)}`
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: snoopId }), text: async () => '' })
+  }
+  return Promise.resolve({
+    ok: true,
+    status: 204,
+    json: async () => null,
+    text: async () => '',
+  })
+})
 
-// Controls what the watchdog's GET /ari/applications/:app "sees". ari.js uses
-// Node's raw http.request (not fetch), so mock that directly rather than
-// stubbing a higher-level client.
-// Synchronous by design (no setImmediate) so these tests can use fake timers
-// for the watchdog interval without also having to fake/flush a simulated
-// async I/O layer underneath it — same code paths in ariGet(), simpler test.
+// Controls what the watchdog's GET /ari/applications/:app "sees", and what
+// fetchRecording's GET .../file sees. ari.js uses Node's raw http.request
+// (not fetch) for both, so mock that directly rather than a higher-level
+// client. Synchronous by design (no setImmediate) so these tests can use
+// fake timers for the watchdog interval without also having to fake/flush a
+// simulated async I/O layer underneath it.
 let httpBehavior = 'ok'   // 'ok' | 'error' | 'non200'
 function makeMockRequest(callback) {
   let errorHandler = null
@@ -115,9 +147,24 @@ function makeDeps(overrides = {}) {
   }
 }
 
+// Simulates Asterisk pushing an ARI event over the WebSocket — drives the
+// most recently connected mock socket, matching how ari.js only ever has one
+// live connection at a time.
+function emitAriEvent(type, channel, extra = {}) {
+  const socket = wsInstances[wsInstances.length - 1]
+  socket.emit('message', Buffer.from(JSON.stringify({ type, channel, ...extra })))
+}
+
+function fetchCallsTo(pathSuffix) {
+  return global.fetch.mock.calls.filter(([url]) => new URL(url).pathname.includes(pathSuffix))
+}
+
 describe('voip/ari', () => {
   beforeEach(() => {
-    mockClient.handlers = {}
+    wsInstances.length = 0
+    wsBehavior = 'open'
+    fetchBehavior = {}
+    global.fetch.mockClear()
     vi.clearAllMocks()
     // Restore default mock return values cleared by clearAllMocks.
     calls.end.mockImplementation(async () => ({ vault_id: 'v1' }))
@@ -127,7 +174,8 @@ describe('voip/ari', () => {
 
   it('connects to ARI and starts the configured Stasis app on init()', async () => {
     await ari.init(makeDeps())
-    expect(mockClient.start).toHaveBeenCalledWith('whitebox')
+    expect(wsInstances).toHaveLength(1)
+    expect(wsInstances[0].url).toContain('app=whitebox')
   })
 
   it('throws if voip.ari config is incomplete', async () => {
@@ -136,38 +184,9 @@ describe('voip/ari', () => {
     await expect(ari.init(deps)).rejects.toThrow(/voip\.ari/)
   })
 
-  // Regression test: ari-client's swagger-client dependency has a bug where,
-  // on a bad URL/auth, it correctly rejects connect()'s promise but then ALSO
-  // synchronously re-throws the same error from outside the promise chain —
-  // which would otherwise crash the whole process even though the caller
-  // (index.js) already has a `.catch()` on ari.init(). connectAri() guards
-  // against exactly this by installing a temporary 'uncaughtException'
-  // listener for the duration of the connect() attempt.
-  //
-  // The real bug's exact throw-vs-reject tick ordering isn't reliably
-  // reproducible in a test (Node calls every registered 'uncaughtException'
-  // listener for a given event regardless of order, so a listener-was/wasn't
-  // -called assertion can't distinguish "guard worked" from "guard did
-  // nothing" the way it would in production, where the guard being the only
-  // listener is what stops the crash). Instead this verifies the mechanism
-  // directly: the guard listener is installed only while connect() is
-  // pending, and a stray uncaughtException during that window resolves
-  // ari.init()'s promise as a rejection rather than being left for whatever
-  // (if anything) else is listening.
-  it('installs an uncaughtException guard only while connect() is pending, and rejects through it', async () => {
-    const before = process.listenerCount('uncaughtException')
-    const ariClient = await import('ari-client')
-    ariClient.connect.mockImplementationOnce(() => new Promise(() => {}))   // never settles on its own
-
-    const initPromise = ari.init(makeDeps())
-    await new Promise(r => setImmediate(r))   // let connectAri's executor run and install its guard
-    expect(process.listenerCount('uncaughtException')).toBe(before + 1)
-
-    process.emit('uncaughtException', new Error('Authentication required'))
-    await expect(initPromise).rejects.toThrow(/Authentication required/)
-
-    // Guard removed once settled — doesn't linger and swallow unrelated errors.
-    expect(process.listenerCount('uncaughtException')).toBe(before)
+  it('rejects cleanly if the ARI WebSocket fails to connect (bad host/creds)', async () => {
+    wsBehavior = 'error'
+    await expect(ari.init(makeDeps())).rejects.toThrow(/ECONNREFUSED/)
   })
 
   it('on StasisStart: rings the call, links phone identity, answers + records the channel', async () => {
@@ -180,12 +199,8 @@ describe('voip/ari', () => {
       linkedid: 'L-1',
       caller: { number: '+359888001122' },
       dialplan: { exten: '+35921234567' },
-      answer: vi.fn(async () => {}),
-      record: vi.fn(async () => {}),
-      continueInDialplan: vi.fn(async () => {}),
     }
-    await mockClient.handlers.StasisStart({ args: [], type: 'StasisStart' }, channel)
-    // Give the wrapped promise a tick to flush
+    emitAriEvent('StasisStart', channel, { args: [] })
     await new Promise(r => setImmediate(r))
 
     expect(calls.ring).toHaveBeenCalledWith(expect.objectContaining({
@@ -195,58 +210,58 @@ describe('voip/ari', () => {
     }))
     expect(deps.passports.identify).toHaveBeenCalled()
     expect(deps.passports.link).toHaveBeenCalledWith('p1', [{ type: 'phone', name: 'e164', value: '+359888001122' }])
-    expect(channel.answer).toHaveBeenCalled()
-    expect(channel.record).toHaveBeenCalledWith(expect.objectContaining({ format: 'wav' }))
-    expect(channel.continueInDialplan).toHaveBeenCalled()
+
+    expect(fetchCallsTo('/channels/ch-1/answer')).toHaveLength(1)
+    // Recorded via a snoop channel, not ch-1 directly — see onStasisStart's
+    // comment on why (an active recording blocks Stasis' continue on a real
+    // PJSIP channel). The mock derives its id as `snoop-${originalId}`.
+    expect(fetchCallsTo('/channels/ch-1/snoop')).toHaveLength(1)
+    const [recordUrl] = fetchCallsTo('/channels/snoop-ch-1/record')[0]
+    expect(new URL(recordUrl).searchParams.get('format')).toBe('wav')
+    expect(fetchCallsTo('/channels/ch-1/continue')).toHaveLength(1)
   })
 
   it('on StasisStart: logs answer failure distinctly and still records + continues', async () => {
     const deps = makeDeps()
     await ari.init(deps)
+    fetchBehavior['/answer'] = { ok: false, status: 500, text: 'Internal Server Error' }
 
-    const answerErr = new Error('Internal Server Error')
     const channel = {
       id: 'ch-1',
       linkedid: 'L-1',
       caller: { number: '+359888001122' },
       dialplan: { exten: '+35921234567' },
-      answer: vi.fn(async () => { throw answerErr }),
-      record: vi.fn(async () => {}),
-      continueInDialplan: vi.fn(async () => {}),
     }
-    await mockClient.handlers.StasisStart({ args: [], type: 'StasisStart' }, channel)
+    emitAriEvent('StasisStart', channel, { args: [] })
     await new Promise(r => setImmediate(r))
 
     expect(deps.logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ err: answerErr, channelId: 'ch-1' }),
+      expect.objectContaining({ err: expect.any(Error), channelId: 'ch-1' }),
       'Failed to answer channel; continuing anyway',
     )
-    expect(channel.record).toHaveBeenCalled()
-    expect(channel.continueInDialplan).toHaveBeenCalled()
+    expect(fetchCallsTo('/channels/snoop-ch-1/record')).toHaveLength(1)
+    expect(fetchCallsTo('/channels/ch-1/continue')).toHaveLength(1)
   })
 
   it('on StasisStart: logs record failure distinctly (with recordingName) and still continues', async () => {
     const deps = makeDeps()
     await ari.init(deps)
+    fetchBehavior['/record'] = { ok: false, status: 500, text: 'Internal Server Error' }
 
-    const recordErr = new Error('Internal Server Error')
     const channel = {
       id: 'ch-1',
       linkedid: 'L-1',
       caller: { number: '+359888001122' },
       dialplan: { exten: '+35921234567' },
-      answer: vi.fn(async () => {}),
-      record: vi.fn(async () => { throw recordErr }),
-      continueInDialplan: vi.fn(async () => {}),
     }
-    await mockClient.handlers.StasisStart({ args: [], type: 'StasisStart' }, channel)
+    emitAriEvent('StasisStart', channel, { args: [] })
     await new Promise(r => setImmediate(r))
 
     expect(deps.logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ err: recordErr, channelId: 'ch-1', recordingName: expect.stringContaining('wb-') }),
+      expect.objectContaining({ err: expect.any(Error), channelId: 'ch-1', recordingName: expect.stringContaining('wb-') }),
       'Failed to record channel; continuing anyway',
     )
-    expect(channel.continueInDialplan).toHaveBeenCalled()
+    expect(fetchCallsTo('/channels/ch-1/continue')).toHaveLength(1)
   })
 
   it('on ChannelStateChange to Up: marks pick + notifies', async () => {
@@ -258,15 +273,13 @@ describe('voip/ari', () => {
       id: 'ch-1', linkedid: 'L-1',
       caller: { number: '+359888001122' },
       dialplan: { exten: '+35921234567' },
-      answer: vi.fn(), record: vi.fn(), continueInDialplan: vi.fn(),
     }
-    await mockClient.handlers.StasisStart({ args: [], type: 'StasisStart' }, channel)
+    emitAriEvent('StasisStart', channel, { args: [] })
     await new Promise(r => setImmediate(r))
     calls.pick.mockClear()
 
     // Now Up
-    const upChannel = { id: 'ch-1', state: 'Up', caller: { number: '+359888001122' } }
-    await mockClient.handlers.ChannelStateChange({ type: 'ChannelStateChange' }, upChannel)
+    emitAriEvent('ChannelStateChange', { id: 'ch-1', state: 'Up', caller: { number: '+359888001122' } })
     await new Promise(r => setImmediate(r))
 
     expect(calls.pick).toHaveBeenCalledWith(expect.objectContaining({ vaultId: expect.any(String) }))
@@ -275,10 +288,8 @@ describe('voip/ari', () => {
   it('ignores ChannelStateChange for channels we don\'t know about', async () => {
     const deps = makeDeps()
     await ari.init(deps)
-    await mockClient.handlers.ChannelStateChange(
-      { type: 'ChannelStateChange' },
-      { id: 'untracked', state: 'Up' },
-    )
+    emitAriEvent('ChannelStateChange', { id: 'untracked', state: 'Up' })
+    await new Promise(r => setImmediate(r))
     expect(calls.pick).not.toHaveBeenCalled()
   })
 
@@ -291,17 +302,15 @@ describe('voip/ari', () => {
       id: 'ch-1', linkedid: 'L-1',
       caller: { number: '+359888001122' },
       dialplan: { exten: '+35921234567' },
-      answer: vi.fn(), record: vi.fn(), continueInDialplan: vi.fn(),
     }
-    await mockClient.handlers.StasisStart({ args: [], type: 'StasisStart' }, channel)
+    emitAriEvent('StasisStart', channel, { args: [] })
     await new Promise(r => setImmediate(r))
 
-    // Destroy — fetch will fail because there's no PBX to talk to. That's
-    // fine; the handler should still call calls.end with the no-record path.
-    await mockClient.handlers.ChannelDestroyed(
-      { type: 'ChannelDestroyed' },
-      { id: 'ch-1' },
-    )
+    // Destroy — fetch will fail because the mocked http response has no real
+    // stream interface (.pipe isn't implemented) so the write side rejects.
+    // That's fine; the handler should still call calls.end with the
+    // no-record path.
+    emitAriEvent('ChannelDestroyed', { id: 'ch-1' })
     await new Promise(r => setImmediate(r))
 
     expect(calls.end).toHaveBeenCalled()
@@ -318,12 +327,12 @@ describe('voip/ari', () => {
       const deps = makeDeps()
       deps.config.voip.ari.watchdogIntervalMs = 1000
       await ari.init(deps)
-      expect(mockConnect).toHaveBeenCalledTimes(1)
+      expect(wsInstances).toHaveLength(1)
 
       await vi.advanceTimersByTimeAsync(1000)
       await vi.advanceTimersByTimeAsync(1000)
 
-      expect(mockConnect).toHaveBeenCalledTimes(1)   // no reconnect triggered
+      expect(wsInstances).toHaveLength(1)   // no reconnect triggered
       await ari.stop()
     })
 
@@ -332,12 +341,12 @@ describe('voip/ari', () => {
       const deps = makeDeps()
       deps.config.voip.ari.watchdogIntervalMs = 1000
       await ari.init(deps)
-      expect(mockConnect).toHaveBeenCalledTimes(1)
+      expect(wsInstances).toHaveLength(1)
 
       httpBehavior = 'error'   // simulate the app having silently vanished
       await vi.advanceTimersByTimeAsync(1000)
 
-      expect(mockConnect).toHaveBeenCalledTimes(2)   // reconnected
+      expect(wsInstances).toHaveLength(2)   // reconnected
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ err: expect.anything() }),
         expect.stringContaining('reconnecting'),
@@ -355,7 +364,7 @@ describe('voip/ari', () => {
 
       await vi.advanceTimersByTimeAsync(120_000)
 
-      expect(mockConnect).toHaveBeenCalledTimes(1)   // never re-checked, never reconnected
+      expect(wsInstances).toHaveLength(1)   // never re-checked, never reconnected
       await ari.stop()
     })
   })

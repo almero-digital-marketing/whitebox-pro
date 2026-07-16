@@ -65,9 +65,8 @@ export function voip(options = {}) {
       // still assigned and shown to visitors over the socket — only the live
       // inbound-call ingestion needs a PBX (or a telephony-provider webhook).
       if (voipConfig.ari?.url) {
-        // Lazy-load: the ARI client drags in a deprecated request/tough-cookie stack
-        // (which warns about the legacy punycode builtin). Only pay that — and emit
-        // the warning — when a PBX is actually configured; call-tracking doesn't need it.
+        // Lazy-load: only pay ari.js's ws import when a PBX is actually
+        // configured; call-tracking doesn't need it.
         const ari = await import('./ari.js')
         await ari.init({
           config, webhooks, events, logger,

@@ -47,6 +47,7 @@ export default function voipPlugin(localOptions = {}) {
         request: phone.request,
         release: phone.release,
         current: phone.current,
+        click:   phone.click,
         stop:    orchestrator.stop,
       })
     },

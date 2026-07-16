@@ -58,7 +58,7 @@ function makeCtx({ mcp, db, single } = {}) {
     db: db || dbStub({ single }),
     webhooks: { dispatch: vi.fn() },
     events:   { emit: vi.fn(), on: vi.fn() },
-    connect:  { onConnected: vi.fn(), onDisconnected: vi.fn(), onMessage: vi.fn(), find: vi.fn(), emit: vi.fn() },
+    connect:  { onConnected: vi.fn(), onDisconnected: vi.fn(), onMessage: vi.fn(), onSessionReady: vi.fn(), find: vi.fn(), emit: vi.fn() },
     passports: { identify: vi.fn(), link: vi.fn() },
     sessions:  { resolve: vi.fn() },
     ai:    {},
