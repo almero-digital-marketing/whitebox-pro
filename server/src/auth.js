@@ -39,13 +39,18 @@ export default createAuth
 // The static-secret verifier.
 export const bearer = (opts) => ({ middleware: createAuth(opts) })
 
-// Normalize whatever `config.mcp.auth` is into a verifier (or null). Accepts:
+// Normalize a plugin's (or MCP's) `auth` option into a verifier (or null —
+// "no auth configured"). Accepts:
 //   undefined / null          → no auth
 //   string                    → bearer secret
 //   (req,res,next) => {}        → a bare middleware
 //   { middleware, … }          → an already-composed verifier (auth0(), jwt(), …)
 //   { secret }                 → bearer secret (legacy shape)
-export function resolveMcpAuth(authConfig, { logger } = {}) {
+// Nothing here is MCP-specific — any plugin's REST auth can accept the same
+// shapes (e.g. analytics({ auth: auth0({ … }) })). What "no auth" MEANS is the
+// caller's call: MCP allows omitting it (dev only); most plugin REST surfaces
+// treat a null result as "refuse to boot" — check resolveAuth()'s result.
+export function resolveAuth(authConfig, { logger } = {}) {
   if (!authConfig) return null
   if (typeof authConfig === 'string') return { middleware: createAuth({ secret: authConfig, logger }) }
   if (typeof authConfig === 'function') return { middleware: authConfig }

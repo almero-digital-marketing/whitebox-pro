@@ -127,12 +127,22 @@ grammar (hop count, IP/subnet, or a custom function).
 
 ## Auth model
 
-Every privileged endpoint is protected by a **bearer token** you set per plugin
-(`auth: { secret: process.env.WB_<PLUGIN>_TOKEN }`), checked with a constant-time
-comparison. Public ingress endpoints (browser-facing: `/sessions/resolve`,
+Every privileged endpoint is protected by an **auth verifier** you set per plugin
+via `auth: …`. The default is a **bearer token** (`auth: process.env.WB_<PLUGIN>_TOKEN`
+or the legacy `{ secret: … }` shape), checked with a constant-time comparison — but
+`auth` accepts anything [MCP's auth](06-mcp.md) does: a bare middleware function, or
+a composed verifier like `auth0({ domain, audience, scope })` from an external
+package. `analytics({ auth: auth0({ … }) })` works exactly like
+`mcp: { auth: auth0({ … }) }` — the normalization (`resolveAuth` in
+`server/src/auth.js`) is the same code either way, not MCP-specific.
+
+Public ingress endpoints (browser-facing: `/sessions/resolve`,
 `/conversions/events`, `/engagement/events`, `/crm/observe`) and provider webhooks
-(verified by the provider's own signature) are unauthenticated by bearer. The
-`/mcp` endpoint has its own pluggable auth — [see MCP](06-mcp.md).
+(verified by the provider's own signature) are unauthenticated by bearer. Most
+plugins refuse to boot without `auth` configured; a couple whose management
+surface is optional (conversions' audit endpoint, the shortener's link
+management) instead 401 that one route until `auth` is set, since their main
+ingress (event collection, redirects) is meant to stay public either way.
 
 ## Environment reference
 

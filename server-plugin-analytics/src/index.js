@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import { mountRoutes } from './routes.js'
 import { registerMcp } from './mcp.js'
 import * as compositionStore from './composition/store.js'
@@ -34,7 +34,11 @@ export function analytics(options = {}) {
       const logger = rootLogger.child({ component: 'analytics' })
       const analyticsConfig = options
 
-      const requireAuth = createAuth({ secret: analyticsConfig.auth?.secret, logger })
+      // auth accepts a bare secret string, { secret }, or a composed verifier
+      // like auth0({ … }) — see whitebox-pro-server/auth's resolveAuth().
+      const authVerifier = resolveAuth(analyticsConfig.auth, { logger })
+      if (!authVerifier) throw new Error('analytics: auth (a secret or a composed verifier) is required')
+      const requireAuth = authVerifier.middleware
 
       // Original awareness query/recall conveniences (unchanged).
       mountRoutes(app, { requireAuth, awareness, context, logger })

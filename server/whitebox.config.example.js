@@ -121,6 +121,12 @@ export default async (runtime) => ({
 
     analytics({
       auth: { secret: process.env.WB_ANALYTICS_TOKEN },
+      // `auth` accepts anything MCP's auth does — swap the line above for a
+      // composed verifier to gate analytics with the same OAuth/OIDC provider:
+      //   auth: auth0({ domain: process.env.AUTH0_DOMAIN,
+      //                 audience: 'https://whitebox/analytics', scope: 'analytics:read' })
+      // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top). Every
+      // plugin's `auth` option works the same way — see docs/04-configuration.md.
     }),
 
     // Receives /conversions/events from the browser, records them, and (when a

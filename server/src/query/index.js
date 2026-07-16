@@ -10,7 +10,7 @@ import { registerMcp } from './mcp.js'
 // register(app, { selector, mcp, config, logger }) — config.query.auth.secret
 // gates the REST endpoints (same bearer scheme as the rest of core). Omitting it
 // mounts the routes open — dev only, with a loud warning — mirroring the MCP auth
-// seam (resolveMcpAuth → null ⇒ no auth). QUERY is an always-on core surface, so
+// seam (resolveAuth → null ⇒ no auth). QUERY is an always-on core surface, so
 // a missing secret can't be allowed to fail boot.
 const OPEN = (req, res, next) => next()
 

@@ -7,7 +7,7 @@ import * as text from './text.js'
 import * as videos from './videos.js'
 import * as images from './images.js'
 import * as links from './link.js'
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 
 import { createDispatch, KIND_BY_TYPE, batchSchema } from './events.js'
 import { mountRoutes } from './routes.js'
@@ -45,7 +45,9 @@ export function engagement(options = {}) {
       images.init({ awareness, logger })
       links.init({ awareness, logger })
 
-      const requireAuth = createAuth({ secret: engagementConfig.auth?.secret, logger })
+      const authVerifier = resolveAuth(engagementConfig.auth, { logger })
+      if (!authVerifier) throw new Error('engagement: auth (a secret or a composed verifier) is required')
+      const requireAuth = authVerifier.middleware
 
       const { dispatch, dispatchBatchEvent } = createDispatch({ sections, text, videos, images, links, logger })
 
