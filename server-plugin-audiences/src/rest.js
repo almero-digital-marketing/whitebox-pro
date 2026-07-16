@@ -1,27 +1,10 @@
-// REST transport — thin routes over the service, behind the management bearer
-// secret. Full reference: docs/09-api.md.
+// REST transport — thin routes over the service, behind `requireAuth` (a
+// resolved verifier's middleware — static secret, auth0(), jwt(), … — see
+// whitebox-pro-server/auth's resolveAuth(), which index.js already ran this
+// through). Full reference: docs/09-api.md.
 
-import crypto from 'node:crypto'
-
-// Self-contained timing-safe bearer check (mirrors whitebox-pro-server/src/auth.js)
-// so the plugin has no internal-import dependency on the host.
-function bearer(secret) {
-  const expected = Buffer.from(secret, 'utf8')
-  return (req, res, next) => {
-    const m = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')
-    const got = m && Buffer.from(m[1], 'utf8')
-    if (!got || got.length !== expected.length || !crypto.timingSafeEqual(got, expected)) {
-      return res.status(401).json({ error: 'Unauthorized' })
-    }
-    next()
-  }
-}
-
-export function register(app, { service, secret, logger }) {
-  const auth = secret ? bearer(secret) : (req, res, next) => next()
-  if (!secret) logger?.warn?.('audiences: REST management API has NO auth secret — set audiences.auth.secret')
-
-  const r = (method, path, fn) => app[method](`/audiences${path}`, auth, wrap(fn))
+export function register(app, { service, requireAuth }) {
+  const r = (method, path, fn) => app[method](`/audiences${path}`, requireAuth, wrap(fn))
 
   // segments — chart-derived dynamic sub-queries (the atom of the audience layer)
   r('post',   '/segments/preview', async (req) => service.previewSegment(req.body?.source ?? req.body))

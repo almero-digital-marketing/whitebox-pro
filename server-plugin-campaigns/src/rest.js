@@ -1,26 +1,10 @@
-// REST transport — thin routes over the service, behind the management bearer secret.
-// Self-contained timing-safe bearer check (mirrors the audiences plugin) so there's no
-// internal-import dependency on the host.
+// REST transport — thin routes over the service, behind `requireAuth` (a
+// resolved verifier's middleware — static secret, auth0(), jwt(), … — see
+// whitebox-pro-server/auth's resolveAuth(), which index.js already ran this
+// through).
 
-import crypto from 'node:crypto'
-
-function bearer(secret) {
-  const expected = Buffer.from(secret, 'utf8')
-  return (req, res, next) => {
-    const m = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '')
-    const got = m && Buffer.from(m[1], 'utf8')
-    if (!got || got.length !== expected.length || !crypto.timingSafeEqual(got, expected)) {
-      return res.status(401).json({ error: 'Unauthorized' })
-    }
-    next()
-  }
-}
-
-export function register(app, { service, secret, logger }) {
-  const auth = secret ? bearer(secret) : (req, res, next) => next()
-  if (!secret) logger?.warn?.('campaigns: REST management API has NO auth secret — set campaigns.auth.secret')
-
-  const r = (method, path, fn) => app[method](`/campaigns${path}`, auth, wrap(fn))
+export function register(app, { service, requireAuth }) {
+  const r = (method, path, fn) => app[method](`/campaigns${path}`, requireAuth, wrap(fn))
 
   // Mikser upsert — create-or-update by external_id (define before /:id). Owns content, not audiences.
   r('put', '/upsert', async (req) => service.upsertCampaign(req.body || {}))
