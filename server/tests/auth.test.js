@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import createAuth, { bearer, resolveMcpAuth } from '../src/auth.js'
+import createAuth, { bearer, resolveAuth } from '../src/auth.js'
 
 function call(mw, authHeader) {
   const req = { headers: authHeader ? { authorization: authHeader } : {}, get(n) { return this.headers[n.toLowerCase()] } }
@@ -18,32 +18,32 @@ describe('bearer (static secret)', () => {
   })
 })
 
-describe('resolveMcpAuth', () => {
+describe('resolveAuth', () => {
   it('string → bearer verifier', () => {
-    const v = resolveMcpAuth('tok', {})
+    const v = resolveAuth('tok', {})
     expect(typeof v.middleware).toBe('function')
     expect(call(v.middleware, 'Bearer tok').next).toHaveBeenCalled()
   })
 
   it('{ secret } (legacy) → bearer verifier', () => {
-    const v = resolveMcpAuth({ secret: 'tok' }, {})
+    const v = resolveAuth({ secret: 'tok' }, {})
     expect(call(v.middleware, 'Bearer tok').next).toHaveBeenCalled()
   })
 
   it('a composed verifier passes through unchanged', () => {
     const verifier = { middleware: () => {}, authorizationServers: ['https://x/'], scopesSupported: ['mcp:use'] }
-    expect(resolveMcpAuth(verifier, {})).toBe(verifier)
+    expect(resolveAuth(verifier, {})).toBe(verifier)
   })
 
   it('a bare middleware fn → wrapped', () => {
     const fn = () => {}
-    expect(resolveMcpAuth(fn, {}).middleware).toBe(fn)
+    expect(resolveAuth(fn, {}).middleware).toBe(fn)
   })
 
   it('null / empty → no auth', () => {
-    expect(resolveMcpAuth(null, {})).toBeNull()
-    expect(resolveMcpAuth(undefined, {})).toBeNull()
-    expect(resolveMcpAuth({}, {})).toBeNull()
+    expect(resolveAuth(null, {})).toBeNull()
+    expect(resolveAuth(undefined, {})).toBeNull()
+    expect(resolveAuth({}, {})).toBeNull()
   })
 
   it('bearer() helper returns a verifier', () => {

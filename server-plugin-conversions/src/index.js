@@ -13,7 +13,7 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import * as store from './store.js'
 import * as ingest from './ingest.js'
 import { createReporter } from './reporter.js'
@@ -38,11 +38,13 @@ export function conversions(options = {}) {
       const logger = rootLogger.child({ component: 'conversions' })
 
       // The public POST ingress needs no secret. Auth only guards the admin GET
-      // audit endpoint — so it's optional: lock that route with a 401 until a
-      // secret is configured, rather than refusing to boot without one.
-      const requireAuth = options.auth?.secret
-        ? createAuth({ secret: options.auth.secret, logger })
-        : (req, res) => res.status(401).json({ error: 'conversions: set auth.secret to use the audit endpoint' })
+      // audit endpoint — so it's optional: lock that route with a 401 until it's
+      // configured (a secret, or a composed verifier like auth0()), rather than
+      // refusing to boot without one.
+      const authVerifier = resolveAuth(options.auth, { logger })
+      const requireAuth = authVerifier
+        ? authVerifier.middleware
+        : (req, res) => res.status(401).json({ error: 'conversions: set auth to use the audit endpoint' })
 
       const reporter = createReporter({ networks: options.networks || [], passports, logger })
 

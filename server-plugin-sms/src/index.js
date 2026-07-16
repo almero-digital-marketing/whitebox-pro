@@ -11,7 +11,7 @@ import * as invalid from './invalid.js'
 import { createRouter } from './router.js'
 import { mountRoutes } from './routes.js'
 import { registerMcp } from './mcp.js'
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import createNotify from 'whitebox-pro-server/notify'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -40,7 +40,9 @@ export function sms(options = {}) {
       const config = { ...ctx.config, sms: smsConfig }
 
       const { notify } = createNotify({ webhooksConfig: smsConfig.webhooks, events, webhooks })
-      const requireAuth = createAuth({ secret: smsConfig.auth?.secret, logger })
+      const authVerifier = resolveAuth(smsConfig.auth, { logger })
+      if (!authVerifier) throw new Error('sms: auth (a secret or a composed verifier) is required')
+      const requireAuth = authVerifier.middleware
 
       suppressions.init({ db, logger, defaultCountry: smsConfig.defaultCountry })
       invalid.init({ db, logger, defaultCountry: smsConfig.defaultCountry })

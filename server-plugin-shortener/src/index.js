@@ -12,7 +12,7 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import * as store from './store.js'
 import * as service from './service.js'
 import { mountRoutes } from './routes.js'
@@ -50,10 +50,11 @@ export function shortener(options = {}) {
         claimTtlSec:    options.claimTtlSec    ?? 180,                 // claim-token TTL after a click
       }
 
-      // Bearer guards the management surface only; the redirect + claim are public.
-      const requireAuth = options.auth?.secret
-        ? createAuth({ secret: options.auth.secret, logger })
-        : (req, res) => res.status(401).json({ error: 'shortener: set auth.secret to manage links' })
+      // Auth guards the management surface only; the redirect + claim are public.
+      const authVerifier = resolveAuth(options.auth, { logger })
+      const requireAuth = authVerifier
+        ? authVerifier.middleware
+        : (req, res) => res.status(401).json({ error: 'shortener: set auth to manage links' })
 
       store.init({ db })
       service.init({ passports, awareness, logger, config })

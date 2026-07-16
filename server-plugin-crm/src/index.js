@@ -1,7 +1,7 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import * as state from './state.js'
 import * as ingest from './ingest.js'
 
@@ -31,7 +31,9 @@ export function crm(options = {}) {
       const logger = rootLogger.child({ component: 'crm' })
       const crmConfig = options
 
-      const requireAuth = createAuth({ secret: crmConfig.auth?.secret, logger })
+      const authVerifier = resolveAuth(crmConfig.auth, { logger })
+      if (!authVerifier) throw new Error('crm: auth (a secret or a composed verifier) is required')
+      const requireAuth = authVerifier.middleware
 
       // Singleton modules: capture deps once, in dependency order. ingest reaches
       // state directly via `import * as state`; state writes structured records

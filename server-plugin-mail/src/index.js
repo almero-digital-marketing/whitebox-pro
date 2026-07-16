@@ -10,7 +10,7 @@ import * as attachments from './attachments.js'
 import * as suppressions from './suppressions.js'
 import * as invalid from './invalid.js'
 import * as bulk from './bulk.js'
-import createAuth from 'whitebox-pro-server/auth'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 import createNotify from 'whitebox-pro-server/notify'
 
 import { mountRoutes } from './routes.js'
@@ -61,7 +61,9 @@ export function mail(options = {}) {
       await mkdir(attachmentsFolder, { recursive: true })
 
       const { notify }  = createNotify({ webhooksConfig: mailConfig.webhooks, events, webhooks })
-      const requireAuth = createAuth({ secret: mailConfig.auth?.secret, logger })
+      const authVerifier = resolveAuth(mailConfig.auth, { logger })
+      if (!authVerifier) throw new Error('mail: auth (a secret or a composed verifier) is required')
+      const requireAuth = authVerifier.middleware
 
       // Singleton modules: capture deps once via init(), in dependency order.
       // Leaf modules first (no cross-module deps), then modules that import them.

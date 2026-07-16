@@ -27,7 +27,7 @@ import * as selector from './selector/index.js'
 import * as query from './query/index.js'
 import * as context from './context.js'
 import * as mcp from './mcp.js'
-import createAuth, { resolveMcpAuth } from './auth.js'
+import { resolveAuth } from './auth.js'
 import { register as registerHealth } from './health.js'
 import { load as loadPlugins } from './plugins.js'
 
@@ -97,6 +97,7 @@ async function start() {
   connect.init({ server, events, sessions })
   registerHealth(app, { db: db.get(), redis: redis.get() })
   sessions.register(app)
+  passports.register(app)
 
   if (template) {
     app.use('/output', express.static(config.mikser.outputFolder))
@@ -140,7 +141,7 @@ async function start() {
   // connection. config.mcp.auth is a pluggable verifier — a static secret
   // (string / { secret }) by default, or a composed one like
   // auth0({ … }) from an external package. Omitted ⇒ no auth (dev only).
-  const mcpAuth = resolveMcpAuth(config.mcp?.auth, { logger })
+  const mcpAuth = resolveAuth(config.mcp?.auth, { logger })
   await mcp.mount(app, { path: config.mcp?.path ?? '/mcp', auth: mcpAuth })
 
   await new Promise((resolve, reject) => {
