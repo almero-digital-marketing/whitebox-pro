@@ -5,6 +5,13 @@ describe('kernel — schemas', () => {
   it('exposes the canonical event vocabulary', () => {
     expect(CONVERSION_EVENTS).toEqual(CANONICAL_EVENTS)
     expect(CANONICAL_EVENTS).toContain('purchase')
+    expect(CANONICAL_EVENTS).toContain('find_location')
+  })
+
+  it('validates a find_location event (no mandatory fields — the base schema)', () => {
+    expect(validateEvent('find_location', { content_id: 'sofia-center', content_name: 'Sofia Center' }))
+      .toEqual({ content_name: 'Sofia Center' })   // content_id isn't in the base shape — stripped like any other unknown key
+    expect(validateEvent('find_location', {})).toEqual({})
   })
 
   it('validates a purchase (value+currency required) and strips unknown keys', () => {

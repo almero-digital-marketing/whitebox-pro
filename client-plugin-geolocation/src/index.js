@@ -2,6 +2,11 @@
 // along on the /sessions/resolve response (server-plugin-geolocation, via the
 // core sessions.onResolve hook). No permission prompt, no extra request —
 // this plugin does nothing but listen and expose what's already there.
+//
+// get() stays a method (not a plain property) since geo can update after a
+// later session.resolved — a plain property snapshot at attach time would go
+// stale. Callers reach this plugin via `await wb.plugin('geolocation')`, so
+// there's no need for get() itself to return a Promise.
 
 export default function geolocationPlugin() {
   return {

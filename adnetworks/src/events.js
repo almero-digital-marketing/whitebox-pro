@@ -13,4 +13,5 @@ export const CANONICAL_EVENTS = [
   'complete_registration',
   'subscribe',
   'contact',
+  'find_location',
 ]

@@ -73,6 +73,9 @@ export default function whitebox(options = {}) {
   const installed = new Map()       // name → api attached via ctx.attach(name, api)
   const teardowns = []              // collected from each plugin's install() return value
   const callQueue = []
+  const pluginWaiters = new Map()   // name → [{resolve, reject}], for getPlugin() callers waiting on a name
+  const namespaceProxies = new Set()   // names pre-populated with a proxy below — attach() must not overwrite these
+  let settled = false               // true once init()'s body has fully run (session + all plugins + ready)
 
   const transport = transportEnabled
     ? createTransport({
@@ -110,6 +113,29 @@ export default function whitebox(options = {}) {
     }
   }
 
+  // Attach identity claims to the current passport — e.g. an email/phone at
+  // registration or login, so pre-existing (anonymous) history merges instead
+  // of orphaning. Generic on purpose: core has no opinion on identity types,
+  // it just forwards whatever [{type, name, value}] claims it's given to
+  // POST /passports/link, and adopts the (possibly merged) passport_id that
+  // comes back — same adoption pattern as resolveSessionFromServer above.
+  async function identify(claims) {
+    if (!Array.isArray(claims) || !claims.length) return { passportId }
+    try {
+      const res = await http.request('/passports/link', {
+        method: 'POST',
+        body: { passport_id: passportId, claims },
+      })
+      if (res?.passportId) {
+        passportId = res.passportId
+        identity.setPassportId(res.passportId)
+      }
+    } catch (err) {
+      logger?.warn?.('whitebox: identify failed', err)
+    }
+    return { passportId }
+  }
+
   // Anything called before ready is queued and replayed
   function queue(fn) {
     if (ready) return fn()
@@ -118,6 +144,49 @@ export default function whitebox(options = {}) {
         try { resolve(await fn()) }
         catch (err) { reject(err) }
       })
+    })
+  }
+
+  // Look up a plugin's attached api by name, waiting if it hasn't attached
+  // yet. Resolves the moment attach(name, ...) runs (which may be before or
+  // after wb.ready, depending on plugin order) — does NOT wait for every
+  // other plugin to finish installing too. Rejects once init() has fully
+  // settled and the name still never attached (install() threw, or the name
+  // was never declared) — a caller with a typo'd or failed plugin name gets a
+  // clear rejection instead of a promise that hangs forever.
+  function getPlugin(name) {
+    if (installed.has(name)) return Promise.resolve(installed.get(name))
+    if (settled) return Promise.reject(new Error(`whitebox: plugin "${name}" was never installed`))
+    return new Promise((resolve, reject) => {
+      if (!pluginWaiters.has(name)) pluginWaiters.set(name, [])
+      pluginWaiters.get(name).push({ resolve, reject })
+    })
+  }
+
+  // A stable stand-in for wb[name], so `wb.<name>.<method>(...)` is callable
+  // immediately — before install() has even started — same as gtag/fbq work
+  // before their real script loads. Once attached, property reads forward
+  // straight through with no wrapping. Before that, every read is assumed to
+  // be a method call (see plugin authoring convention: expose data via
+  // zero-arg methods, not plain properties, so an early call has something to
+  // queue) and returns a function that awaits getPlugin(name) and replays the
+  // call — which resolves once attach() runs, or rejects with a clear error
+  // if the plugin's install() throws or the name is never declared, instead
+  // of hanging forever.
+  function makeNamespaceProxy(name) {
+    return new Proxy({}, {
+      get(_, prop) {
+        if (typeof prop === 'symbol') return undefined
+        // Not bound to `real` — every attached plugin method is an arrow-fn
+        // closure with no `this` dependency, so a plain forward keeps the
+        // same function reference across repeated reads (`.bind()` would
+        // mint a fresh wrapper on every access instead).
+        if (installed.has(name)) return installed.get(name)[prop]
+        return (...args) => getPlugin(name).then(real => {
+          const fn = real[prop]
+          return typeof fn === 'function' ? fn.apply(real, args) : fn
+        })
+      },
     })
   }
 
@@ -141,7 +210,20 @@ export default function whitebox(options = {}) {
     // visitor to a known customer) so subsequent events run as that passport.
     setPassportId(id) { if (id) { passportId = id; identity.setPassportId(id) } },
     // Convenience for plugins that want to expose an API onto the wb object.
-    attach(name, api) { wb[name] = api; installed.set(name, api) },
+    // Constructor-time plugins already have a namespace proxy pre-populated
+    // at wb[name] (see below) — leave it in place, it starts forwarding to
+    // `api` the moment installed.set() runs. Late-bound (wb.use()) plugins
+    // have no such proxy, so this is a plain assign for them. Either way,
+    // resolves any wb.plugin(name) callers waiting on this specific name.
+    attach(name, api) {
+      installed.set(name, api)
+      if (!namespaceProxies.has(name)) wb[name] = api
+      const waiters = pluginWaiters.get(name)
+      if (waiters) {
+        pluginWaiters.delete(name)
+        for (const { resolve } of waiters) resolve(api)
+      }
+    },
   }
 
   // Install a single plugin instance synchronously *or* asynchronously.
@@ -176,6 +258,14 @@ export default function whitebox(options = {}) {
       const fn = callQueue.shift()
       try { await fn() } catch (err) { logger?.warn?.('queued call failed', err) }
     }
+
+    settled = true
+    // Anyone still waiting on a name that never attached (install() threw, or
+    // the name was never declared) gets a clear rejection instead of hanging.
+    for (const [name, waiters] of pluginWaiters) {
+      for (const { reject } of waiters) reject(new Error(`whitebox: plugin "${name}" was never installed`))
+    }
+    pluginWaiters.clear()
   }
 
   const wb = {
@@ -188,6 +278,9 @@ export default function whitebox(options = {}) {
 
     // Built-in: consent gate. Same instance handed to plugins via ctx.consent.
     consent,
+
+    // Built-in: attach identity claims to the current passport. See identify() above.
+    identify,
 
     // Late-bound plugin registration (after constructor). Returns wb for chaining.
     // Validates the plugin shape synchronously, then kicks off install. If the
@@ -202,8 +295,10 @@ export default function whitebox(options = {}) {
       return wb
     },
 
-    // Plugins installed (by name) — useful for cross-plugin lookups.
-    plugin(name) { return installed.get(name) ?? null },
+    // Plugins installed (by name) — useful for cross-plugin lookups. Async:
+    // resolves once the named plugin attaches, waits if it hasn't yet, and
+    // rejects if init() has fully settled and the name never attached.
+    plugin: getPlugin,
 
     // Event subscription
     on: emitter.on,
@@ -227,6 +322,18 @@ export default function whitebox(options = {}) {
       sessionId = null
       transport?.close()
     },
+  }
+
+  // Pre-populate a namespace proxy for every constructor-time plugin, so
+  // wb.<name>.<method>(...) is callable immediately — before install() has
+  // even started, let alone finished. Late-bound (wb.use()) plugins aren't
+  // covered: their name isn't known until .use() is actually called with the
+  // plugin object.
+  for (const plugin of pluginInstances) {
+    if (plugin?.name && !namespaceProxies.has(plugin.name)) {
+      namespaceProxies.add(plugin.name)
+      wb[plugin.name] = makeNamespaceProxy(plugin.name)
+    }
   }
 
   ready = init()

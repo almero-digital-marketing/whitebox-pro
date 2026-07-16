@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
 import knex from 'knex'
 import dayjs from 'dayjs'
+import express from 'express'
 
 vi.mock('../src/logger.js', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-const { identify, link, identities, findByIdentity, resolve, merge, init } = await import('../src/passports.js')
+const { identify, link, identities, findByIdentity, resolve, merge, init, register } = await import('../src/passports.js')
 
 // ---------------------------------------------------------------------------
 // Lock mock — no Redis needed for passport tests
@@ -313,5 +314,62 @@ describe('merge', () => {
     await merge(b, a)   // a → b
     await merge(c, b)   // b → c  (should also re-point a → c)
     expect(await resolve(a)).toBe(c)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// POST /passports/link
+// ---------------------------------------------------------------------------
+
+describe('POST /passports/link', () => {
+  let app, server, base
+
+  beforeAll(async () => {
+    app = express()
+    app.use(express.json())
+    register(app)
+    await new Promise(r => { server = app.listen(0, r) })
+    base = `http://127.0.0.1:${server.address().port}`
+  })
+  afterAll(async () => {
+    await new Promise(r => server.close(r))
+  })
+
+  const post = (body = {}) =>
+    fetch(base + '/passports/link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async r => ({ status: r.status, body: await r.json() }))
+
+  it('links a generic claim onto the given passport_id — route has no opinion on claim shape', async () => {
+    const id = await identify(null)
+    const res = await post({ passport_id: id, claims: [{ type: 'email', name: 'email', value: 'a@x.com' }] })
+    expect(res.status).toBe(200)
+    expect(res.body.passportId).toBe(id)
+    const [row] = await identities(id)
+    expect(row).toMatchObject({ type: 'email', value: 'a@x.com' })
+  })
+
+  it('the passport_id passed in always wins — an existing owner of the claim gets absorbed into it', async () => {
+    const previouslyKnown = await identify(null)
+    await link(previouslyKnown, [{ type: 'email', name: 'email', value: 'shared@x.com' }])
+    const currentBrowser = await identify(null)
+
+    const res = await post({ passport_id: currentBrowser, claims: [{ type: 'email', name: 'email', value: 'shared@x.com' }] })
+    expect(res.status).toBe(200)
+    expect(res.body.passportId).toBe(currentBrowser)
+    expect(await resolve(previouslyKnown)).toBe(currentBrowser)
+  })
+
+  it('400s when passport_id is missing', async () => {
+    const res = await post({ claims: [{ type: 'email', name: 'email', value: 'a@x.com' }] })
+    expect(res.status).toBe(400)
+  })
+
+  it('400s when claims is missing or empty', async () => {
+    const id = await identify(null)
+    expect((await post({ passport_id: id })).status).toBe(400)
+    expect((await post({ passport_id: id, claims: [] })).status).toBe(400)
   })
 })

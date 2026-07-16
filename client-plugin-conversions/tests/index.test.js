@@ -21,16 +21,27 @@ function setup({ consented = true, requireConsent } = {}) {
 const STANDARD_METHODS = [
   'pageView', 'viewContent', 'search', 'addToCart', 'addToWishlist',
   'beginCheckout', 'addPaymentInfo', 'purchase', 'lead',
-  'completeRegistration', 'subscribe', 'contact',
+  'completeRegistration', 'subscribe', 'contact', 'findLocation',
 ]
 
 describe('conversions plugin — method surface', () => {
-  it('attaches one method per standard event plus track/custom', () => {
+  it('attaches one method per standard event plus track/custom/identify', () => {
     const { api, core } = setup()
     expect(core.attach).toHaveBeenCalledWith('conversions', expect.any(Object))
     for (const m of STANDARD_METHODS) expect(typeof api[m]).toBe('function')
     expect(typeof api.track).toBe('function')
     expect(typeof api.custom).toBe('function')
+    expect(typeof api.identify).toBe('function')
+  })
+
+  it('identify() with no composed networks is a harmless no-op', () => {
+    const { api } = setup()
+    expect(api.identify([{ type: 'email', name: 'email', value: 'a@x.com' }])).toEqual([])
+  })
+
+  it('identify() returns [] when consent is withheld', () => {
+    const { api } = setup({ consented: false })
+    expect(api.identify([{ type: 'email', name: 'email', value: 'a@x.com' }])).toEqual([])
   })
 })
 

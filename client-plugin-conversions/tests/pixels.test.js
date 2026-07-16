@@ -24,7 +24,7 @@ function setup({ consented = true, networks, sst } = {}) {
 beforeEach(() => {
   window.fbq = vi.fn()
   window.gtag = vi.fn()
-  window.ttq = { track: vi.fn() }
+  window.ttq = { track: vi.fn(), identify: vi.fn() }
 })
 afterEach(() => { delete window.fbq; delete window.gtag; delete window.ttq })
 
@@ -115,5 +115,38 @@ describe('composed pixels — firing + mapping', () => {
     const sig = requests[0].opts.body.signals
     expect(sig.fbp).toBe('fb.1.5.9')         // meta collected
     expect(sig.ga_client_id).toBeUndefined() // google not composed
+  })
+})
+
+describe('composed pixels — identify (Advanced Matching)', () => {
+  const claims = [
+    { type: 'email', name: 'email', value: 'a@x.com' },
+    { type: 'phone', name: 'phone', value: '+15551234567' },
+  ]
+
+  it('hands claims to every network that implements identify() (meta, tiktok — not google)', async () => {
+    const { api } = setup()
+    const identified = api.identify(claims)
+    expect(identified.sort()).toEqual(['meta', 'tiktok'])
+    expect(window.fbq).toHaveBeenCalledWith('set', 'userData', { em: 'a@x.com', ph: '+15551234567' })
+    expect(window.ttq.identify).toHaveBeenCalledWith({ email: 'a@x.com', phone_number: '+15551234567' })
+  })
+
+  it('is a no-op (empty array, no calls) when consent is withheld', () => {
+    const { api } = setup({ consented: false })
+    expect(api.identify(claims)).toEqual([])
+    expect(window.fbq).not.toHaveBeenCalled()
+  })
+
+  it('skips a pixel that is not present', () => {
+    delete window.ttq
+    const { api } = setup()
+    expect(api.identify(claims)).toEqual(['meta'])
+  })
+
+  it('sends nothing to a network when claims have no matching type', () => {
+    const { api } = setup({ networks: [meta()] })
+    api.identify([{ type: 'city', name: 'city', value: 'Sofia' }])
+    expect(window.fbq).toHaveBeenCalledWith('set', 'userData', { ct: 'Sofia' })
   })
 })
