@@ -40,20 +40,21 @@ mcp: {
    This also serves `GET /.well-known/oauth-protected-resource` (RFC 9728) so a
    client can discover the authorization server and run the OAuth flow without
    pre-shared secrets.
-3. **Built-in (OAuth, self-hosted)** — `whitebox-pro-auth-builtin` is a complete
-   OAuth 2.1 authorization server (authorization + token endpoints, JWKS, RFC 8414
-   discovery) that ships *with* WhiteBox — no external identity provider account
-   needed. Register it as a plugin, then verify with the same generic `jwt()`
-   verifier the Auth0 package exports (any OIDC-compliant issuer works with it):
+3. **Built-in (OAuth, self-hosted)** — `whitebox-pro-server-plugin-oauth` is a
+   complete OAuth 2.1 authorization server (authorization + token endpoints, JWKS,
+   RFC 8414 discovery) that ships *in this monorepo* — a first-party plugin, not
+   an external provider, so no external identity provider account is needed.
+   Register it as a plugin, then verify with the same generic `jwt()` verifier the
+   Auth0 package exports (any OIDC-compliant issuer works with it):
    ```js
-   import { authBuiltin } from 'whitebox-pro-auth-builtin'
+   import { oauth } from 'whitebox-pro-server-plugin-oauth'
    import { jwt } from 'whitebox-pro-auth-auth0'
 
    const ISSUER = 'https://your-host/oauth'
    const AUDIENCE = 'https://whitebox/api'
 
    plugins: [
-     authBuiltin({ issuer: ISSUER, audience: AUDIENCE }),
+     oauth({ issuer: ISSUER, audience: AUDIENCE }),
      // …
    ],
    mcp: {
@@ -73,8 +74,8 @@ mcp: {
    and browser-based apps, which can't hold a secret safely.
 4. **None** — omit `auth` (development only).
 
-Any OAuth resource-server verifier can be dropped in the same way; Auth0 and the
-built-in server are just the first two provider packages. See
+Any OAuth resource-server verifier can be dropped in the same way; Auth0 is an
+external-provider example, the built-in server a first-party one. See
 [Integrations](08-integrations.md).
 
 ## Connecting a client

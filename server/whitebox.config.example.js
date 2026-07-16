@@ -20,6 +20,13 @@ import { voip } from 'whitebox-pro-server-plugin-voip'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
 import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
+// Built-in OAuth 2.1 authorization server — a self-hosted alternative to Auth0,
+// optional like the other auth choices (see the mcp.auth and analytics({ auth })
+// comments below for how it's used).
+// import { oauth } from 'whitebox-pro-server-plugin-oauth'
+// import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
+// const OAUTH_ISSUER = 'https://wb.example.com/oauth'   // this server's own URL + oauth path
+// const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos
@@ -32,12 +39,6 @@ import { mailgun } from 'whitebox-pro-mail-mailgun'
 import { twilio } from 'whitebox-pro-sms-twilio'
 import { mobica } from 'whitebox-pro-sms-mobica'
 import { maxmind } from 'whitebox-geolocation-maxmind'
-// Built-in OAuth 2.1 authorization server — a self-hosted alternative to Auth0
-// (see the mcp.auth and analytics({ auth }) comments below for how it's used).
-// import { authBuiltin } from 'whitebox-pro-auth-builtin'
-// import { jwt } from 'whitebox-pro-auth-auth0'
-// const OAUTH_ISSUER = 'https://wb.example.com/oauth'   // this server's own URL + oauth path
-// const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
 
 export default async (runtime) => ({
   port: Number(process.env.WB_PORT || 3000),
@@ -110,10 +111,10 @@ export default async (runtime) => ({
   //                             audience: 'https://whitebox/mcp', scope: 'mcp:use' })
   //
   //   2. Built-in (self-hosted, no external account) — add at the top:
-  //        import { authBuiltin } from 'whitebox-pro-auth-builtin'
+  //        import { oauth } from 'whitebox-pro-server-plugin-oauth'
   //        import { jwt } from 'whitebox-pro-auth-auth0'   // generic verifier, reused
   //      register the plugin (below, in `plugins`):
-  //        authBuiltin({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
+  //        oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
   //      and set: auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' })
   //      Bootstrap the first user/client with the package's CLI scripts
   //      (create-admin.mjs / create-client.mjs) — see its README.
@@ -145,7 +146,8 @@ export default async (runtime) => ({
       //   auth: auth0({ domain: process.env.AUTH0_DOMAIN,
       //                 audience: 'https://whitebox/analytics', scope: 'analytics:read' })
       // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top) — or, with
-      // the built-in authorization server instead of Auth0:
+      // the built-in authorization server instead of Auth0 (see the oauth()
+      // plugin entry below):
       //   auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' })
       // Every plugin's `auth` option works the same way — see docs/04-configuration.md.
     }),
@@ -262,7 +264,7 @@ export default async (runtime) => ({
     // /.well-known/jwks.json and /.well-known/oauth-authorization-server at
     // OAUTH_ISSUER's own path. Only needed if you use jwt({…}) above instead of
     // a static token or Auth0. Bootstrap with the package's create-admin.mjs /
-    // create-client.mjs CLI scripts — see whitebox-pro-auth-builtin's README.
-    // authBuiltin({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
+    // create-client.mjs CLI scripts — see whitebox-pro-server-plugin-oauth's README.
+    // oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
   ].filter(Boolean),
 })
