@@ -211,7 +211,7 @@ holds no secrets.
 |---|---|
 | `WB_ARI_URL` `WB_ARI_USER` `WB_ARI_PASSWORD` | Asterisk ARI connection |
 | `AUTH0_DOMAIN` (+ `audience`/`scope` set inline) | Auth0 verifier for `/mcp` |
-| `WB_DB_*` (shared with core) | `whitebox-pro-auth-builtin`'s CLI scripts (`create-admin.mjs`/`create-client.mjs`) — no separate DB config, no Auth0 account needed |
+| `WB_DB_*` (shared with core) | `whitebox-pro-server-plugin-oauth`'s CLI scripts (`create-admin.mjs`/`create-client.mjs`) — no separate DB config, no Auth0 account needed |
 
 > A given deployment only needs the variables for the plugins and providers it
 > actually enables.

@@ -1,0 +1,35 @@
+{
+  "name": "whitebox-pro-server-plugin-oauth",
+  "version": "0.1.0",
+  "description": "WhiteBox server plugin — self-hosted OAuth 2.1 authorization server (login, PKCE, token issuance, JWKS, RFC 8414 discovery). No external identity provider account required; issues JWTs consumable by whitebox-pro-auth-auth0's generic jwt() verifier, so it composes into config.mcp.auth and any plugin's auth exactly like Auth0 does.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "vitest run",
+    "create-admin": "node --env-file-if-exists=.env scripts/create-admin.mjs",
+    "create-client": "node --env-file-if-exists=.env scripts/create-client.mjs"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "jose": "^5.9.0"
+  },
+  "peerDependencies": {
+    "whitebox-pro-server": "^2.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "knex": "^3.1.0",
+    "pg": "^8.11.0"
+  }
+}
