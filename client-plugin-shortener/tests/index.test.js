@@ -1,5 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import shortenerPlugin from '../src/index.js'
+import { describe, it, expect, vi } from 'vitest'
 
 function makeCore({ claim } = {}) {
   let passportId = 'anon-1'
@@ -20,18 +19,33 @@ function setUrl(href) {
   window.happyDOM.setURL(href)
 }
 
-beforeEach(() => setUrl('https://clinic.com/whitening'))
+// src/index.js reads its claim token from `location` at MODULE EVALUATION
+// time, not inside install() (see its own comment for why). A static
+// top-level import only evaluates the module once, before any test or
+// beforeEach runs — so every test needs the URL set FIRST, then a fresh
+// import via vi.resetModules() to force that top-level read to run again
+// against the URL this specific test wants.
+async function loadPlugin(href) {
+  setUrl(href)
+  vi.resetModules()
+  const { default: shortenerPlugin } = await import('../src/index.js')
+  return shortenerPlugin
+}
 
 describe('shortener client plugin', () => {
   it('does nothing (no claim) when there is no token in the URL', async () => {
+    const shortenerPlugin = await loadPlugin('https://clinic.com/whitening')
     const core = makeCore()
     await shortenerPlugin().install(core)
     expect(core.http.request).not.toHaveBeenCalled()
-    expect(core.attach).toHaveBeenCalledWith('shortener', { data: null })
+    const [name, api] = core.attach.mock.calls[0]
+    expect(name).toBe('shortener')
+    expect(api.data()).toBeNull()
+    expect(api.bound()).toBe(false)
   })
 
   it('reads a #wb= token, claims, adopts the passport, exposes prefill, scrubs the URL', async () => {
-    setUrl('https://clinic.com/whitening#wb=TOK123')
+    const shortenerPlugin = await loadPlugin('https://clinic.com/whitening#wb=TOK123')
     const core = makeCore({ claim: { bound: true, passport_id: 'jane', data: { name: 'Jane' } } })
     await shortenerPlugin().install(core)
 
@@ -39,12 +53,15 @@ describe('shortener client plugin', () => {
       { method: 'POST', body: { token: 'TOK123', passport_id: 'anon-1' } })
     expect(core.setPassportId).toHaveBeenCalledWith('jane')
     expect(core._passport()).toBe('jane')
-    expect(core.attach).toHaveBeenCalledWith('shortener', { data: { name: 'Jane' }, bound: true })
+    const [name, api] = core.attach.mock.calls[0]
+    expect(name).toBe('shortener')
+    expect(api.data()).toEqual({ name: 'Jane' })
+    expect(api.bound()).toBe(true)
     expect(location.href).toBe('https://clinic.com/whitening')   // token scrubbed
   })
 
   it('reads a ?wb= token (query handoff)', async () => {
-    setUrl('https://clinic.com/app?wb=TOK456#/whitening')
+    const shortenerPlugin = await loadPlugin('https://clinic.com/app?wb=TOK456#/whitening')
     const core = makeCore({ claim: { bound: true, passport_id: 'jane', data: {} } })
     await shortenerPlugin().install(core)
     expect(core.http.request).toHaveBeenCalledWith('/shortener/claim',
@@ -53,10 +70,15 @@ describe('shortener client plugin', () => {
   })
 
   it('does not adopt a passport when the claim is unbound', async () => {
-    setUrl('https://clinic.com/x#wb=STALE')
+    const shortenerPlugin = await loadPlugin('https://clinic.com/x#wb=STALE')
     const core = makeCore({ claim: { bound: false } })
     await shortenerPlugin().install(core)
+    expect(core.http.request).toHaveBeenCalledWith('/shortener/claim',
+      expect.objectContaining({ body: { token: 'STALE', passport_id: 'anon-1' } }))
     expect(core.setPassportId).not.toHaveBeenCalled()
-    expect(core.attach).toHaveBeenCalledWith('shortener', { data: null, bound: false })
+    const [name, api] = core.attach.mock.calls[0]
+    expect(name).toBe('shortener')
+    expect(api.data()).toBeNull()
+    expect(api.bound()).toBe(false)
   })
 })
