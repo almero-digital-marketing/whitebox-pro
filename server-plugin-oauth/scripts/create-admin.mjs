@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Bootstrap the first (or another) user. No UI exists to do this yet — every
-// user is created this way.
+// Bootstrap the first admin user — the only way to get one, since regular
+// (non-admin) users are created through the invite flow once an admin
+// exists, and only an admin can send invites.
 //
 //   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=... node scripts/create-admin.mjs
 //   node scripts/create-admin.mjs                 # prompts for both instead
@@ -29,8 +30,8 @@ async function main() {
   const db = await connect()
   users.init({ db })
   try {
-    const user = await users.createUser({ email, password })
-    console.log(`Created user ${user.email} (${user.id})`)
+    const user = await users.createUser({ email, password, isAdmin: true })
+    console.log(`Created admin ${user.email} (${user.id})`)
   } finally {
     await db.destroy()
   }

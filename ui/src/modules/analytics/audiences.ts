@@ -1,25 +1,10 @@
 // Thin client for the audiences plugin. Calls go to /api/audiences/* (the dev proxy
-// strips /api → the server's /audiences/* surface). Same bearer token as analytics
-// (the dev server registers both plugins on the same secret).
+// strips /api → the server's /audiences/* surface). Auth is the logged-in user's
+// session token (see shell/apiClient.ts) — every module shares the same authenticated client.
 
-const TOKEN = (import.meta as any).env?.VITE_ANALYTICS_TOKEN || ''
-const BASE = '/api/audiences'
+import { createClient } from '../../shell/apiClient'
 
-async function req(path: string, opts: any = {}): Promise<any> {
-  const res = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      'content-type': 'application/json',
-      ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
-      ...(opts.headers || {}),
-    },
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`${path} → ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`)
-  }
-  return res.status === 204 ? null : res.json()
-}
+const req = createClient('/api/audiences')
 
 // A segment `source` is the rule-shaped predicate: { select } | { funnel, slot, status }.
 export const audiences = {

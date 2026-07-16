@@ -31,18 +31,41 @@ export function init(deps) {
   db = deps.db
 }
 
-export async function createUser({ email, password }) {
+export async function createUser({ email, password, isAdmin = false }) {
   if (!email || !password) throw new Error('createUser: email and password are required')
   const { hash, salt } = await hashPassword(password)
   const [row] = await db('whitebox_oauth_users')
-    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt })
-    .returning(['id', 'email'])
+    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt, is_admin: isAdmin })
+    .returning(['id', 'email', 'is_admin'])
   return row
 }
 
 export async function verifyCredentials(email, password) {
   const user = await db('whitebox_oauth_users').where({ email: email.toLowerCase().trim() }).first()
-  if (!user) return null
+  if (!user || !user.password_hash) return null   // pending invite — no password set yet
   const ok = await verifyPassword(password, user.password_hash, user.password_salt)
   return ok ? { id: user.id, email: user.email } : null
+}
+
+export async function getByInviteToken(token) {
+  const user = await db('whitebox_oauth_users')
+    .where({ invite_token: token })
+    .andWhere('invite_expires_at', '>', new Date())
+    .first()
+  return user ? { email: user.email } : null
+}
+
+// Single-use, same atomic-guard pattern as store.redeemCode/revokeRefreshToken:
+// only succeeds while the token is still live and the account is still
+// pending, so a replayed accept-invite request (or a token reused after
+// someone already completed it) can't win a race or set the password twice.
+export async function completeInvite({ token, password }) {
+  if (!token || !password) throw new Error('completeInvite: token and password are required')
+  if (password.length < 12) throw new Error('completeInvite: password must be at least 12 characters')
+  const { hash, salt } = await hashPassword(password)
+  const n = await db('whitebox_oauth_users')
+    .where({ invite_token: token, password_hash: null })
+    .andWhere('invite_expires_at', '>', new Date())
+    .update({ password_hash: hash, password_salt: salt, invite_token: null, invite_expires_at: null })
+  return n === 1
 }

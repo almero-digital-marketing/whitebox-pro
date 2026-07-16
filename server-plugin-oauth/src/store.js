@@ -81,3 +81,45 @@ export async function revokeRefreshToken(token, replacedBy = null) {
     .update({ revoked_at: new Date(), replaced_by: replacedBy })
   return n === 1
 }
+
+// ── users (invite-only registration + admin flag, no role system) ────────
+
+const INVITE_TTL_SEC = 7 * 24 * 60 * 60   // 7 days
+const USER_COLUMNS = ['id', 'email', 'is_admin', 'invited_at', 'created_at']
+
+export async function createInvite({ email }) {
+  if (!email) throw new Error('createInvite: email is required')
+  const [row] = await db('whitebox_oauth_users')
+    .insert({
+      id: randomUUID(), email: email.toLowerCase().trim(), is_admin: false,
+      invite_token: opaqueToken(), invite_expires_at: new Date(Date.now() + INVITE_TTL_SEC * 1000),
+      invited_at: new Date(),
+    })
+    .returning([...USER_COLUMNS, 'invite_token'])
+  return row
+}
+
+export async function listUsers() {
+  const rows = await db('whitebox_oauth_users').select([...USER_COLUMNS, 'password_hash']).orderBy('created_at', 'asc')
+  return rows.map(({ password_hash, ...rest }) => ({ ...rest, active: password_hash != null }))
+}
+
+export async function getUser(id) {
+  return db('whitebox_oauth_users').select(USER_COLUMNS).where({ id }).first()
+}
+
+export async function deleteUser(id) {
+  const n = await db('whitebox_oauth_users').where({ id }).del()
+  return n === 1
+}
+
+// Only meaningful for a still-pending (no password) user — refreshes the
+// token/expiry so an old, possibly-expired invite link doesn't linger as the
+// only way in.
+export async function regenerateInvite(id) {
+  const n = await db('whitebox_oauth_users')
+    .where({ id, password_hash: null })
+    .update({ invite_token: opaqueToken(), invite_expires_at: new Date(Date.now() + INVITE_TTL_SEC * 1000) })
+  if (n !== 1) return null
+  return db('whitebox_oauth_users').select([...USER_COLUMNS, 'invite_token']).where({ id }).first()
+}

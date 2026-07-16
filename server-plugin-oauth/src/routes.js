@@ -4,6 +4,7 @@
 // PKCE is what proves possession of the original request.
 
 import express from 'express'
+import { jwt } from 'whitebox-pro-auth-auth0'
 import * as store from './store.js'
 import * as users from './users.js'
 import * as keys from './keys.js'
@@ -20,8 +21,11 @@ function escapeHtml(s) {
 // A bare, dependency-free login form — every OAuth param rides as a hidden
 // field so the POST can re-submit them alongside credentials with no server-
 // side session at all. Deliberately plain: this is an admin/operator login
-// surface, not a product login page.
-function loginPage({ params, error }) {
+// surface, not a product login page. (A real product login lives in the SPA
+// and POSTs here directly — see the wrong-password handling below, which
+// redirects back to the client on failure rather than re-rendering this page,
+// so a caller with its own branded form never bounces through this one.)
+function loginPage({ params }) {
   const hidden = Object.entries(params)
     .filter(([, v]) => v != null)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
@@ -30,10 +34,9 @@ function loginPage({ params, error }) {
 <html><head><meta charset="utf-8"><title>Sign in</title>
 <style>body{font:14px system-ui,sans-serif;max-width:320px;margin:80px auto;color:#222}
 input[type=email],input[type=password]{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}
-button{width:100%;padding:8px;margin-top:8px}.err{color:#b00;font-size:13px}</style>
+button{width:100%;padding:8px;margin-top:8px}</style>
 </head><body>
 <h3>Sign in</h3>
-${error ? `<p class="err">${escapeHtml(error)}</p>` : ''}
 <form method="post">
 ${hidden}
 <input type="email" name="email" placeholder="Email" required autofocus>
@@ -72,7 +75,7 @@ function redirectWithError(res, redirectUri, state, error, description) {
   res.redirect(302, url.toString())
 }
 
-export function mountRoutes(app, { basePath, issuer, audience, logger }) {
+export function mountRoutes(app, { basePath, issuer, audience, logger, adminScope, appUrl, fromEmail, getMail }) {
   const router = express.Router()
   router.use(express.urlencoded({ extended: false }))
 
@@ -127,8 +130,12 @@ export function mountRoutes(app, { basePath, issuer, audience, logger }) {
 
     const user = await users.verifyCredentials(req.body.email, req.body.password)
     if (!user) {
-      return res.status(401).set('Content-Type', 'text/html')
-        .send(loginPage({ params, error: 'Incorrect email or password' }))
+      // redirect_uri is already validated at this point (resolveClientAndRedirect
+      // above), so redirecting the error back to the client is exactly as safe as
+      // every other redirectWithError call — and it's what lets a caller with its
+      // own branded login form (the SPA) show the error on ITS page instead of
+      // bouncing to this bare one.
+      return redirectWithError(res, params.redirect_uri, params.state, 'access_denied', 'Incorrect email or password')
     }
 
     const code = await store.createCode({
@@ -198,6 +205,96 @@ export function mountRoutes(app, { basePath, issuer, audience, logger }) {
       refresh_token: refreshToken, scope: scope || undefined,
     })
   }
+
+  // ── /users (admin-only — no role system, just this one flag) ──────────
+  // Verifies the SAME kind of token this server itself issues, via the
+  // identical generic jwt() verifier every other plugin uses — the oauth
+  // server is a resource server for its own tokens here.
+  router.use(express.json())
+
+  const anyAuth = jwt({ issuer, audience })
+  const adminAuth = jwt({ issuer, audience, scope: adminScope })
+  async function requireAdmin(req, res, next) {
+    const user = req.auth?.sub && await store.getUser(req.auth.sub)
+    if (!user?.is_admin) return res.status(403).json({ error: 'forbidden' })
+    req.user = user
+    next()
+  }
+
+  // Any authenticated user (not admin-gated) — "who am I", for the SPA to
+  // know its own identity/admin status without fetching the whole user list.
+  router.get('/me', anyAuth.middleware, async (req, res) => {
+    const user = await store.getUser(req.auth.sub)
+    if (!user) return res.status(404).json({ error: 'not found' })
+    res.json(user)
+  })
+
+  function inviteUrl(token) {
+    return `${appUrl.replace(/\/$/, '')}/accept-invite?token=${token}`
+  }
+
+  async function sendInviteEmail(to, url) {
+    const send = getMail?.()?.send
+    if (!send) { logger?.warn?.('oauth: invite created but no mail service is configured — share the link manually'); return }
+    try {
+      await send({
+        from: fromEmail, to, subject: "You've been invited to WhiteBox",
+        text: `You've been invited. Set your password to get started: ${url}`,
+        html: `<p>You've been invited. <a href="${escapeHtml(url)}">Set your password</a> to get started.</p>`,
+      })
+    } catch (err) {
+      logger?.warn?.({ err, to }, 'oauth: invite email failed to send — share the link manually')
+    }
+  }
+
+  router.post('/users/invite', adminAuth.middleware, requireAdmin, async (req, res) => {
+    if (!appUrl) return res.status(500).json({ error: 'oauth(): appUrl is not configured — cannot issue invites' })
+    const email = req.body?.email
+    if (!email) return res.status(400).json({ error: 'email is required' })
+    const invited = await store.createInvite({ email })
+    const url = inviteUrl(invited.invite_token)
+    await sendInviteEmail(invited.email, url)
+    const { invite_token, ...user } = invited
+    res.status(201).json({ ...user, inviteUrl: url })
+  })
+
+  router.get('/users', adminAuth.middleware, requireAdmin, async (req, res) => {
+    res.json(await store.listUsers())
+  })
+
+  router.post('/users/:id/resend-invite', adminAuth.middleware, requireAdmin, async (req, res) => {
+    if (!appUrl) return res.status(500).json({ error: 'oauth(): appUrl is not configured — cannot issue invites' })
+    const invited = await store.regenerateInvite(req.params.id)
+    if (!invited) return res.status(409).json({ error: 'user is not pending an invite' })
+    const url = inviteUrl(invited.invite_token)
+    await sendInviteEmail(invited.email, url)
+    const { invite_token, ...user } = invited
+    res.json({ ...user, inviteUrl: url })
+  })
+
+  router.delete('/users/:id', adminAuth.middleware, requireAdmin, async (req, res) => {
+    if (req.params.id === req.user.id) return res.status(400).json({ error: 'cannot remove your own account' })
+    const removed = await store.deleteUser(req.params.id)
+    if (!removed) return res.status(404).json({ error: 'not found' })
+    res.status(204).send()
+  })
+
+  // ── /invite/:token (public — the accept-invite page itself is unauthenticated) ──
+  router.get('/invite/:token', async (req, res) => {
+    const invite = await users.getByInviteToken(req.params.token)
+    if (!invite) return res.status(404).json({ error: 'invalid or expired invite' })
+    res.json(invite)
+  })
+
+  router.post('/invite/:token/accept', async (req, res) => {
+    try {
+      const ok = await users.completeInvite({ token: req.params.token, password: req.body?.password })
+      if (!ok) return res.status(400).json({ error: 'invalid or expired invite' })
+      res.status(204).send()
+    } catch (err) {
+      res.status(400).json({ error: err.message })
+    }
+  })
 
   app.use(basePath, router)
 }

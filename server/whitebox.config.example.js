@@ -20,13 +20,16 @@ import { voip } from 'whitebox-pro-server-plugin-voip'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
 import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
-// Built-in OAuth 2.1 authorization server — a self-hosted alternative to Auth0,
-// optional like the other auth choices (see the mcp.auth and analytics({ auth })
-// comments below for how it's used).
-// import { oauth } from 'whitebox-pro-server-plugin-oauth'
-// import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
-// const OAUTH_ISSUER = 'https://wb.example.com/oauth'   // this server's own URL + oauth path
-// const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
+// Built-in OAuth 2.1 authorization server — the default auth for the WhiteBox
+// UI (login, invite-only registration, admin user management). Auth0 is still
+// a drop-in alternative (see the mcp.auth comment below); to use it instead,
+// just delete this block and swap analytics({ auth }) for auth0({ … }).
+import { oauth } from 'whitebox-pro-server-plugin-oauth'
+import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
+const OAUTH_ISSUER = process.env.WB_OAUTH_ISSUER || 'http://localhost:3000/oauth'
+const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
+const OAUTH_APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'   // where the UI lives — invite links point here
+const OAUTH_ADMIN_SCOPE = 'admin:manage'
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos
@@ -101,30 +104,16 @@ export default async (runtime) => ({
     },
   },
 
-  // MCP endpoint + auth. `auth` is a pluggable verifier: a static Bearer secret
-  // by default (string or { secret }), or a composed one from an external
-  // package. Two OAuth options — pick ONE:
-  //
-  //   1. Auth0 (external IdP) — add at the top:
-  //        import { auth0 } from 'whitebox-pro-auth-auth0'
-  //      and set: auth: auth0({ domain: process.env.AUTH0_DOMAIN,
-  //                             audience: 'https://whitebox/mcp', scope: 'mcp:use' })
-  //
-  //   2. Built-in (self-hosted, no external account) — add at the top:
-  //        import { oauth } from 'whitebox-pro-server-plugin-oauth'
-  //        import { jwt } from 'whitebox-pro-auth-auth0'   // generic verifier, reused
-  //      register the plugin (below, in `plugins`):
-  //        oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
-  //      and set: auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' })
-  //      Bootstrap the first user/client with the package's CLI scripts
-  //      (create-admin.mjs / create-client.mjs) — see its README.
-  //
-  // Both also serve their own discovery metadata so an MCP client can find the
-  // authorization server and run the OAuth flow with no pre-shared secrets.
-  // Omit `auth` entirely for no auth (dev only).
+  // MCP endpoint + auth. `auth` is a pluggable verifier — here the same
+  // built-in OAuth server the UI logs into (see the oauth() plugin entry
+  // below and its README). Swap for auth0({ domain, audience, scope }) to
+  // use Auth0 instead, or a bare string/{ secret } for a static Bearer token.
+  // Both OAuth options also serve their own discovery metadata so a client
+  // can find the authorization server with no pre-shared secrets. Omit
+  // `auth` entirely for no auth (dev only).
   mcp: {
     path: '/mcp',
-    auth: process.env.WB_MCP_TOKEN,   // string → Bearer; swap for auth0({…}) or jwt({…})
+    auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' }),
   },
 
   // Each entry is a built plugin object. Options passed to the factory are the
@@ -140,16 +129,15 @@ export default async (runtime) => ({
     }),
 
     analytics({
-      auth: { secret: process.env.WB_ANALYTICS_TOKEN },
-      // `auth` accepts anything MCP's auth does — swap the line above for a
-      // composed verifier to gate analytics with the same OAuth/OIDC provider:
-      //   auth: auth0({ domain: process.env.AUTH0_DOMAIN,
-      //                 audience: 'https://whitebox/analytics', scope: 'analytics:read' })
-      // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top) — or, with
-      // the built-in authorization server instead of Auth0 (see the oauth()
-      // plugin entry below):
-      //   auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' })
-      // Every plugin's `auth` option works the same way — see docs/04-configuration.md.
+      // The UI logs in through the built-in OAuth server (below) and calls every
+      // module — analytics, audiences, campaigns, the new Users module — with that
+      // same session token; one shared scope is enough since there's no per-module
+      // permission split yet (only the separate admin:manage scope the Users
+      // module's routes require). Swap for a static Bearer secret
+      // ({ secret: process.env.WB_ANALYTICS_TOKEN }) or auth0({ domain, audience,
+      // scope }) — every plugin's `auth` option works the same way, see
+      // docs/04-configuration.md.
+      auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'app:use' }),
     }),
 
     // Receives /conversions/events from the browser, records them, and (when a
@@ -260,11 +248,15 @@ export default async (runtime) => ({
       // geo_lon become core facts, queryable via the selector for segmentation.
     }),
 
-    // Built-in OAuth 2.1 authorization server — mounts /authorize, /token,
+    // Built-in OAuth 2.1 authorization server — the UI's login, invite-only
+    // registration, and admin user management. Mounts /authorize, /token,
     // /.well-known/jwks.json and /.well-known/oauth-authorization-server at
-    // OAUTH_ISSUER's own path. Only needed if you use jwt({…}) above instead of
-    // a static token or Auth0. Bootstrap with the package's create-admin.mjs /
-    // create-client.mjs CLI scripts — see whitebox-pro-server-plugin-oauth's README.
-    // oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
+    // OAUTH_ISSUER's own path. `adminScope` gates the Users module's
+    // invite/list/remove routes (a single is_admin flag, no role system —
+    // see the package's README). `appUrl` is where invite emails link to.
+    // Bootstrap the first user + the UI's OAuth client with the package's
+    // create-admin.mjs / create-client.mjs CLI scripts (see its README);
+    // remove this block entirely to fall back to Auth0 or a static token.
+    oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, adminScope: OAUTH_ADMIN_SCOPE, appUrl: OAUTH_APP_URL }),
   ].filter(Boolean),
 })

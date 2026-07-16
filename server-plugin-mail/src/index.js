@@ -87,6 +87,12 @@ export function mail(options = {}) {
       startStuckReaper(mailConfig, logger)
 
       logger.info('Mail plugin ready')
+
+      // Exposed on ctx.plugins.mail for other plugins to send transactional
+      // mail directly (mailer.send — provider-agnostic, no passport/CRM
+      // coupling), e.g. server-plugin-oauth's invite emails. Distinct from
+      // the passport-bound outbox.create, which is for customer-facing mail.
+      return { service: { send: mailer.send } }
     },
   }
 }

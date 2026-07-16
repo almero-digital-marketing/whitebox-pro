@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ModuleDef } from './modules'
 defineProps<{ modules: ModuleDef[]; activeId: string }>()
-defineEmits<{ select: [id: string] }>()
+defineEmits<{ select: [id: string]; logout: [] }>()
 </script>
 
 <template>
@@ -13,11 +13,16 @@ defineEmits<{ select: [id: string] }>()
       v-tooltip.right="m.label" :aria-label="m.label" @click="$emit('select', m.id)">
       <i :class="m.icon" />
     </button>
+    <div class="ab-spacer" />
+    <button type="button" class="ab-item" v-tooltip.right="'Sign out'" aria-label="Sign out" @click="$emit('logout')">
+      <i class="pi pi-sign-out" />
+    </button>
   </nav>
 </template>
 
 <style scoped>
 .activity-bar { flex: none; width: 52px; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; background: var(--panel); border-right: 1px solid var(--border); }
+.ab-spacer { flex: 1 1 auto; }
 .ab-brand { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 8px; }
 .ab-brand img { display: block; width: 30px; height: 30px; }
 .ab-item { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border: none; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; transition: color .12s, background .12s; }

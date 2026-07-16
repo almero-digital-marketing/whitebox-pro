@@ -28,7 +28,7 @@ import { mountRoutes } from './routes.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function oauth(options = {}) {
-  const { issuer, audience } = options
+  const { issuer, audience, adminScope = 'admin:manage', appUrl, fromEmail } = options
   if (!issuer) throw new Error('oauth(): issuer is required, e.g. "http://localhost:3000/oauth"')
   if (!audience) throw new Error('oauth(): audience is required — the value every issued token\'s aud claim carries')
 
@@ -57,7 +57,11 @@ export function oauth(options = {}) {
       users.init({ db })
       keys.init({ db })
 
-      mountRoutes(app, { basePath, issuer, audience, logger })
+      // Lazy lookup so plugin load order doesn't matter (mail may register
+      // after oauth) — mirrors server-plugin-mail's own getShortener.
+      const getMail = () => ctx.plugins?.mail?.service
+
+      mountRoutes(app, { basePath, issuer, audience, logger, adminScope, appUrl, fromEmail, getMail })
 
       logger.info('Built-in OAuth 2.1 authorization server ready at %s', basePath)
     },

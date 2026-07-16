@@ -11,7 +11,9 @@ import { challengeFromVerifier } from '../src/pkce.js'
 
 const ISSUER_PATH = '/oauth'
 const AUDIENCE = 'https://whitebox/api'
-let server, base, db, client, verifier, challenge
+const ADMIN_SCOPE = 'admin:manage'
+const APP_URL = 'https://app.example.com'
+let server, base, issuer, db, client, verifier, challenge, sentEmails
 
 beforeEach(async () => {
   db = makeFakeDb()
@@ -19,14 +21,28 @@ beforeEach(async () => {
   users.init({ db })
   keys.init({ db })
 
+  sentEmails = []
   const app = express()
   const logger = { child: () => logger, info: () => {}, warn: () => {}, error: () => {} }
-  mountRoutes(app, { basePath: ISSUER_PATH, issuer: `http://placeholder${ISSUER_PATH}`, audience: AUDIENCE, logger })
+
+  // The port must be known BEFORE issuer is set, and issuer must be REAL and
+  // reachable (not a placeholder) — the admin routes use the actual jwt()
+  // verifier from whitebox-pro-auth-auth0, which fetches JWKS over HTTP from
+  // `${issuer}/.well-known/jwks.json`. Express allows mounting routes after
+  // listen() starts, so: listen first, then mount with the now-known address.
   server = http.createServer(app)
   await new Promise(r => server.listen(0, r))
   base = `http://localhost:${server.address().port}`
+  issuer = `${base}${ISSUER_PATH}`
+
+  mountRoutes(app, {
+    basePath: ISSUER_PATH, issuer, audience: AUDIENCE, logger,
+    adminScope: ADMIN_SCOPE, appUrl: APP_URL, fromEmail: 'noreply@example.com',
+    getMail: () => ({ send: async (msg) => { sentEmails.push(msg) } }),
+  })
 
   await users.createUser({ email: 'jane@example.com', password: 'correct horse battery staple' })
+  await users.createUser({ email: 'admin@example.com', password: 'correct horse battery staple', isAdmin: true })
   client = await store.createClient({ name: 'Test Client', redirectUris: ['https://app.example.com/callback'] })
 
   verifier = 'a-random-code-verifier-at-least-43-characters-long-per-spec'
@@ -63,14 +79,40 @@ async function getAuthCode() {
   return location.searchParams.get('code')
 }
 
+// Full authorize+token round trip for arbitrary credentials/scope — used to
+// get a REAL, signature-verified access token for the admin-route tests,
+// exactly as a client would, rather than hand-crafting a JWT.
+async function tokenFor({ email, password, scope }) {
+  const v = 'another-random-code-verifier-at-least-43-characters-long-per-spec'
+  const c = challengeFromVerifier(v)
+  const params = new URLSearchParams({
+    response_type: 'code', client_id: client.client_id, redirect_uri: 'https://app.example.com/callback',
+    code_challenge: c, code_challenge_method: 'S256', state: 'xyz', scope, email, password,
+  })
+  const authRes = await fetch(`${base}${ISSUER_PATH}/authorize`, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: params,
+  })
+  const code = new URL(authRes.headers.get('location')).searchParams.get('code')
+  const tokenRes = await fetch(`${base}${ISSUER_PATH}/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code', code, redirect_uri: 'https://app.example.com/callback',
+      code_verifier: v, client_id: client.client_id,
+    }),
+  })
+  return (await tokenRes.json()).access_token
+}
+
 describe('discovery + JWKS', () => {
   it('serves RFC 8414 discovery metadata', async () => {
     const res = await fetch(`${base}${ISSUER_PATH}/.well-known/oauth-authorization-server`)
     const body = await res.json()
     expect(body).toMatchObject({
-      issuer: `http://placeholder${ISSUER_PATH}`,
-      authorization_endpoint: `http://placeholder${ISSUER_PATH}/authorize`,
-      token_endpoint: `http://placeholder${ISSUER_PATH}/token`,
+      issuer,
+      authorization_endpoint: `${issuer}/authorize`,
+      token_endpoint: `${issuer}/token`,
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],
     })
@@ -113,10 +155,13 @@ describe('GET /authorize — validation before anything else', () => {
 })
 
 describe('POST /authorize — login', () => {
-  it('wrong password re-renders the form with an error, does not redirect', async () => {
+  it('wrong password redirects back to redirect_uri with an error (so a caller with its own login page can show it there)', async () => {
     const res = await login({ password: 'wrong' })
-    expect(res.status).toBe(401)
-    expect(await res.text()).toContain('Incorrect email or password')
+    expect(res.status).toBe(302)
+    const loc = new URL(res.headers.get('location'))
+    expect(loc.origin + loc.pathname).toBe('https://app.example.com/callback')
+    expect(loc.searchParams.get('error')).toBe('access_denied')
+    expect(loc.searchParams.get('state')).toBe('xyz')
   })
 
   it('correct credentials redirect to redirect_uri with a code + the original state', async () => {
@@ -147,7 +192,7 @@ describe('POST /token — authorization_code grant', () => {
     const { keys: jwkList } = await keys.jwks()
     const JWKS = createLocalJWKSet({ keys: jwkList })
     const { payload } = await jwtVerify(body.access_token, JWKS, {
-      issuer: `http://placeholder${ISSUER_PATH}`, audience: AUDIENCE,
+      issuer, audience: AUDIENCE,
     })
     expect(payload.scope).toBe('mcp:use')
   })
@@ -226,5 +271,112 @@ describe('POST /token — refresh_token grant (rotation)', () => {
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'not-a-real-token', client_id: client.client_id }),
     })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('/users — admin-only management (single is_admin flag, no role system)', () => {
+  async function adminToken() {
+    return tokenFor({ email: 'admin@example.com', password: 'correct horse battery staple', scope: ADMIN_SCOPE })
+  }
+  async function memberToken() {
+    return tokenFor({ email: 'jane@example.com', password: 'correct horse battery staple', scope: 'app:use' })
+  }
+
+  it('rejects with no token, and with a token that lacks the admin scope', async () => {
+    const noAuth = await fetch(`${base}${ISSUER_PATH}/users`)
+    expect(noAuth.status).toBe(401)
+
+    const memberAuth = await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${await memberToken()}` } })
+    expect(memberAuth.status).toBe(403)
+  })
+
+  it('GET /me works for any authenticated user regardless of scope, and reports is_admin correctly', async () => {
+    const memberMe = await fetch(`${base}${ISSUER_PATH}/me`, { headers: { authorization: `Bearer ${await memberToken()}` } })
+    expect(memberMe.status).toBe(200)
+    expect((await memberMe.json())).toMatchObject({ email: 'jane@example.com', is_admin: false })
+
+    const adminMe = await fetch(`${base}${ISSUER_PATH}/me`, { headers: { authorization: `Bearer ${await adminToken()}` } })
+    expect((await adminMe.json())).toMatchObject({ email: 'admin@example.com', is_admin: true })
+  })
+
+  it('admin can invite, list, resend, and remove a user — non-admin rejected on the same routes', async () => {
+    const admin = await adminToken()
+    const authHeader = { authorization: `Bearer ${admin}` }
+
+    const invite = await fetch(`${base}${ISSUER_PATH}/users/invite`, {
+      method: 'POST', headers: { ...authHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'newbie@example.com' }),
+    })
+    expect(invite.status).toBe(201)
+    const invited = await invite.json()
+    expect(invited.email).toBe('newbie@example.com')
+    expect(invited.inviteUrl).toContain(APP_URL)
+    expect(invited).not.toHaveProperty('invite_token')   // never leaks the raw token in the response body's own field name
+    expect(sentEmails).toHaveLength(1)
+    expect(sentEmails[0].to).toBe('newbie@example.com')
+
+    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    expect(list.map(u => u.email)).toEqual(expect.arrayContaining(['jane@example.com', 'admin@example.com', 'newbie@example.com']))
+    expect(list.find(u => u.email === 'newbie@example.com').active).toBe(false)
+    expect(list.every(u => !('password_hash' in u))).toBe(true)
+
+    const resend = await fetch(`${base}${ISSUER_PATH}/users/${invited.id}/resend-invite`, { method: 'POST', headers: authHeader })
+    expect(resend.status).toBe(200)
+    expect(sentEmails).toHaveLength(2)
+
+    const memberAuth = { authorization: `Bearer ${await memberToken()}` }
+    expect((await fetch(`${base}${ISSUER_PATH}/users/${invited.id}`, { method: 'DELETE', headers: memberAuth })).status).toBe(403)
+
+    const del = await fetch(`${base}${ISSUER_PATH}/users/${invited.id}`, { method: 'DELETE', headers: authHeader })
+    expect(del.status).toBe(204)
+  })
+
+  it('an admin cannot remove their own account', async () => {
+    const admin = await adminToken()
+    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
+    const self = list.find(u => u.email === 'admin@example.com')
+    const res = await fetch(`${base}${ISSUER_PATH}/users/${self.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${admin}` } })
+    expect(res.status).toBe(400)
+  })
+
+  it('resend-invite 409s for a user who already has a password', async () => {
+    const admin = await adminToken()
+    const authHeader = { authorization: `Bearer ${admin}` }
+    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const active = list.find(u => u.email === 'jane@example.com')
+    const res = await fetch(`${base}${ISSUER_PATH}/users/${active.id}/resend-invite`, { method: 'POST', headers: authHeader })
+    expect(res.status).toBe(409)
+  })
+})
+
+describe('/invite/:token — public accept-invite flow', () => {
+  it('a real invitee can look up their email, set a password, and then log in with it', async () => {
+    const invited = await store.createInvite({ email: 'setup@example.com' })
+
+    const lookup = await fetch(`${base}${ISSUER_PATH}/invite/${invited.invite_token}`)
+    expect(lookup.status).toBe(200)
+    expect((await lookup.json()).email).toBe('setup@example.com')
+
+    const accept = await fetch(`${base}${ISSUER_PATH}/invite/${invited.invite_token}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'a brand new password here' }),
+    })
+    expect(accept.status).toBe(204)
+
+    // The token is single-use — a second accept must fail.
+    const replay = await fetch(`${base}${ISSUER_PATH}/invite/${invited.invite_token}/accept`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'a different password entirely' }),
+    })
+    expect(replay.status).toBe(400)
+
+    // ...and the account can now log in for real, through the normal flow.
+    const loginRes = await login({ email: 'setup@example.com', password: 'a brand new password here' })
+    expect(loginRes.status).toBe(302)
+    expect(new URL(loginRes.headers.get('location')).searchParams.get('code')).toBeTruthy()
+  })
+
+  it('an unknown or expired token 404s', async () => {
+    expect((await fetch(`${base}${ISSUER_PATH}/invite/does-not-exist`)).status).toBe(404)
   })
 })

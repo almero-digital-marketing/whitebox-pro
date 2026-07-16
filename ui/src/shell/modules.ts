@@ -6,6 +6,7 @@ import { markRaw, type Component } from 'vue'
 import Analytics from '../modules/analytics/Analytics.vue'
 import Audiences from '../modules/audiences/Audiences.vue'
 import Campaigns from '../modules/campaigns/Campaigns.vue'
+import Users from '../modules/users/Users.vue'
 
 export interface ModuleDef {
   id: string
@@ -15,10 +16,14 @@ export interface ModuleDef {
   // optional route sub-segments appended to the module's path, so deep state lives in
   // the URL (analytics carries the open report + selected widget). Omit for a flat path.
   subPath?: string
+  // hides the module's activity-bar icon for non-admins (App.vue filters on this).
+  // The route itself still exists either way — real enforcement is server-side.
+  adminOnly?: boolean
 }
 
 export const modules: ModuleDef[] = [
   { id: 'analytics', label: 'Analytics', icon: 'pi pi-chart-bar', component: markRaw(Analytics), subPath: ':reportId?/:widgetId?' },
   { id: 'audiences', label: 'Audiences', icon: 'pi pi-users', component: markRaw(Audiences), subPath: ':audienceId?' },
   { id: 'campaigns', label: 'Campaigns', icon: 'pi pi-send', component: markRaw(Campaigns), subPath: ':campaignId?' },
+  { id: 'users', label: 'Users', icon: 'pi pi-user-edit', component: markRaw(Users), subPath: ':userId?', adminOnly: true },
 ]

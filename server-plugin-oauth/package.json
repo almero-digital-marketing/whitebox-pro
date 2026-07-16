@@ -23,7 +23,8 @@
     "jose": "^5.9.0"
   },
   "peerDependencies": {
-    "whitebox-pro-server": "^2.0.0"
+    "whitebox-pro-server": "^2.0.0",
+    "whitebox-pro-auth-auth0": "^0.1.0"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

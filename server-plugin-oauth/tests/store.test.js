@@ -52,3 +52,47 @@ describe('store — refresh tokens (rotation)', () => {
     expect(row.replaced_by).toBe(newToken)
   })
 })
+
+describe('store — users (invites, no role system)', () => {
+  it('createInvite makes a pending user (no password) with a live token', async () => {
+    const invited = await store.createInvite({ email: 'new@example.com' })
+    expect(invited.email).toBe('new@example.com')
+    expect(invited.invite_token).toBeTruthy()
+    expect(invited.is_admin).toBe(false)
+    const row = db._rows('whitebox_oauth_users').find(r => r.id === invited.id)
+    expect(row.password_hash).toBeFalsy()
+  })
+
+  it('listUsers reports active:false for a pending invite and active:true once a password is set, never the hash', async () => {
+    await store.createInvite({ email: 'pending@example.com' })
+    db._rows('whitebox_oauth_users').push({
+      id: 'u-active', email: 'active@example.com', password_hash: 'h', password_salt: 's',
+      is_admin: false, created_at: new Date(),
+    })
+    const list = await store.listUsers()
+    expect(list.find(u => u.email === 'pending@example.com').active).toBe(false)
+    expect(list.find(u => u.email === 'active@example.com').active).toBe(true)
+    expect(list.every(u => !('password_hash' in u))).toBe(true)
+  })
+
+  it('regenerateInvite only succeeds for a still-pending user, and issues a fresh token', async () => {
+    const invited = await store.createInvite({ email: 'resend@example.com' })
+    const first = invited.invite_token
+    const regenerated = await store.regenerateInvite(invited.id)
+    expect(regenerated.invite_token).toBeTruthy()
+    expect(regenerated.invite_token).not.toBe(first)
+
+    db._rows('whitebox_oauth_users').push({
+      id: 'u-active2', email: 'already@example.com', password_hash: 'h', password_salt: 's',
+      is_admin: false, created_at: new Date(),
+    })
+    expect(await store.regenerateInvite('u-active2')).toBeNull()   // not pending — nothing to resend
+  })
+
+  it('deleteUser removes exactly the targeted row', async () => {
+    const invited = await store.createInvite({ email: 'gone@example.com' })
+    expect(await store.deleteUser(invited.id)).toBe(true)
+    expect(await store.getUser(invited.id)).toBeFalsy()
+    expect(await store.deleteUser(invited.id)).toBe(false)   // already gone
+  })
+})
