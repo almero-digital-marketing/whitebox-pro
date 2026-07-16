@@ -102,8 +102,16 @@ export async function claim(token, visitorPassportId) {
 
   let bound
   if (target) {
-    // hard-bind: stitch the anonymous browsing passport onto the customer
-    if (visitor && visitor !== target) await passports.merge(target, visitor)
+    // hard-bind: stitch the anonymous browsing passport onto the customer —
+    // but only on the very first successful claim. The link stays
+    // claimable after that (see bindable()) so a refresh/revisit by the
+    // same person keeps working, but if a *different* visitor ends up with
+    // a copy of the link, their unrelated browsing passport must not get
+    // merged into the target customer's identity a second time — only the
+    // first claim is trusted to be the real recipient.
+    if (!link.identity_consumed_at && visitor && visitor !== target) {
+      await passports.merge(target, visitor)
+    }
     bound = target
   } else {
     // identity-only link with no existing passport: attach the identity to the
@@ -113,7 +121,10 @@ export async function claim(token, visitorPassportId) {
     bound = await passports.resolve(bound)
   }
 
-  await store.consumeIdentity(link.code, now)           // single-use identity — disarm
+  // Stamps first-bound time for stats/observability only — bindable() no
+  // longer gates on this, so the link stays claimable (fresh token per
+  // click, same as any other redirect) until identity_expires_at passes.
+  await store.consumeIdentity(link.code, now)
   await store.setClickPassport(token, bound)
   if (link.identify) await passports.link(bound, identifyItems(link.identify)).catch(() => {})
 
@@ -163,7 +174,6 @@ function applyUtm(dest, utm) {
 
 function bindable(link) {
   if (!link.passport_id && !link.identify) return false           // campaign link: nothing to bind
-  if (link.identity_consumed_at) return false                     // already used (single-use)
   if (link.identity_expires_at && new Date(link.identity_expires_at) < new Date()) return false
   return true
 }

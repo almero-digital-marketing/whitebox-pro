@@ -122,9 +122,17 @@ describe('resolveRedirect', () => {
     expect(r.location).toBe('https://clinic.com/whitening')
   })
 
-  it('plain-redirects once the identity is consumed (single-use)', async () => {
+  it('stays bindable (mints a fresh token) after the identity was already consumed once — a revisit still redirects with a claim, it just wont re-merge on claim (see claim() below)', async () => {
     setup()
     store.getLink.mockResolvedValue({ ...bindable, identity_consumed_at: new Date() })
+    const r = await service.resolveRedirect('c', {})
+    expect(store.insertClick).toHaveBeenCalledWith(expect.objectContaining({ code: 'c', claim_token: 'TOKEN-XYZ' }))
+    expect(r.location).toBe('https://clinic.com/whitening#wb=TOKEN-XYZ')
+  })
+
+  it('plain-redirects once identity_expires_at has passed, even if never consumed', async () => {
+    setup()
+    store.getLink.mockResolvedValue({ ...bindable, identity_expires_at: new Date(Date.now() - 1000) })
     const r = await service.resolveRedirect('c', {})
     expect(store.insertClick).not.toHaveBeenCalled()
     expect(r.location).toBe('https://clinic.com/whitening')
@@ -160,6 +168,19 @@ describe('claim', () => {
     const r = await service.claim('T', null)
     expect(passports.merge).not.toHaveBeenCalled()
     expect(r.passport_id).toBe('P_known')
+  })
+
+  it('a repeat claim (identity already consumed) still binds to the target but does NOT merge — a different visitor reusing the link must not get folded into the customer a second time', async () => {
+    const { passports } = setup()
+    store.getClick.mockResolvedValue(validClick())
+    store.getLink.mockResolvedValue({
+      code: 'c', url: 'https://clinic.com/x', passport_id: 'P_known', identify: null,
+      identity_consumed_at: new Date(), data: { name: 'Jane' },
+    })
+    const r = await service.claim('T', 'P_stranger')
+    expect(passports.merge).not.toHaveBeenCalled()
+    expect(store.consumeIdentity).toHaveBeenCalled()   // still stamped, for stats/observability
+    expect(r).toMatchObject({ bound: true, passport_id: 'P_known', data: { name: 'Jane' } })
   })
 
   it('is single-use — a lost race returns bound:false without merging', async () => {
