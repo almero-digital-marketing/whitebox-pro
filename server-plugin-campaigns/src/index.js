@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import * as store from './store.js'
 import * as service from './service.js'
 import * as rest from './rest.js'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -46,6 +47,8 @@ export function campaigns(options = {}) {
     async register(app, ctx) {
       const cfg = options
       const { logger } = ctx
+      const authVerifier = resolveAuth(cfg.auth, { logger })
+      if (!authVerifier) throw new Error('campaigns: auth (a secret or a composed verifier) is required')
       const audiences = options.audiences || ctx.plugins?.audiences?.service
       if (!audiences) logger.warn('campaigns: audiences service not wired — delivery preview + send will fail (register audiences first)')
 
@@ -57,7 +60,7 @@ export function campaigns(options = {}) {
       store.init({ db: ctx.db })
       service.init({ store, audiences, dryRun, deliver, logger })
 
-      rest.register(app, { service, secret: cfg.auth?.secret, logger })
+      rest.register(app, { service, requireAuth: authVerifier.middleware })
 
       logger.info(`Campaigns plugin ready (delivery: ${dryRun ? 'dry-run' : 'live'})`)
       return { service }   // exposed for other plugins/tests

@@ -22,6 +22,7 @@ import * as consent from './consent.js'
 import * as service from './service.js'
 import * as rest from './rest.js'
 import * as mcpTools from './mcp.js'
+import { resolveAuth } from 'whitebox-pro-server/auth'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -41,6 +42,8 @@ export function audiences(options = {}) {
     async register(app, ctx) {
       const cfg = options
       const { logger } = ctx
+      const authVerifier = resolveAuth(cfg.auth, { logger })
+      if (!authVerifier) throw new Error('audiences: auth (a secret or a composed verifier) is required')
 
       // --- wire the singletons (init() + free functions, like the core) ---
       store.init({ db: ctx.db })
@@ -70,7 +73,7 @@ export function audiences(options = {}) {
       service.ensureDefaultSegments().catch(err => logger.warn({ err }, 'audiences: ensureDefaultSegments failed'))
 
       // --- REST (privileged management tier) ---
-      rest.register(app, { service, secret: cfg.auth?.secret, logger })
+      rest.register(app, { service, requireAuth: authVerifier.middleware })
 
       // --- MCP tools (behind config.mcp.auth.secret) ---
       mcpTools.register(ctx.mcp, { service, logger })
