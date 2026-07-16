@@ -51,6 +51,14 @@ The single piece of clever machinery is **trackable-number assignment**: a web v
 
 ### 1b. PBX-side configuration
 
+> **Setting up a FreePBX box specifically?** Use
+> [docs/FREEPBX-SETUP.md](docs/FREEPBX-SETUP.md) instead of this section — it's a
+> step-by-step runbook (written for an AI agent to follow) covering the
+> trunk, DIDs, ring group, firewall, ARI, and TLS through FreePBX's actual
+> GUI, plus the non-obvious gotchas that generic Asterisk docs won't warn
+> you about. The raw `ari.conf`/`extensions.conf` edits below are for a
+> bare Asterisk install without FreePBX managing config for you.
+
 Two small changes on the Asterisk host:
 
 **`/etc/asterisk/ari.conf`** — define the user whitebox connects as:
@@ -290,5 +298,5 @@ config.voip = {
 1. **Records are publicly served** — UUID-named but no access control
 2. **No call cleanup on whitebox side** — local MP3 files accumulate; no GC for old recordings
 3. **No call statistics endpoint** — calls are stored but only the WS push and notify events expose them
-4. **ARI WebSocket reconnect** is handled by `ari-client` but no observability around how often it happens or what events were dropped during the disconnect window
+4. **ARI WebSocket reconnect** is handled by the watchdog in `ari.js` but no observability around how often it happens or what events were dropped during the disconnect window
 5. **Dialplan coupling** — the PBX side requires `Stasis(whitebox)` to be added to inbound contexts. Existing dialplan logic that runs before Stasis (CDR, IVR menus, etc.) still works; logic that runs after the line will only fire once whitebox calls `continueInDialplan()`

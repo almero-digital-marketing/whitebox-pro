@@ -26,6 +26,7 @@ export function init(deps) {
   connect.onConnected(onConnected)
   connect.onDisconnected(onDisconnected)
   connect.onMessage(onMessage)
+  connect.onSessionReady(onSessionReady)
 }
 
 // Which visitor currently holds this inbound (company) number? Used to attribute
@@ -56,6 +57,11 @@ function onConnected({ connectionId, passportId, sessionId }) {
     numbers: {}, timeouts: {}, clicked: {},
   }
   logger.debug('Visitor connected: %s', connectionId)
+}
+
+function onSessionReady({ connectionId, sessionId }) {
+  const entry = pool[connectionId]
+  if (entry) entry.sessionId = sessionId
 }
 
 function onDisconnected({ connectionId }) {

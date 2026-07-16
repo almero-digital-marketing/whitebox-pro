@@ -11,8 +11,19 @@
 // Once the channel enters Stasis, whitebox answers it, starts an
 // ARI-managed recording, and bridges out to the dialplan agent. When the
 // channel ends, the recording auto-finalises and is fetched over HTTP.
+//
+// Transport is hand-rolled (fetch + ws) rather than the `ari-client` package:
+// ari-client's swagger-client dependency (old, unmaintained, last released
+// 2019) discovers the full ARI resource surface via a burst of near-
+// simultaneous HTTP requests against Asterisk's built-in mini-HTTP server.
+// That discovery step reliably hung forever over HTTPS specifically (plain
+// HTTP, and every other HTTPS client we tried against the same endpoint —
+// curl, openssl s_client, a raw Node https.get — worked fine), with no
+// timeout and no error, just a dead promise. ARI itself is only REST + one
+// WebSocket event stream; the actual surface this file needs is a handful of
+// endpoints, so there's no discovery to get stuck in.
 
-import { connect } from 'ari-client'
+import WebSocket from 'ws'
 import { createHash } from 'crypto'
 import crypto from 'crypto'
 import path from 'path'
@@ -33,7 +44,7 @@ function vaultId(linkedId) {
 
 let voipConfig, ariCfg, logger, passports, sessions, awareness, speechEnabled, notify
 
-let client = null
+let ws = null
 // channelId → { vaultId, recordingName, passportId, sessionId, visitor, ringDate, pickDate }
 const calls_ = new Map()
 
@@ -55,50 +66,94 @@ export function init(deps) {
   return start()
 }
 
-// ari-client's swagger-client dependency (old, unmaintained) has a bug: on a
-// bad URL/auth/unreachable host, SwaggerApi.prototype.fail() correctly calls
-// its failure callback (rejecting connect()'s promise) but then *also*
-// synchronously re-throws the same error — from inside an HTTP response
-// callback, not the promise chain, so it becomes a genuine uncaught
-// exception that kills the whole process regardless of any surrounding
-// try/catch or .catch(). voip.js's own contract is that a PBX is optional
-// and its absence/misconfiguration must degrade gracefully, so we trap that
-// specific redundant throw for the duration of the connect() call only.
-//
-// Same scope, second nuisance: while parsing Asterisk's api-docs (which are
-// served as ancient Swagger 1.1 — inherent to Asterisk's ARI, not fixable
-// here), swagger-client prints "This API is using a deprecated version of
-// Swagger!" via a bare console.log(argsArray), bypassing our logger. Purely
-// cosmetic and unavoidable, so we drop exactly that line, only while
-// connect() runs.
-const SWAGGER_NOISE = 'deprecated version of Swagger'
-
-function connectAri(url, user, password) {
-  return new Promise((resolve, reject) => {
-    const consoleLog = console.log
-    console.log = (...args) => {
-      // swagger-client logs as console.log([msg, ...]) — check both shapes.
-      const first = Array.isArray(args[0]) ? args[0][0] : args[0]
-      if (typeof first === 'string' && first.includes(SWAGGER_NOISE)) return
-      consoleLog(...args)
+// A single REST call against ARI. Operation parameters are ARI's own
+// convention — sent as query-string params, not a JSON body, on every
+// method including POST. Returns the parsed JSON body, or null for 204s.
+function ariRequest(method, pathname, params = {}) {
+  const u = new URL(`${ariCfg.url.replace(/\/$/, '')}${pathname}`)
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) u.searchParams.set(k, v)
+  }
+  return fetch(u, {
+    method,
+    headers: {
+      authorization: 'Basic ' + Buffer.from(`${ariCfg.user}:${ariCfg.password}`).toString('base64'),
+    },
+  }).then(async res => {
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`ARI ${method} ${pathname} → ${res.status}${body ? ' ' + body : ''}`)
     }
+    if (res.status === 204) return null
+    return res.json().catch(() => null)
+  })
+}
 
+const answerChannel   = (id)       => ariRequest('POST', `/ari/channels/${encodeURIComponent(id)}/answer`)
+const recordChannel   = (id, opts) => ariRequest('POST', `/ari/channels/${encodeURIComponent(id)}/record`, opts)
+const continueChannel = (id, opts) => ariRequest('POST', `/ari/channels/${encodeURIComponent(id)}/continue`, opts)
+const deleteRecording = (name)     => ariRequest('DELETE', `/ari/recordings/stored/${encodeURIComponent(name)}`)
+const snoopChannel    = (id, opts) => ariRequest('POST', `/ari/channels/${encodeURIComponent(id)}/snoop`, opts)
+const hangupChannel   = (id)       => ariRequest('DELETE', `/ari/channels/${encodeURIComponent(id)}`)
+
+// A channel's implicit event subscription (granted by entering Stasis) ends
+// once it leaves the app via continue() — its later ChannelStateChange and
+// ChannelDestroyed events stop arriving on our websocket entirely. Every
+// historical call in whitebox_voip_calls is stuck at status='ringing' with
+// no ended_at because of exactly this: nothing ever heard the hangup.
+// Explicitly subscribing to the channel keeps events flowing after the
+// handoff, independent of Stasis membership.
+const subscribeToChannel = (id) => ariRequest('POST', `/ari/applications/${encodeURIComponent(ariCfg.app || 'whitebox')}/subscription`, { eventSource: `channel:${id}` })
+
+function ariEventsUrl(appName) {
+  const u = new URL(ariCfg.url)
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+  u.pathname = '/ari/events'
+  u.search = `?app=${encodeURIComponent(appName)}&api_key=${encodeURIComponent(ariCfg.user)}:${encodeURIComponent(ariCfg.password)}`
+  return u.toString()
+}
+
+// Opens the ARI event WebSocket and resolves once it's actually open —
+// mirrors ari-client's connect()+start() combined into one step, since
+// there's no separate discovery phase to do first.
+function connectWebSocket(appName) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(ariEventsUrl(appName))
     let settled = false
-    const settle = (fn, value) => {
+    socket.once('open', () => {
       if (settled) return
       settled = true
-      process.removeListener('uncaughtException', onUncaught)
-      console.log = consoleLog
-      fn(value)
-    }
-    const onUncaught = err => settle(reject, err)
-    process.on('uncaughtException', onUncaught)
-
-    connect(url, user, password).then(
-      client => settle(resolve, client),
-      err => settle(reject, err),
-    )
+      resolve(socket)
+    })
+    socket.once('error', err => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
   })
+}
+
+const EVENT_HANDLERS = {
+  StasisStart:        (event, channel) => wrap(onStasisStart)(event, channel),
+  ChannelStateChange:  (event, channel) => wrap(onStateChange)(event, channel),
+  StasisEnd:           (event, channel) => wrap(onStasisEnd)(event, channel),
+  ChannelDestroyed:    (event, channel) => wrap(onChannelDestroyed)(event, channel),
+}
+
+function attachHandlers(socket) {
+  socket.on('message', raw => {
+    let event
+    try {
+      event = JSON.parse(raw.toString())
+    } catch (err) {
+      logger.error({ err }, 'ARI WS: malformed event payload')
+      return
+    }
+    const handle = EVENT_HANDLERS[event.type]
+    if (handle) handle(event, event.channel)
+  })
+  socket.on('close', () => logger.warn('ARI WebSocket closed'))
+  socket.on('error', err => logger.error({ err }, 'ARI WebSocket error'))
 }
 
 async function start() {
@@ -113,18 +168,10 @@ async function start() {
 // start() so reconnect() (the watchdog's recovery path) can redo exactly
 // this without re-validating config or re-arming the watchdog interval.
 async function connectAndStart() {
-  client = await connectAri(ariCfg.url, ariCfg.user, ariCfg.password)
-  logger.info('ARI connected at %s', ariCfg.url)
-
-  client.on('StasisStart',       wrap(onStasisStart))
-  client.on('ChannelStateChange', wrap(onStateChange))
-  client.on('StasisEnd',         wrap(onStasisEnd))
-  client.on('ChannelDestroyed',  wrap(onChannelDestroyed))
-  client.on('APILoadError',      err => logger.error({ err }, 'ARI API load error'))
-  client.on('WebSocketReconnecting', () => logger.warn('ARI WebSocket reconnecting'))
-
   const appName = ariCfg.app || 'whitebox'
-  await client.start(appName)
+  ws = await connectWebSocket(appName)
+  attachHandlers(ws)
+  logger.info('ARI connected at %s', ariCfg.url)
   logger.info('ARI Stasis app started: %s', appName)
 }
 
@@ -161,13 +208,12 @@ function ariGet(pathname) {
   })
 }
 
-// Watchdog: ari-client's WebSocket can die silently — no 'WebSocketReconnecting',
-// no error event, nothing — leaving the Stasis app unregistered on Asterisk's
-// side while whitebox believes it's still connected (observed in production:
-// fresh start → app registered; hours later, zero log activity → app gone
-// from `GET /ari/applications`). client.on('WebSocketReconnecting') only
-// fires for disconnects ari-client itself detects, which doesn't cover this
-// case — hence a REST-based external check, independent of that same socket.
+// Watchdog: the ARI WebSocket can die silently — no close event, no error,
+// nothing — leaving the Stasis app unregistered on Asterisk's side while
+// whitebox believes it's still connected (observed in production: fresh
+// start → app registered; hours later, zero log activity → app gone from
+// `GET /ari/applications`). Hence a REST-based external check, independent
+// of that same socket.
 function startWatchdog() {
   const intervalMs = ariCfg.watchdogIntervalMs ?? DEFAULT_WATCHDOG_INTERVAL_MS
   if (!intervalMs) return   // 0/false disables it (e.g. tests)
@@ -186,7 +232,7 @@ async function reconnect() {
   if (reconnecting) return   // a check already in flight triggered this
   reconnecting = true
   try {
-    if (client) { try { await client.stop() } catch { /* already dead — fine */ } }
+    if (ws) { try { ws.close() } catch { /* already dead — fine */ } }
     calls_.clear()   // in-flight call state is meaningless across a reconnect
     await connectAndStart()
     logger.info('ARI watchdog: reconnected')
@@ -263,16 +309,48 @@ async function onStasisStart(event, channel) {
   const session = await sessionFor(call)
   await notify('voip.ring', { type: 'voip.ring', date, data: call, session })
 
-  // Answer the channel + start an ARI-managed recording, then hand back to
-  // the dialplan so normal queue / agent routing applies.
-  const recordingName = `wb-${v}-${Date.now()}`
   try {
-    await channel.answer()
+    await answerChannel(id)
   } catch (err) {
     logger.error({ err, channelId: channel.id }, 'Failed to answer channel; continuing anyway')
   }
+
+  // Register the entry immediately after answering — answerChannel() is
+  // what triggers the ChannelStateChange(Up) event, and onStateChange
+  // needs calls_.get(id) to already exist when that event arrives. The
+  // snoop/record calls below take real network round-trips; delaying
+  // calls_.set() until after them left a race where "Call picked" was
+  // silently missed (the state-change event arrived before the entry did).
+  const recordingName = `wb-${v}-${Date.now()}`
+  const entry = {
+    vaultId: v,
+    recordingName,
+    snoopId: null,
+    passportId,
+    sessionId: visitor?.sessionId || null,
+    ringDate: date,
+    caller,
+    line,
+  }
+  calls_.set(id, entry)
+
+  // Record via a snoop channel rather than the main channel directly. On a
+  // real PJSIP channel, an active ARI-managed recording blocks Stasis'
+  // continue from ever taking effect — the channel just sits in Stasis
+  // until the recording stops (reproduced directly against this PBX), and
+  // recording can't be (re)started once a channel has left Stasis either
+  // (ARI 409s: "Channel not in Stasis application"). A snoop channel is a
+  // separate ARI-controlled channel tapping this one's audio, so the main
+  // channel is free to continue immediately while the snoop keeps
+  // recording for the life of the call.
   try {
-    await channel.record({
+    const snoop = await snoopChannel(id, {
+      spy: 'both',
+      app: ariCfg.app || 'whitebox',
+      appArgs: 'snoop',
+    })
+    entry.snoopId = snoop.id
+    await recordChannel(snoop.id, {
       name: recordingName,
       format: 'wav',
       ifExists: 'overwrite',
@@ -285,26 +363,25 @@ async function onStasisStart(event, channel) {
     logger.error({ err, channelId: channel.id, recordingName }, 'Failed to record channel; continuing anyway')
   }
 
-  calls_.set(id, {
-    vaultId: v,
-    recordingName,
-    passportId,
-    sessionId: visitor?.sessionId || null,
-    ringDate: date,
-    caller,
-    line,
-  })
+  // Keep receiving this channel's events after it leaves Stasis (see
+  // subscribeToChannel above) — otherwise onStateChange/onChannelDestroyed
+  // never fire again once continueInDialplan hands it back to the dialplan.
+  await subscribeToChannel(id).catch(err => logger.warn({ err, channelId: id }, 'subscribeToChannel failed'))
 
-  // Let the call continue through the dialplan to the agent.
   await continueInDialplan(channel)
 }
 
+// No explicit context/extension/priority: ARI's /continue, given an
+// explicit cross-context target, is accepted (204) but the channel's
+// dialplan resumption is delayed by tens of seconds to over a minute —
+// long enough that real callers give up and hang up first (reproduced
+// directly against this PBX). A bare continue resumes at the next
+// priority in the SAME context Stasis() was called from — which the
+// dialplan already points at the ring group — and takes effect
+// immediately.
 function continueInDialplan(channel) {
-  return channel.continueInDialplan({
-    context:   ariCfg.continueContext   || 'from-internal',
-    extension: channel.dialplan?.exten,
-    priority:  1,
-  }).catch(err => logger.warn({ err, channelId: channel.id }, 'continueInDialplan failed'))
+  return continueChannel(channel.id, {})
+    .catch(err => logger.warn({ err, channelId: channel.id }, 'continueInDialplan failed'))
 }
 
 // Track the moment the call is actually picked up (state == Up).
@@ -345,8 +422,17 @@ async function onChannelDestroyed(event, channel) {
   calls_.delete(channel.id)
   const date = new Date()
 
-  // Fetch the recording bytes from ARI. The recording stops automatically
-  // when the channel ends; ARI moves it from /recordings/live to /stored.
+  // The recording lives on a snoop channel (see onStasisStart), which
+  // doesn't necessarily hang up in lockstep with the channel it was
+  // snooping. Hang it up explicitly so its recording finalises into
+  // /recordings/stored before we try to fetch it, rather than racing
+  // whatever implicit cleanup Asterisk does on its own.
+  if (entry.snoopId) {
+    await hangupChannel(entry.snoopId).catch(() => {})
+  }
+
+  // Fetch the recording bytes from ARI. ARI moves it from
+  // /recordings/live to /stored once the snoop channel's recording stops.
   const localFile = await fetchRecording(entry.recordingName).catch(err => {
     logger.error({ err, recordingName: entry.recordingName }, 'ARI recording fetch failed')
     return null
@@ -444,7 +530,7 @@ async function fetchRecording(recordingName) {
 
   // Best-effort: delete the recording from ARI so it doesn't accumulate
   // on the PBX disk. Not fatal if it fails.
-  client?.recordings?.deleteStored?.({ recordingName })
+  deleteRecording(recordingName)
     .catch(err => logger.warn({ err, recordingName }, 'ARI deleteStored failed'))
 
   return localName
@@ -457,7 +543,7 @@ async function sessionFor(call) {
 
 export async function stop() {
   if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null }
-  if (!client) return
-  try { await client.stop() } catch { /* ignore */ }
-  client = null
+  if (!ws) return
+  try { ws.close() } catch { /* ignore */ }
+  ws = null
 }

@@ -8,17 +8,19 @@ const LINES = {
 }
 
 function makeConnect() {
-  const handlers = { connected: null, disconnected: null, message: null }
+  const handlers = { connected: null, disconnected: null, message: null, sessionReady: null }
   const emitted = []
   return {
     emit: vi.fn((connectionId, event, data) => emitted.push({ connectionId, event, data })),
     onConnected: fn => { handlers.connected = fn },
     onDisconnected: fn => { handlers.disconnected = fn },
     onMessage: fn => { handlers.message = fn },
+    onSessionReady: fn => { handlers.sessionReady = fn },
     // helpers for triggering events in tests
     triggerConnected: data => handlers.connected(data),
     triggerDisconnected: data => handlers.disconnected(data),
     triggerMessage: data => handlers.message(data),
+    triggerSessionReady: data => handlers.sessionReady(data),
     emitted,
   }
 }

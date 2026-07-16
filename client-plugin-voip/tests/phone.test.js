@@ -27,7 +27,11 @@ function makeBus() {
   return {
     sent, emitted,
     isConnected: () => true,
-    send: vi.fn((event, data) => { sent.push({ event, data }) }),
+    // Must return truthy — phone.js's request() reverts a tag straight back
+    // to idle when send() returns falsy (its real signal that the socket
+    // hasn't finished connecting yet), so an undefined-returning mock would
+    // never let a tag reach 'requesting' long enough for voip.number to apply.
+    send: vi.fn((event, data) => { sent.push({ event, data }); return true }),
     on(event, fn) { if (!handlers.has(event)) handlers.set(event, new Set()); handlers.get(event).add(fn); return () => handlers.get(event)?.delete(fn) },
     off(event, fn) { handlers.get(event)?.delete(fn) },
     emit: vi.fn(function (event, data) { emitted.push({ event, data }); handlers.get(event)?.forEach(fn => fn(data)) }),

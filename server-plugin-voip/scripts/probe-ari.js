@@ -239,9 +239,6 @@ async function main() {
     line(`${C.ok} 5/5  Got ${file.body.length} bytes (Content-Type: ${ct})`)
     line('')
     line(`${C.ok} All checks passed — ARI is a viable replacement for the HTTP-scrape path.`)
-    line('')
-    line('   Next step (optional): install `ari-client` and use ari.recordings.getStoredFile()')
-    line('   in voip/src/recorder.js instead of the current Cheerio-scrape approach.')
     process.exit(0)
   } else {
     line(`${C.no} 5/5  Binary download failed: HTTP ${file.status}${file._err ? ' — ' + file._err : ''}`)
