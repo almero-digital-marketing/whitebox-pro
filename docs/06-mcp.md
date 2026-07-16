@@ -23,7 +23,7 @@ mcp: {
 
 ## Authentication
 
-`mcp.auth` is a **pluggable verifier**. Three options:
+`mcp.auth` is a **pluggable verifier**. Four options:
 
 1. **Static bearer token** — set `auth` to a string (or `{ secret }`). Clients send
    `Authorization: Bearer <token>`. Simplest; good for server-to-server.
@@ -40,18 +40,52 @@ mcp: {
    This also serves `GET /.well-known/oauth-protected-resource` (RFC 9728) so a
    client can discover the authorization server and run the OAuth flow without
    pre-shared secrets.
-3. **None** — omit `auth` (development only).
+3. **Built-in (OAuth, self-hosted)** — `whitebox-pro-auth-builtin` is a complete
+   OAuth 2.1 authorization server (authorization + token endpoints, JWKS, RFC 8414
+   discovery) that ships *with* WhiteBox — no external identity provider account
+   needed. Register it as a plugin, then verify with the same generic `jwt()`
+   verifier the Auth0 package exports (any OIDC-compliant issuer works with it):
+   ```js
+   import { authBuiltin } from 'whitebox-pro-auth-builtin'
+   import { jwt } from 'whitebox-pro-auth-auth0'
 
-Any OAuth resource-server verifier can be dropped in the same way; Auth0 is just
-the first provider package. See [Integrations](08-integrations.md).
+   const ISSUER = 'https://your-host/oauth'
+   const AUDIENCE = 'https://whitebox/api'
+
+   plugins: [
+     authBuiltin({ issuer: ISSUER, audience: AUDIENCE }),
+     // …
+   ],
+   mcp: {
+     path: '/mcp',
+     auth: jwt({ issuer: ISSUER, audience: AUDIENCE, scope: 'mcp:use' }),
+   }
+   ```
+   `basePath` (where `/authorize`, `/token`, `/.well-known/*` mount) is *derived*
+   from `issuer`'s own path, so the two can never drift apart. Bootstrap the first
+   user and register each OAuth client (an admin-only, one-off step — no Dynamic
+   Client Registration) with the package's CLI scripts:
+   ```bash
+   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' node scripts/create-admin.mjs
+   node scripts/create-client.mjs --name="Claude Desktop" --redirect-uri="http://localhost:PORT/callback"
+   ```
+   Clients are public (PKCE/S256, no `client_secret`) — the right shape for MCP
+   and browser-based apps, which can't hold a secret safely.
+4. **None** — omit `auth` (development only).
+
+Any OAuth resource-server verifier can be dropped in the same way; Auth0 and the
+built-in server are just the first two provider packages. See
+[Integrations](08-integrations.md).
 
 ## Connecting a client
 
 - **With a static token:** point your MCP client at `https://your-host/mcp` and
   configure the bearer token.
-- **With Auth0:** point the client at `https://your-host/mcp`; on a `401` it reads
-  the `/.well-known/oauth-protected-resource` metadata, runs the OAuth flow against
-  your Auth0 tenant, and retries with the issued token.
+- **With Auth0 or the built-in server:** point the client at `https://your-host/mcp`;
+  on a `401` it reads the `/.well-known/oauth-protected-resource` metadata, runs
+  the OAuth flow against whichever authorization server is configured, and
+  retries with the issued token. The flow itself is identical either way — only
+  where the login page lives (Auth0's hosted page vs. WhiteBox's own) differs.
 
 The server advertises its tool/resource/prompt catalog on connect.
 

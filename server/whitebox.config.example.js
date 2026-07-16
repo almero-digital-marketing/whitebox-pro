@@ -32,6 +32,12 @@ import { mailgun } from 'whitebox-pro-mail-mailgun'
 import { twilio } from 'whitebox-pro-sms-twilio'
 import { mobica } from 'whitebox-pro-sms-mobica'
 import { maxmind } from 'whitebox-geolocation-maxmind'
+// Built-in OAuth 2.1 authorization server — a self-hosted alternative to Auth0
+// (see the mcp.auth and analytics({ auth }) comments below for how it's used).
+// import { authBuiltin } from 'whitebox-pro-auth-builtin'
+// import { jwt } from 'whitebox-pro-auth-auth0'
+// const OAUTH_ISSUER = 'https://wb.example.com/oauth'   // this server's own URL + oauth path
+// const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
 
 export default async (runtime) => ({
   port: Number(process.env.WB_PORT || 3000),
@@ -96,15 +102,28 @@ export default async (runtime) => ({
 
   // MCP endpoint + auth. `auth` is a pluggable verifier: a static Bearer secret
   // by default (string or { secret }), or a composed one from an external
-  // package. For Auth0, add at the top:
-  //   import { auth0 } from 'whitebox-pro-auth-auth0'
-  // and set: auth: auth0({ domain: process.env.AUTH0_DOMAIN,
-  //                        audience: 'https://whitebox/mcp', scope: 'mcp:use' })
-  // (that also serves /.well-known/oauth-protected-resource so MCP clients can
-  // log in via Auth0 themselves). Omit `auth` entirely for no auth (dev only).
+  // package. Two OAuth options — pick ONE:
+  //
+  //   1. Auth0 (external IdP) — add at the top:
+  //        import { auth0 } from 'whitebox-pro-auth-auth0'
+  //      and set: auth: auth0({ domain: process.env.AUTH0_DOMAIN,
+  //                             audience: 'https://whitebox/mcp', scope: 'mcp:use' })
+  //
+  //   2. Built-in (self-hosted, no external account) — add at the top:
+  //        import { authBuiltin } from 'whitebox-pro-auth-builtin'
+  //        import { jwt } from 'whitebox-pro-auth-auth0'   // generic verifier, reused
+  //      register the plugin (below, in `plugins`):
+  //        authBuiltin({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
+  //      and set: auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' })
+  //      Bootstrap the first user/client with the package's CLI scripts
+  //      (create-admin.mjs / create-client.mjs) — see its README.
+  //
+  // Both also serve their own discovery metadata so an MCP client can find the
+  // authorization server and run the OAuth flow with no pre-shared secrets.
+  // Omit `auth` entirely for no auth (dev only).
   mcp: {
     path: '/mcp',
-    auth: process.env.WB_MCP_TOKEN,   // string → Bearer; swap for auth0({…})
+    auth: process.env.WB_MCP_TOKEN,   // string → Bearer; swap for auth0({…}) or jwt({…})
   },
 
   // Each entry is a built plugin object. Options passed to the factory are the
@@ -125,8 +144,10 @@ export default async (runtime) => ({
       // composed verifier to gate analytics with the same OAuth/OIDC provider:
       //   auth: auth0({ domain: process.env.AUTH0_DOMAIN,
       //                 audience: 'https://whitebox/analytics', scope: 'analytics:read' })
-      // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top). Every
-      // plugin's `auth` option works the same way — see docs/04-configuration.md.
+      // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top) — or, with
+      // the built-in authorization server instead of Auth0:
+      //   auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' })
+      // Every plugin's `auth` option works the same way — see docs/04-configuration.md.
     }),
 
     // Receives /conversions/events from the browser, records them, and (when a
@@ -236,5 +257,12 @@ export default async (runtime) => ({
       // recordFacts: true (default) — geo_country/geo_region/geo_city/geo_lat/
       // geo_lon become core facts, queryable via the selector for segmentation.
     }),
+
+    // Built-in OAuth 2.1 authorization server — mounts /authorize, /token,
+    // /.well-known/jwks.json and /.well-known/oauth-authorization-server at
+    // OAUTH_ISSUER's own path. Only needed if you use jwt({…}) above instead of
+    // a static token or Auth0. Bootstrap with the package's create-admin.mjs /
+    // create-client.mjs CLI scripts — see whitebox-pro-auth-builtin's README.
+    // authBuiltin({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
   ].filter(Boolean),
 })

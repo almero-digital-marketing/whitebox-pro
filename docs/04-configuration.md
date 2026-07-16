@@ -131,8 +131,11 @@ Every privileged endpoint is protected by an **auth verifier** you set per plugi
 via `auth: …`. The default is a **bearer token** (`auth: process.env.WB_<PLUGIN>_TOKEN`
 or the legacy `{ secret: … }` shape), checked with a constant-time comparison — but
 `auth` accepts anything [MCP's auth](06-mcp.md) does: a bare middleware function, or
-a composed verifier like `auth0({ domain, audience, scope })` from an external
-package. `analytics({ auth: auth0({ … }) })` works exactly like
+a composed OAuth verifier from an external package — either `auth0({ domain, audience,
+scope })` (external IdP) or `jwt({ issuer, audience, scope })` (verifies against any
+OIDC-compliant issuer, including WhiteBox's own [built-in authorization
+server](06-mcp.md#authentication) — no external account required).
+`analytics({ auth: auth0({ … }) })` works exactly like
 `mcp: { auth: auth0({ … }) }` — the normalization (`resolveAuth` in
 `server/src/auth.js`) is the same code either way, not MCP-specific.
 
@@ -208,6 +211,7 @@ holds no secrets.
 |---|---|
 | `WB_ARI_URL` `WB_ARI_USER` `WB_ARI_PASSWORD` | Asterisk ARI connection |
 | `AUTH0_DOMAIN` (+ `audience`/`scope` set inline) | Auth0 verifier for `/mcp` |
+| `WB_DB_*` (shared with core) | `whitebox-pro-auth-builtin`'s CLI scripts (`create-admin.mjs`/`create-client.mjs`) — no separate DB config, no Auth0 account needed |
 
 > A given deployment only needs the variables for the plugins and providers it
 > actually enables.
