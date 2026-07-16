@@ -210,3 +210,26 @@ export async function merge(survivorId, absorbedId) {
 
   return survivorId
 }
+
+// Generic HTTP entry point for attaching identity claims to a passport —
+// e.g. a browser linking its anonymous passport to an email/phone at
+// registration or login, so pre-existing history merges instead of orphaning.
+// passport_id carries no auth weight (same trust model as every other
+// passport-scoped route — see /crm/observe, /shortener/claim); it's an
+// attribution key, not a security boundary. `claims` is passed straight
+// through to link() — this route has no opinion on identity types.
+export function register(app) {
+  app.post('/passports/link', async (req, res) => {
+    try {
+      const { passport_id: passportId, claims } = req.body || {}
+      if (!passportId) return res.status(400).json({ error: 'passport_id is required' })
+      if (!Array.isArray(claims) || !claims.length) return res.status(400).json({ error: 'claims must be a non-empty array' })
+
+      await link(passportId, claims)
+      res.json({ passportId: await resolve(passportId) })
+    } catch (err) {
+      logger.error({ err }, 'Failed to link identity')
+      res.status(500).json({ error: 'Failed to link identity' })
+    }
+  })
+}

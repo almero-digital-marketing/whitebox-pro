@@ -103,7 +103,19 @@ export default function conversionsPlugin(options = {}) {
         return emit({ event: name, ...data })
       }
 
-      const api = { track, custom }
+      // Advanced Matching: hand identity claims ([{type, name, value}], same
+      // shape core passport-linking uses) to every present network's own
+      // client-side pixel (fbq('set','userData',…) / ttq.identify(…)). This is
+      // a SEPARATE lever from server-side CAPI enrichment (which resolves
+      // automatically from whatever the passport already has linked) — it
+      // improves the browser pixel's own match quality. Consent-gated like
+      // every other conversions send, since it's PII going to ad networks.
+      function identify(claims) {
+        if (!consented()) return []
+        return pixels.identify(claims)
+      }
+
+      const api = { track, custom, identify }
       // One camelCase method per standard event, each validating its own schema.
       for (const ev of CONVERSION_EVENTS) {
         api[toCamel(ev)] = (payload = {}) => track(ev, payload)
