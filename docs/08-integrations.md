@@ -25,6 +25,7 @@ folder outside the tree:
         whitebox-pro-sms-twilio/          whitebox-pro-sms-mobica/
         whitebox-pro-adnetworks-meta/     whitebox-pro-adnetworks-google/
         whitebox-pro-adnetworks-tiktok/   whitebox-pro-auth-auth0/
+        whitebox-pro-auth-builtin/
 ```
 
 Why outside the tree: the monorepo can be shared/public while individual provider
@@ -60,6 +61,7 @@ imports it. Ad-network packages additionally get the in-monorepo
 | sms | `whitebox-pro-sms-twilio`, `whitebox-pro-sms-mobica` | send + DLR/inbound parsing + signature verification; routed per destination prefix |
 | conversions / audiences | `whitebox-pro-adnetworks-meta`, `-google`, `-tiktok` | server CAPI/MP/Events fan-out (`.`) + browser pixel (`/client`), deduped by `event_id` |
 | MCP auth | `whitebox-pro-auth-auth0` | OAuth resource-server verifier + RFC 9728 discovery |
+| MCP auth (self-hosted) | `whitebox-pro-auth-builtin` | the authorization server itself (login, PKCE, token issuance, JWKS, RFC 8414 discovery) — no external IdP account. Structured differently from the other rows: it's registered as a **plugin** (it has its own DB tables + endpoints), then verified with the *same* `jwt({ issuer, audience, scope })` verifier `whitebox-pro-auth-auth0` exports, since that verifier already accepts any OIDC-compliant issuer |
 
 Each provider repo has its own README with credential setup and webhook wiring.
 
