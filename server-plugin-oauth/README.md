@@ -16,9 +16,9 @@ It implements the piece Auth0 usually provides: an authorization endpoint
 JWKS endpoint, and RFC 8414 discovery — so an MCP client, the WhiteBox UI
 itself, or any other OAuth client can log in against your own server, with
 no third-party account anywhere in the loop. It also owns **invite-only
-registration** (no open self-signup) and a minimal **admin/non-admin**
-distinction — deliberately not a full role system; see "Users & invites"
-below.
+registration** (no open self-signup) and **per-module permission grants** —
+still no named-role system, just an explicit set of catalog keys per user;
+see "Permissions" below.
 
 Unlike the ad-network/mail/SMS providers under `whitebox-pro-integrations/`,
 this package ships **in this monorepo**: it isn't an adapter for an external
@@ -41,9 +41,18 @@ provider for one) — the same class of thing as `server-plugin-audiences` or
   fallback for non-SPA clients (MCP, curl, manual testing) — a real product
   UI (like the WhiteBox UI) renders its own branded form and POSTs directly
   to `POST /authorize` instead; both hit the exact same endpoint.
-- **`is_admin` is one boolean, not a role system.** An admin can invite,
-  list, and remove users; everyone else just uses the product. Adding
-  proper roles/permissions is deliberately out of scope for now.
+- **A permission catalog, not a role system.** Every plugin declares its own
+  set of permission keys (and sane defaults for brand-new users) into one
+  aggregated catalog; an admin grants/revokes them per user through the
+  Users module. There's still no named "editor"/"viewer" layer on top —
+  just explicit per-user grants. See "Permissions" below.
+- **Token scope is always computed server-side, never trusted from the
+  client.** Every plugin's REST surface (including this one's own `/users`
+  routes) is gated by `jwt({ scope })` with no per-request DB re-check, so
+  the ONLY thing standing between a user and elevated access is that the
+  token's `scope` claim is minted from their actual stored permissions at
+  login/refresh — never from whatever a client's `/authorize` request asks
+  for. See "Permissions" for why this matters.
 
 ## Use
 
@@ -58,7 +67,6 @@ plugins: [
   oauth({
     issuer: ISSUER, audience: AUDIENCE,
     appUrl: 'http://localhost:5173',        // where the UI lives — invite emails link here
-    adminScope: 'admin:manage',             // gates the /users routes below (defaults to this)
   }),
   // …
 ],
@@ -67,8 +75,16 @@ mcp: {
   auth: jwt({ issuer: ISSUER, audience: AUDIENCE, scope: 'mcp:use' }),
 },
 
-// any other plugin works the same way:
-analytics({ auth: jwt({ issuer: ISSUER, audience: AUDIENCE, scope: 'app:use' }) }),
+// any other plugin works the same way — its own scope(s), from its own
+// `permissions` catalog entries (see "Permissions" below). A plugin whose
+// REST surface has a meaningful read/write distinction takes { read, write }
+// instead of one verifier (see whitebox-pro-server/auth's resolveReadWriteAuth):
+analytics({
+  auth: {
+    read: jwt({ issuer: ISSUER, audience: AUDIENCE, scope: 'analytics:read' }),
+    write: jwt({ issuer: ISSUER, audience: AUDIENCE, scope: 'analytics:write' }),
+  },
+}),
 ```
 
 `basePath` (where this mounts — `/authorize`, `/token`, `/.well-known/*`)
@@ -85,7 +101,8 @@ one-off CLI scripts — after that, an admin invites everyone else through
 the UI's Users module:
 
 ```bash
-# Create the first user — always an admin (there's no other way to get one):
+# Create the first user — granted every permission via the '*' sentinel,
+# since there's no admin yet to grant them users:manage individually:
 ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' node scripts/create-admin.mjs
 
 # Register an OAuth client (the WhiteBox UI, an MCP client, …):
@@ -116,18 +133,62 @@ Routes (all under the plugin's `basePath`, e.g. `/oauth`):
 
 | route | auth | purpose |
 |---|---|---|
-| `GET /me` | any valid token | who am I — `{ id, email, is_admin }` |
-| `GET /users` | `adminScope` + `is_admin` | list every user (never the password hash) |
-| `POST /users/invite` | `adminScope` + `is_admin` | `{ email }` → creates a pending user, emails/returns the invite link |
-| `POST /users/:id/resend-invite` | `adminScope` + `is_admin` | re-issues the token (409 if the user already has a password) |
-| `DELETE /users/:id` | `adminScope` + `is_admin` | remove a user (400 on removing yourself) |
+| `GET /me` | any valid token | who am I — `{ id, email, permissions }` (permissions already expanded — see below) |
+| `GET /permissions/catalog` | `users:manage` | the full aggregated catalog every plugin declared, grouped by module |
+| `GET /users` | `users:manage` | list every user (never the password hash) |
+| `POST /users/invite` | `users:manage` | `{ email }` → creates a pending user, emails/returns the invite link |
+| `POST /users/:id/resend-invite` | `users:manage` | re-issues the token (409 if the user already has a password) |
+| `PUT /users/:id/permissions` | `users:manage` | `{ permissions: [...] }` → replaces a user's grant set wholesale; 400 if it would strip `users:manage` from the last active user who holds it |
+| `PATCH /users/:id` | `users:manage` | `{ first_name?, last_name?, phone?, email? }` — any subset; 409 on a duplicate email |
+| `GET /users/:id/logins` | `users:manage` | login history — real logins only (never a silent token refresh), newest first; each row includes `ip` and a best-effort `browser`/`os` (parsed from the User-Agent, display-only — see userAgent.js) |
+| `DELETE /users/:id` | `users:manage` | remove a user (400 on removing yourself) |
 | `GET /invite/:token` | public | `{ email }` for a live invite, 404 if invalid/expired |
-| `POST /invite/:token/accept` | public | `{ password }` — single-use, sets the password |
+| `POST /invite/:token/accept` | public | `{ password, firstName?, lastName?, phone? }` — single-use, sets the password and seeds the current catalog defaults |
 
-The scope check (`adminScope`) is only a first filter — every admin route
-re-checks the caller's **current** `is_admin` flag from the database on
-every request, not something baked into the token at login time, so a
-change takes effect immediately rather than only after the token expires.
+## Permissions
+
+Every plugin can declare a `permissions` field on its factory's return value
+— a set of catalog keys plus which ones a brand-new user gets by default:
+
+```js
+// e.g. inside analytics()'s return value — a plugin can declare as many keys
+// as its REST surface has meaningful distinctions; analytics/audiences/
+// campaigns each split theirs into :read and :write (enforced per-route by
+// mutation semantics, not HTTP verb — see each plugin's rest.js):
+permissions: {
+  items: [
+    { key: 'analytics:read', label: 'View Analytics', description: 'View reports and ask grounded questions' },
+    { key: 'analytics:write', label: 'Edit Analytics', description: 'Create and edit reports and widgets' },
+  ],
+  defaults: ['analytics:read', 'analytics:write'],
+}
+```
+
+`server/src/plugins.js`'s loader aggregates every registered plugin's
+catalog into `ctx.permissions.catalog` before any plugin's `register()`
+runs, so this plugin's own routes (and `GET /permissions/catalog`) can see
+every module's entries regardless of load order. This package declares one
+entry of its own: `users:manage` — managing users & permissions is just
+another module capability, not a special superuser flag.
+
+A user's `permissions` column is a flat array of these keys, or the single
+reserved sentinel `"*"` ("every permission that exists, including ones added
+later"). `"*"` is **bootstrap-only** — `scripts/create-admin.mjs` is the one
+place it's ever set (there's no admin yet to grant the first user
+`users:manage` individually); it's never a value the Users module (or
+`PUT /users/:id/permissions`) will accept, so there's no way to re-grant it
+through the running product.
+
+**Enforcement is JWT-scope-only, with no per-request DB re-check** — same as
+every other plugin. A granted or revoked permission takes effect on the
+user's next token refresh (≤1h), not instantly. That tradeoff is only safe
+because of one invariant: **`issueTokens()` always computes a token's
+`scope` claim fresh from the user's current DB-stored `permissions`,
+never from anything the client requests at `/authorize`.** Earlier, the
+now-removed `is_admin` flag had its own redundant DB re-check specifically
+because client-requested scope wasn't trustworthy on its own; moving to
+pure JWT-scope trust across every module made fixing that the load-bearing
+piece of the whole design, not optional hardening.
 
 ## What it returns
 

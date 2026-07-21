@@ -10,6 +10,9 @@ const router = useRouter()
 const token = route.query.token as string | undefined
 
 const email = ref('')
+const firstName = ref('')
+const lastName = ref('')
+const phone = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const error = ref('')
@@ -39,7 +42,10 @@ async function submit() {
   try {
     const res = await fetch(`/api/oauth/invite/${token}/accept`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: password.value }),
+      body: JSON.stringify({
+        password: password.value,
+        firstName: firstName.value.trim(), lastName: lastName.value.trim(), phone: phone.value.trim(),
+      }),
     })
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not set your password.')
     router.replace('/login')
@@ -63,6 +69,11 @@ async function submit() {
         <p class="muted">{{ email }}</p>
         <p v-if="error" class="err">{{ error }}</p>
         <form @submit.prevent="submit">
+          <div class="field-row">
+            <input v-model="firstName" type="text" placeholder="First name" required class="field" />
+            <input v-model="lastName" type="text" placeholder="Last name" required class="field" />
+          </div>
+          <input v-model="phone" type="tel" placeholder="Phone" required class="field" />
           <input v-model="password" type="password" placeholder="Password (min. 12 characters)" required class="field" />
           <input v-model="confirmPassword" type="password" placeholder="Confirm password" required class="field" />
           <button type="submit" class="submit-btn" :disabled="saving">{{ saving ? 'Saving…' : 'Set password' }}</button>
@@ -83,6 +94,8 @@ async function submit() {
 }
 .invite-card h1 { font-size: 17px; margin: 0; color: var(--text-strong); }
 .invite-card form { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 6px; }
+.field-row { display: flex; gap: 10px; }
+.field-row .field { min-width: 0; }
 .muted { color: var(--muted); font-size: 13px; margin: 0; }
 .err { color: var(--danger); font-size: 13px; margin: 0; text-align: center; }
 .field {

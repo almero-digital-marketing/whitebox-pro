@@ -1,10 +1,10 @@
 // The single source of truth for the session — every other store/module reads
-// accessToken/isAdmin from here rather than touching localStorage or a token
-// env var directly. localStorage is purely the persistence backend this store
-// writes through to on login/refresh/logout; nothing outside the store touches
-// it. Login itself is a real browser navigation (a <form> POST from Login.vue),
-// not an action here — a fetch with redirect:'manual' can't distinguish a
-// successful redirect from a failed one on an opaque response.
+// accessToken/permissions from here rather than touching localStorage or a
+// token env var directly. localStorage is purely the persistence backend this
+// store writes through to on login/refresh/logout; nothing outside the store
+// touches it. Login itself is a real browser navigation (a <form> POST from
+// Login.vue), not an action here — a fetch with redirect:'manual' can't
+// distinguish a successful redirect from a failed one on an opaque response.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { randomVerifier, randomState, challengeFromVerifier } from '../pkce'
@@ -19,11 +19,14 @@ const REDIRECT_URI = () => `${location.origin}/callback`
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null)
   const refreshToken = ref<string | null>(localStorage.getItem(REFRESH_KEY))
-  const user = ref<{ id: string; email: string; is_admin: boolean } | null>(null)
+  const user = ref<{ id: string; email: string; permissions: string[] } | null>(null)
   const ready = ref(false)   // true once the boot-time silent refresh has resolved either way
 
   const isAuthenticated = computed(() => !!accessToken.value)
-  const isAdmin = computed(() => !!user.value?.is_admin)
+  // Already expanded server-side (GET /me resolves the '*' bootstrap sentinel
+  // into every real catalog key) — a plain membership check is always enough.
+  const permissions = computed(() => user.value?.permissions ?? [])
+  const hasPermission = (key: string) => permissions.value.includes(key)
 
   function persist(tokens: { access_token: string; refresh_token: string }) {
     accessToken.value = tokens.access_token
@@ -57,7 +60,11 @@ export const useAuthStore = defineStore('auth', () => {
       fields: {
         response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT_URI(),
         code_challenge: await challengeFromVerifier(verifier), code_challenge_method: 'S256',
-        scope: 'app:use admin:manage', state,
+        // Purely informational — the server computes the token's real scope
+        // from the user's stored permission grants, never from this value
+        // (see server-plugin-oauth's README), so there's nothing meaningful
+        // to request here.
+        scope: 'openid', state,
       },
     }
   }
@@ -109,5 +116,5 @@ export const useAuthStore = defineStore('auth', () => {
 
   function logout() { clear() }
 
-  return { accessToken, user, ready, isAuthenticated, isAdmin, buildAuthorizeRequest, completeLogin, refresh, init, logout }
+  return { accessToken, user, ready, isAuthenticated, permissions, hasPermission, buildAuthorizeRequest, completeLogin, refresh, init, logout }
 })

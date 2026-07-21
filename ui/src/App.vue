@@ -14,7 +14,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 // /login, /callback, /accept-invite are standalone screens — no activity bar chrome.
 const isAuthScreen = computed(() => ['login', 'callback', 'accept-invite'].includes(route.name as string))
-const visibleModules = computed(() => modules.filter((m) => !m.adminOnly || authStore.isAdmin))
+const visibleModules = computed(() => modules.filter((m) => !m.requiresAnyPermission || m.requiresAnyPermission.some((k) => authStore.hasPermission(k))))
 const activeId = computed(() => (route.name as string) || modules[0].id)
 function logout() {
   authStore.logout()

@@ -31,13 +31,16 @@ export function init(deps) {
   db = deps.db
 }
 
-export async function createUser({ email, password, isAdmin = false }) {
+// `permissions` defaults to no grants at all — scripts/create-admin.mjs is
+// the one caller that passes ['*'] (the reserved "everything" sentinel), to
+// bootstrap the very first user with enough access to grant everyone else's.
+export async function createUser({ email, password, permissions = [] }) {
   if (!email || !password) throw new Error('createUser: email and password are required')
   const { hash, salt } = await hashPassword(password)
   const [row] = await db('whitebox_oauth_users')
-    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt, is_admin: isAdmin })
-    .returning(['id', 'email', 'is_admin'])
-  return row
+    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt, permissions: JSON.stringify(permissions) })
+    .returning(['id', 'email', 'permissions'])
+  return { ...row, permissions }
 }
 
 export async function verifyCredentials(email, password) {
@@ -59,13 +62,23 @@ export async function getByInviteToken(token) {
 // only succeeds while the token is still live and the account is still
 // pending, so a replayed accept-invite request (or a token reused after
 // someone already completed it) can't win a race or set the password twice.
-export async function completeInvite({ token, password }) {
+// firstName/lastName/phone are self-reported here — this is the one point in
+// the flow where the account materializes with real user-supplied info.
+// defaultPermissions is a SNAPSHOT of each plugin's declared defaults at this
+// exact moment — materialized onto the row, not recomputed later, so a
+// plugin changing its defaults afterward doesn't retroactively change
+// already-onboarded users.
+export async function completeInvite({ token, password, firstName, lastName, phone, defaultPermissions = [] }) {
   if (!token || !password) throw new Error('completeInvite: token and password are required')
   if (password.length < 12) throw new Error('completeInvite: password must be at least 12 characters')
   const { hash, salt } = await hashPassword(password)
   const n = await db('whitebox_oauth_users')
     .where({ invite_token: token, password_hash: null })
     .andWhere('invite_expires_at', '>', new Date())
-    .update({ password_hash: hash, password_salt: salt, invite_token: null, invite_expires_at: null })
+    .update({
+      password_hash: hash, password_salt: salt, invite_token: null, invite_expires_at: null,
+      first_name: firstName?.trim() || null, last_name: lastName?.trim() || null, phone: phone?.trim() || null,
+      permissions: JSON.stringify(defaultPermissions),
+    })
   return n === 1
 }

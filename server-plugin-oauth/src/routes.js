@@ -75,9 +75,16 @@ function redirectWithError(res, redirectUri, state, error, description) {
   res.redirect(302, url.toString())
 }
 
-export function mountRoutes(app, { basePath, issuer, audience, logger, adminScope, appUrl, fromEmail, getMail }) {
+export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, fromEmail, getMail, permissionsCatalog = [] }) {
   const router = express.Router()
   router.use(express.urlencoded({ extended: false }))
+
+  // Every module-declared permission key, flattened once — the universe '*'
+  // expands into, and what a PUT /users/:id/permissions body is validated
+  // against (which also means submitting '*' itself is rejected: it's not a
+  // real catalog key, only a bootstrap-only sentinel — see store.js).
+  const allPermissionKeys = permissionsCatalog.flatMap(m => m.items.map(i => i.key))
+  const defaultPermissionKeys = permissionsCatalog.flatMap(m => m.defaults || [])
 
   // ── discovery (RFC 8414) ──────────────────────────────────────────────
   router.get('/.well-known/oauth-authorization-server', (req, res) => {
@@ -138,6 +145,11 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
       return redirectWithError(res, params.redirect_uri, params.state, 'access_denied', 'Incorrect email or password')
     }
 
+    // params.scope is whatever the CLIENT asked for — stored only for audit/
+    // debugging. It is never trusted for authorization: issueTokens() below
+    // always recomputes the real scope from the user's actual DB-stored
+    // permission grants, so a client can't mint itself elevated access by
+    // simply requesting a scope it isn't entitled to.
     const code = await store.createCode({
       clientId: client.client_id, userId: user.id, redirectUri: params.redirect_uri,
       codeChallenge: params.code_challenge, scope: params.scope, ttlSec: CODE_TTL_SEC,
@@ -176,7 +188,15 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     const won = await store.redeemCode(code)
     if (!won) return res.status(400).json({ error: 'invalid_grant' })   // already used — possible replay
 
-    return issueTokens(res, { clientId: row.client_id, userId: row.user_id, scope: row.scope })
+    // A real login — recorded here, not in handleRefreshGrant, so silent
+    // token renewals never inflate the login-history list. req.ip already
+    // respects the app's trustProxy config (createApp({ trustProxy })).
+    await store.recordLogin({
+      userId: row.user_id, clientId: row.client_id,
+      ip: req.ip, userAgent: req.get('user-agent'),
+    })
+
+    return issueTokens(res, { clientId: row.client_id, userId: row.user_id })
   }
 
   async function handleRefreshGrant(req, res) {
@@ -192,10 +212,21 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     const won = await store.revokeRefreshToken(token)
     if (!won) return res.status(400).json({ error: 'invalid_grant' })
 
-    return issueTokens(res, { clientId: row.client_id, userId: row.user_id, scope: row.scope })
+    // Recomputed fresh from DB (not copied from the refresh token row) —
+    // this is what makes a granted/revoked permission actually take effect
+    // on the user's next refresh instead of only at their next full login.
+    return issueTokens(res, { clientId: row.client_id, userId: row.user_id })
   }
 
-  async function issueTokens(res, { clientId, userId, scope }) {
+  // The one place a token's `scope` claim is ever decided. Always computed
+  // from the user's CURRENT DB-stored permissions — never from anything the
+  // client requested — because with no other check left anywhere (every
+  // plugin's gate is JWT-scope-only, and there's no separate is_admin
+  // recheck), this is the only thing standing between a logged-in user and
+  // whatever scope a forged /authorize request might have asked for.
+  async function issueTokens(res, { clientId, userId }) {
+    const user = await store.getUser(userId)
+    const scope = store.expandPermissions(user?.permissions || [], allPermissionKeys).join(' ')
     const accessToken = await keys.signJwt({
       issuer, audience, subject: userId, scope, expiresIn: ACCESS_TOKEN_TTL,
     })
@@ -206,27 +237,83 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     })
   }
 
-  // ── /users (admin-only — no role system, just this one flag) ──────────
+  // ── /users (gated by the users:manage permission, same as every other
+  // module's gate) ───────────────────────────────────────────────────────
   // Verifies the SAME kind of token this server itself issues, via the
   // identical generic jwt() verifier every other plugin uses — the oauth
-  // server is a resource server for its own tokens here.
+  // server is a resource server for its own tokens here. No DB re-check:
+  // trusting the JWT's scope claim is safe because issueTokens() (above)
+  // is the only place that claim is ever set, and it's always computed
+  // fresh from the DB, never from what a client requests.
   router.use(express.json())
 
   const anyAuth = jwt({ issuer, audience })
-  const adminAuth = jwt({ issuer, audience, scope: adminScope })
-  async function requireAdmin(req, res, next) {
-    const user = req.auth?.sub && await store.getUser(req.auth.sub)
-    if (!user?.is_admin) return res.status(403).json({ error: 'forbidden' })
-    req.user = user
-    next()
-  }
+  const manageUsers = jwt({ issuer, audience, scope: 'users:manage' })
 
-  // Any authenticated user (not admin-gated) — "who am I", for the SPA to
-  // know its own identity/admin status without fetching the whole user list.
+  // Any authenticated user (not permission-gated) — "who am I", for the SPA
+  // to know its own identity/granted modules without fetching the user list.
   router.get('/me', anyAuth.middleware, async (req, res) => {
     const user = await store.getUser(req.auth.sub)
     if (!user) return res.status(404).json({ error: 'not found' })
-    res.json(user)
+    await store.touchLastAccess(user.id)
+    res.json({ ...user, permissions: store.expandPermissions(user.permissions, allPermissionKeys) })
+  })
+
+  // The aggregated permission catalog every plugin declared at boot — what
+  // the Users admin panel renders as checkboxes, grouped by module.
+  router.get('/permissions/catalog', manageUsers.middleware, (req, res) => {
+    res.json(permissionsCatalog)
+  })
+
+  // Replaces a user's grant set wholesale. Rejecting anything not a real
+  // catalog key also rejects '*' for free — it's a bootstrap-only sentinel,
+  // never settable through this (or any) API.
+  router.put('/users/:id/permissions', manageUsers.middleware, async (req, res) => {
+    const permissions = req.body?.permissions
+    if (!Array.isArray(permissions) || permissions.some(p => typeof p !== 'string')) {
+      return res.status(400).json({ error: 'permissions must be an array of strings' })
+    }
+    const unknown = permissions.filter(p => !allPermissionKeys.includes(p))
+    if (unknown.length) return res.status(400).json({ error: `unknown permission key(s): ${unknown.join(', ')}` })
+
+    // Never let a save strip users:manage from the last active holder — see
+    // hasOtherActiveManager's comment on why that lockout can't be undone.
+    if (!permissions.includes('users:manage')) {
+      const current = await store.getUser(req.params.id)
+      const currentlyManages = current?.permissions?.includes('*') || current?.permissions?.includes('users:manage')
+      if (currentlyManages && !(await store.hasOtherActiveManager(req.params.id))) {
+        return res.status(400).json({ error: 'cannot remove users:manage from the only active user who holds it' })
+      }
+    }
+
+    // Raw (not expanded) — consistent with what GET /users already showed;
+    // the submitted list is already concrete anyway (validation above
+    // rejects '*'), so there's nothing for expandPermissions to do here.
+    const ok = await store.setPermissions(req.params.id, permissions)
+    if (!ok) return res.status(404).json({ error: 'not found' })
+    res.json(await store.getUser(req.params.id))
+  })
+
+  // Admin-editable profile — any subset of { first_name, last_name, phone, email }.
+  // Raw (not expanded) permissions in the response — same reasoning as above;
+  // this route never touches permissions, so echoing the expanded form would
+  // silently overwrite the client's view of a '*' grant with a concrete list.
+  router.patch('/users/:id', manageUsers.middleware, async (req, res) => {
+    const { first_name: firstName, last_name: lastName, phone, email } = req.body || {}
+    try {
+      const user = await store.updateProfile(req.params.id, { firstName, lastName, phone, email })
+      if (!user) return res.status(404).json({ error: 'not found' })
+      res.json(user)
+    } catch (err) {
+      // Postgres unique_violation on the email column — a clean 409, not a raw 500.
+      if (err.code === '23505') return res.status(409).json({ error: 'email already in use' })
+      res.status(400).json({ error: err.message })
+    }
+  })
+
+  // Login history — real logins only (see recordLogin's call site), newest first.
+  router.get('/users/:id/logins', manageUsers.middleware, async (req, res) => {
+    res.json(await store.listLogins(req.params.id))
   })
 
   function inviteUrl(token) {
@@ -247,7 +334,7 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     }
   }
 
-  router.post('/users/invite', adminAuth.middleware, requireAdmin, async (req, res) => {
+  router.post('/users/invite', manageUsers.middleware, async (req, res) => {
     if (!appUrl) return res.status(500).json({ error: 'oauth(): appUrl is not configured — cannot issue invites' })
     const email = req.body?.email
     if (!email) return res.status(400).json({ error: 'email is required' })
@@ -258,11 +345,11 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     res.status(201).json({ ...user, inviteUrl: url })
   })
 
-  router.get('/users', adminAuth.middleware, requireAdmin, async (req, res) => {
+  router.get('/users', manageUsers.middleware, async (req, res) => {
     res.json(await store.listUsers())
   })
 
-  router.post('/users/:id/resend-invite', adminAuth.middleware, requireAdmin, async (req, res) => {
+  router.post('/users/:id/resend-invite', manageUsers.middleware, async (req, res) => {
     if (!appUrl) return res.status(500).json({ error: 'oauth(): appUrl is not configured — cannot issue invites' })
     const invited = await store.regenerateInvite(req.params.id)
     if (!invited) return res.status(409).json({ error: 'user is not pending an invite' })
@@ -272,8 +359,8 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
     res.json({ ...user, inviteUrl: url })
   })
 
-  router.delete('/users/:id', adminAuth.middleware, requireAdmin, async (req, res) => {
-    if (req.params.id === req.user.id) return res.status(400).json({ error: 'cannot remove your own account' })
+  router.delete('/users/:id', manageUsers.middleware, async (req, res) => {
+    if (req.params.id === req.auth.sub) return res.status(400).json({ error: 'cannot remove your own account' })
     const removed = await store.deleteUser(req.params.id)
     if (!removed) return res.status(404).json({ error: 'not found' })
     res.status(204).send()
@@ -288,7 +375,11 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, adminScop
 
   router.post('/invite/:token/accept', async (req, res) => {
     try {
-      const ok = await users.completeInvite({ token: req.params.token, password: req.body?.password })
+      const { password, firstName, lastName, phone } = req.body || {}
+      const ok = await users.completeInvite({
+        token: req.params.token, password, firstName, lastName, phone,
+        defaultPermissions: defaultPermissionKeys,
+      })
       if (!ok) return res.status(400).json({ error: 'invalid or expired invite' })
       res.status(204).send()
     } catch (err) {

@@ -259,7 +259,7 @@ const explainCache = new Map()
 // report-state fingerprint → suggested questions (the compose "Try one:" chips).
 const suggestCache = new Map()
 
-export function mountComposition(app, { requireAuth, selector, awareness, passports, logger }) {
+export function mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger }) {
   const router = express.Router()
   const deps = { selector, awareness }
   const fail = (res, err, msg) => { logger.error({ err }, msg); res.status(500).json({ error: msg }) }
@@ -271,19 +271,19 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   }
 
   // ── reports ────────────────────────────────────────────────────────────────
-  router.get('/reports', requireAuth, async (req, res) => {
+  router.get('/reports', requireRead, async (req, res) => {
     try { res.json({ data: await store.listReports() }) }
     catch (err) { fail(res, err, 'list reports failed') }
   })
 
-  router.post('/reports', requireAuth, async (req, res) => {
+  router.post('/reports', requireWrite, async (req, res) => {
     const { name, layout } = req.body || {}
     if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name is required' })
     try { res.status(201).json(await store.createReport({ name, layout })) }
     catch (err) { fail(res, err, 'create report failed') }
   })
 
-  router.get('/reports/:id', requireAuth, async (req, res) => {
+  router.get('/reports/:id', requireRead, async (req, res) => {
     try {
       const report = await store.getReport(req.params.id)
       if (!report) return res.status(404).json({ error: 'report not found' })
@@ -291,7 +291,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
     } catch (err) { fail(res, err, 'get report failed') }
   })
 
-  router.patch('/reports/:id', requireAuth, async (req, res) => {
+  router.patch('/reports/:id', requireWrite, async (req, res) => {
     try {
       const row = await store.updateReport(req.params.id, req.body || {})
       if (!row) return res.status(404).json({ error: 'report not found' })
@@ -299,13 +299,13 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
     } catch (err) { fail(res, err, 'update report failed') }
   })
 
-  router.delete('/reports/:id', requireAuth, async (req, res) => {
+  router.delete('/reports/:id', requireWrite, async (req, res) => {
     try { res.json({ deleted: await store.deleteReport(req.params.id) }) }
     catch (err) { fail(res, err, 'delete report failed') }
   })
 
   // ── widgets ──────────────────────────────────────────────────────────────────
-  router.post('/reports/:id/widgets', requireAuth, async (req, res) => {
+  router.post('/reports/:id/widgets', requireWrite, async (req, res) => {
     const w = req.body || {}
     if (!KINDS.has(w.kind)) return res.status(400).json({ error: `kind must be one of ${[...KINDS].join(', ')}` })
     if (!w.query || typeof w.query !== 'object') return res.status(400).json({ error: 'query (object) is required' })
@@ -317,7 +317,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
     } catch (err) { fail(res, err, 'add widget failed') }
   })
 
-  router.patch('/widgets/:id', requireAuth, async (req, res) => {
+  router.patch('/widgets/:id', requireWrite, async (req, res) => {
     if (req.body?.kind && !KINDS.has(req.body.kind)) return res.status(400).json({ error: 'invalid kind' })
     try {
       // store.updateWidget nulls the summary when the query changes, so the next view
@@ -332,7 +332,10 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   // the Agent tab shows). Generated lazily on first request and persisted, so the AI
   // runs ONCE per query version — keeping add/compose/save fast. Re-runs only after a
   // query edit (which clears the stored summary).
-  router.post('/widgets/:id/summary', requireAuth, async (req, res) => {
+  // Read-gated despite internally caching the summary onto the widget row —
+  // that's an implementation detail (avoid re-asking the AI), not a
+  // user-facing write action; viewing a widget shouldn't need edit rights.
+  router.post('/widgets/:id/summary', requireRead, async (req, res) => {
     try {
       const w = await store.getWidget(req.params.id)
       if (!w) return res.status(404).json({ error: 'widget not found' })
@@ -343,13 +346,13 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
     } catch (err) { res.status(502).json({ error: `summary failed: ${err.message}` }) }
   })
 
-  router.delete('/widgets/:id', requireAuth, async (req, res) => {
+  router.delete('/widgets/:id', requireWrite, async (req, res) => {
     try { res.json({ deleted: await store.deleteWidget(req.params.id) }) }
     catch (err) { fail(res, err, 'delete widget failed') }
   })
 
   // Drag-to-reorder: body { order: [widgetId, …] } → sort follows the array.
-  router.patch('/reports/:id/reorder', requireAuth, async (req, res) => {
+  router.patch('/reports/:id/reorder', requireWrite, async (req, res) => {
     const order = req.body?.order
     if (!Array.isArray(order)) return res.status(400).json({ error: 'order (array of widget ids) is required' })
     try { await store.reorderWidgets(req.params.id, order); res.json({ ok: true }) }
@@ -357,7 +360,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   })
 
   // ── resolve ──────────────────────────────────────────────────────────────────
-  router.post('/resolve', requireAuth, async (req, res) => {
+  router.post('/resolve', requireRead, async (req, res) => {
     try {
       let data = await runQuery(deps, req.body || {})
       if (req.body?.kind === 'table') data = await enrichPeople(data, passports)   // live preview of a people table
@@ -365,7 +368,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
     } catch (err) { res.status(400).json({ error: err.message }) }
   })
 
-  router.post('/widgets/:id/resolve', requireAuth, async (req, res) => {
+  router.post('/widgets/:id/resolve', requireRead, async (req, res) => {
     try {
       const w = await store.getWidget(req.params.id)
       if (!w) return res.status(404).json({ error: 'widget not found' })
@@ -378,7 +381,9 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   // ── compose (the "just ask" loop) ─────────────────────────────────────────────
   // question → AI assembles widgets → persisted into a (draft) report → each
   // resolved so the board can render immediately.
-  router.post('/compose', requireAuth, async (req, res) => {
+  // write-gated: the "just ask" loop persists a (draft) report + widgets, not
+  // just a read — see analytics:write's catalog description.
+  router.post('/compose', requireWrite, async (req, res) => {
     const { question, report_id } = req.body || {}
     if (!question || typeof question !== 'string') return res.status(400).json({ error: 'question is required' })
     try {
@@ -411,7 +416,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   })
 
   // ── describe — query def → plain-language question (inverse of compose) ────────
-  router.post('/describe', requireAuth, async (req, res) => {
+  router.post('/describe', requireRead, async (req, res) => {
     try { res.json({ summary: await compose.describeQuery(req.body?.query || {}) }) }
     catch (err) { res.status(502).json({ error: `describe failed: ${err.message}` }) }
   })
@@ -419,7 +424,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   // ── explain — a widget's RESULT → a 1–2 sentence plain insight (the left column) ─
   // Stateless: the frontend posts the data it already rendered, so we don't re-resolve.
   // Cached by a result fingerprint → only regenerates when the data actually changes.
-  router.post('/explain', requireAuth, async (req, res) => {
+  router.post('/explain', requireRead, async (req, res) => {
     const { id, title, kind, data } = req.body || {}
     if (!kind || kind === 'answer') return res.json({ explanation: null })   // answers are already prose
     try {
@@ -441,7 +446,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   // person's facts + recent activity here, then the AI profiles them. Cached by
   // passport id (+ list context), bounded.
   const personCache = new Map()
-  router.post('/people/:id/insight', requireAuth, async (req, res) => {
+  router.post('/people/:id/insight', requireRead, async (req, res) => {
     const id = req.params.id
     const { context } = req.body || {}   // the client-sent label is ignored — `who` is derived server-side
     try {
@@ -463,7 +468,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   // name → just the data vocabulary. ?report_id scopes to that report's state; no
   // report_id → generic starters. Cached by report-state fingerprint. On any
   // failure we 200 with an empty list so the frontend keeps its static defaults.
-  router.get('/suggestions', requireAuth, async (req, res) => {
+  router.get('/suggestions', requireRead, async (req, res) => {
     try {
       let name = '', widgets = []
       if (req.query.report_id) {
@@ -486,7 +491,7 @@ export function mountComposition(app, { requireAuth, selector, awareness, passpo
   })
 
   // ── schema (debug — what the AI is grounded on) ───────────────────────────────
-  router.get('/schema', requireAuth, async (req, res) => {
+  router.get('/schema', requireRead, async (req, res) => {
     try { res.json(await compose.discoverSchema({ refresh: req.query.refresh === '1' })) }
     catch (err) { fail(res, err, 'schema discovery failed') }
   })

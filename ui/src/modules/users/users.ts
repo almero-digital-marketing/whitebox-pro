@@ -1,8 +1,8 @@
-// Thin client for server-plugin-oauth's admin-gated user-management routes.
+// Thin client for server-plugin-oauth's users:manage-gated management routes.
 // Calls go to /api/oauth/* (the dev proxy strips /api → the server's
-// /oauth/* surface). Auth is the logged-in user's session token — the
-// server re-checks is_admin on every request regardless of what this client
-// sends, so there's nothing role-shaped to configure here.
+// /oauth/* surface). Auth is the logged-in user's session token, scoped by
+// their granted permissions at login/refresh — see server-plugin-oauth's
+// README on why that's safe to trust without a per-request DB re-check.
 import { createClient } from '../../shell/apiClient'
 
 const req = createClient('/api/oauth')
@@ -12,4 +12,10 @@ export const usersClient = {
   invite: (email: string) => req('/users/invite', { method: 'POST', body: JSON.stringify({ email }) }),
   resendInvite: (id: string) => req(`/users/${id}/resend-invite`, { method: 'POST' }),
   remove: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
+  catalog: () => req('/permissions/catalog'),
+  setPermissions: (id: string, permissions: string[]) =>
+    req(`/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions }) }),
+  updateProfile: (id: string, fields: { first_name?: string; last_name?: string; phone?: string; email?: string }) =>
+    req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
+  logins: (id: string) => req(`/users/${id}/logins`),
 }

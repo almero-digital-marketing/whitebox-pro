@@ -43,8 +43,11 @@ const port = Number(process.env.WB_PORT || 3000)
 const APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'
 const OAUTH_ISSUER = `http://localhost:${port}/oauth`
 const OAUTH_AUDIENCE = 'https://whitebox/api'
-const SCOPE = 'app:use'
-const authVerifier = () => jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: SCOPE })
+// Each module gets its own read/write scope pair now — see each plugin's
+// `permissions` catalog entry below (analytics:read/write, audiences:read/write,
+// campaigns:read/write, users:manage) instead of one shared 'app:use'.
+const scopeAuth = (scope) => jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope })
+const readWriteAuth = (module) => ({ read: scopeAuth(`${module}:read`), write: scopeAuth(`${module}:write`) })
 
 const config = await loadConfig({ argv: process.argv, env: process.env })
 initLogger({ config })
@@ -74,31 +77,44 @@ const ctx = {
   context, mcp, plugins: {}, logger,
 }
 
-// Built-in OAuth server — registered first so its /oauth/* routes and JWKS are
-// live before anything else in this process might depend on them. No mail
-// plugin is wired in this dev server, so invite emails aren't actually sent —
-// the "invite" response's inviteUrl is shown in the UI to copy/share manually.
-const oauthPlugin = oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, adminScope: SCOPE, appUrl: APP_URL })
-await oauthPlugin.migrate(db.get())
-await oauthPlugin.register(app, ctx)
-
-const plugin = analytics({ auth: authVerifier() })
-await plugin.migrate(db.get())
-await plugin.register(app, ctx)
-
-// Audiences plugin — same session-token auth; no ad networks in dev (segments/resolve
-// don't need them). Gives the UI the /audiences/* surface (segments, rules).
-const audiencesPlugin = audiences({ auth: authVerifier(), networks: [] })
+// Audiences plugin registers first here (no dependency on oauth) — same
+// session-token auth; no ad networks in dev (segments/resolve don't need
+// them). Gives the UI the /audiences/* surface (segments, rules).
+const audiencesPlugin = audiences({ auth: readWriteAuth('audiences'), networks: [] })
 await audiencesPlugin.migrate(db.get())
 ctx.plugins.audiences = await audiencesPlugin.register(app, ctx)   // { service } — campaigns reuses it
 
-// Campaigns plugin — reuses the audiences service for resolution + consent. Register AFTER
-// audiences. Same session-token auth so the UI + Mikser authenticate the same way. `dryRun` is
-// the whitebox-config safety switch (default ON) — here it's read from WB_CAMPAIGNS_DRYRUN so it
-// can be toggled without code edits. This dev server has no mail/sms providers wired, so going
-// live (WB_CAMPAIGNS_DRYRUN=false) also needs a `deliver` hook that calls the mail/sms plugins.
+// Campaigns plugin — reuses the audiences service for resolution + consent, so its factory can
+// only be built once audiences has registered. `dryRun` is the whitebox-config safety switch
+// (default ON) — here it's read from WB_CAMPAIGNS_DRYRUN so it can be toggled without code edits.
+// This dev server has no mail/sms providers wired, so going live (WB_CAMPAIGNS_DRYRUN=false)
+// also needs a `deliver` hook that calls the mail/sms plugins.
 const campaignDryRun = process.env.WB_CAMPAIGNS_DRYRUN !== 'false'
-const campaignsPlugin = campaigns({ auth: authVerifier(), audiences: ctx.plugins.audiences.service, dryRun: campaignDryRun })
+const campaignsPlugin = campaigns({ auth: readWriteAuth('campaigns'), audiences: ctx.plugins.audiences.service, dryRun: campaignDryRun })
+
+const analyticsPlugin = analytics({ auth: readWriteAuth('analytics') })
+
+// No mail plugin is wired in this dev server, so invite emails aren't actually
+// sent — the "invite" response's inviteUrl is shown in the UI to copy/share
+// manually.
+const oauthPlugin = oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, appUrl: APP_URL })
+
+// Aggregate every plugin's declared permission catalog BEFORE oauth
+// registers (it reads ctx.permissions.catalog at register time) — mirrors
+// server/src/plugins.js's load() pre-pass, since this script sequences
+// migrate/register calls by hand instead of using that loader.
+ctx.permissions = {
+  catalog: [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin]
+    .filter(p => p.permissions)
+    .map(p => ({ module: p.name, ...p.permissions })),
+}
+
+await oauthPlugin.migrate(db.get())
+await oauthPlugin.register(app, ctx)
+
+await analyticsPlugin.migrate(db.get())
+await analyticsPlugin.register(app, ctx)
+
 await campaignsPlugin.migrate(db.get())
 await campaignsPlugin.register(app, ctx)
 

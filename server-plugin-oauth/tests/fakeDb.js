@@ -44,6 +44,18 @@ export function makeFakeDb() {
         async first() { return resolved()[0] || null },
         async update(patch) {
           const targets = applyFilters()
+          // whitebox_oauth_users.email is UNIQUE in the real schema — simulate that one
+          // real constraint (not a general knex mock) so a duplicate-email PATCH exercises
+          // the same 23505 path the route maps to a 409, instead of silently "succeeding".
+          if (name === 'whitebox_oauth_users' && patch.email) {
+            const targetIds = new Set(targets.map(r => r.id))
+            const conflict = rows(name).some(r => !targetIds.has(r.id) && r.email === patch.email)
+            if (conflict) {
+              const err = new Error(`duplicate key value violates unique constraint "whitebox_oauth_users_email_unique"`)
+              err.code = '23505'
+              throw err
+            }
+          }
           for (const r of targets) Object.assign(r, patch)
           return targets.length
         },

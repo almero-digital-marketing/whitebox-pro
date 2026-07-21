@@ -41,11 +41,11 @@ describe('users — password hashing (scrypt)', () => {
     await expect(users.createUser({ password: 'x' })).rejects.toThrow()
   })
 
-  it('createUser defaults is_admin to false, and persists true when set', async () => {
+  it('createUser defaults permissions to empty, and persists whatever is passed (e.g. the bootstrap "*" sentinel)', async () => {
     const normal = await users.createUser({ email: 'a@x.com', password: 'correct horse battery staple' })
-    expect(normal.is_admin).toBe(false)
-    const admin = await users.createUser({ email: 'b@x.com', password: 'correct horse battery staple', isAdmin: true })
-    expect(admin.is_admin).toBe(true)
+    expect(normal.permissions).toEqual([])
+    const admin = await users.createUser({ email: 'b@x.com', password: 'correct horse battery staple', permissions: ['*'] })
+    expect(admin.permissions).toEqual(['*'])
   })
 })
 
@@ -53,7 +53,7 @@ describe('users — invite-only registration', () => {
   function seedPendingUser(overrides = {}) {
     const row = {
       id: 'u1', email: 'invitee@example.com', password_hash: null, password_salt: null,
-      is_admin: false, invite_token: 'tok123', invite_expires_at: new Date(Date.now() + 60_000),
+      permissions: JSON.stringify([]), invite_token: 'tok123', invite_expires_at: new Date(Date.now() + 60_000),
       invited_at: new Date(), created_at: new Date(), ...overrides,
     }
     db._rows('whitebox_oauth_users').push(row)
@@ -81,6 +81,20 @@ describe('users — invite-only registration', () => {
 
     // Replaying the same token must fail — it was consumed, and the account is no longer pending.
     expect(await users.completeInvite({ token: 'tok123', password: 'another password entirely' })).toBe(false)
+  })
+
+  it('completeInvite seeds permissions from the materialized defaults snapshot passed in', async () => {
+    seedPendingUser()
+    await users.completeInvite({ token: 'tok123', password: 'correct horse battery staple', defaultPermissions: ['analytics:use'] })
+    const row = db._rows('whitebox_oauth_users').find(r => r.id === 'u1')
+    expect(JSON.parse(row.permissions)).toEqual(['analytics:use'])
+  })
+
+  it('completeInvite defaults permissions to empty when no defaultPermissions is given', async () => {
+    seedPendingUser()
+    await users.completeInvite({ token: 'tok123', password: 'correct horse battery staple' })
+    const row = db._rows('whitebox_oauth_users').find(r => r.id === 'u1')
+    expect(JSON.parse(row.permissions)).toEqual([])
   })
 
   it('completeInvite rejects an expired token', async () => {

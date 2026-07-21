@@ -29,7 +29,6 @@ import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
 const OAUTH_ISSUER = process.env.WB_OAUTH_ISSUER || 'http://localhost:3000/oauth'
 const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
 const OAUTH_APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'   // where the UI lives — invite links point here
-const OAUTH_ADMIN_SCOPE = 'admin:manage'
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos
@@ -130,14 +129,20 @@ export default async (runtime) => ({
 
     analytics({
       // The UI logs in through the built-in OAuth server (below) and calls every
-      // module — analytics, audiences, campaigns, the new Users module — with that
-      // same session token; one shared scope is enough since there's no per-module
-      // permission split yet (only the separate admin:manage scope the Users
-      // module's routes require). Swap for a static Bearer secret
-      // ({ secret: process.env.WB_ANALYTICS_TOKEN }) or auth0({ domain, audience,
-      // scope }) — every plugin's `auth` option works the same way, see
-      // docs/04-configuration.md.
-      auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'app:use' }),
+      // module with that same session token, but each module requires its OWN
+      // scope(s) — the user's actual granted permissions, computed server-side
+      // at login (see server-plugin-oauth's README on why the token's scope is
+      // never trusted from the client). `analytics:read`/`analytics:write` are
+      // this plugin's own catalog entries (both granted to every new user by
+      // default — see its index.js). `auth` splits independently-resolved
+      // verifiers per catalog key: `{ read, write }`, each accepting a static
+      // Bearer secret ({ secret: ... }), auth0({ domain, audience, scope }), or
+      // a bare jwt() like below — every plugin's `auth` option works the same
+      // way, see docs/04-configuration.md.
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:write' }),
+      },
     }),
 
     // Receives /conversions/events from the browser, records them, and (when a
@@ -249,14 +254,16 @@ export default async (runtime) => ({
     }),
 
     // Built-in OAuth 2.1 authorization server — the UI's login, invite-only
-    // registration, and admin user management. Mounts /authorize, /token,
-    // /.well-known/jwks.json and /.well-known/oauth-authorization-server at
-    // OAUTH_ISSUER's own path. `adminScope` gates the Users module's
-    // invite/list/remove routes (a single is_admin flag, no role system —
-    // see the package's README). `appUrl` is where invite emails link to.
-    // Bootstrap the first user + the UI's OAuth client with the package's
-    // create-admin.mjs / create-client.mjs CLI scripts (see its README);
-    // remove this block entirely to fall back to Auth0 or a static token.
-    oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, adminScope: OAUTH_ADMIN_SCOPE, appUrl: OAUTH_APP_URL }),
+    // registration, and per-module permission management. Mounts /authorize,
+    // /token, /.well-known/jwks.json and /.well-known/oauth-authorization-server
+    // at OAUTH_ISSUER's own path. Declares its own `users:manage` permission
+    // (gating the Users module's invite/list/remove/permissions routes) into
+    // the same catalog every other plugin contributes to — see the package's
+    // README. `appUrl` is where invite emails link to. Bootstrap the first
+    // user (granted every permission via the '*' sentinel) + the UI's OAuth
+    // client with the package's create-admin.mjs / create-client.mjs CLI
+    // scripts (see its README); remove this block entirely to fall back to
+    // Auth0 or a static token.
+    oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, appUrl: OAUTH_APP_URL }),
   ].filter(Boolean),
 })

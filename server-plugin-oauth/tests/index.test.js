@@ -17,6 +17,14 @@ describe('oauth() — config validation + basePath derivation', () => {
     expect(typeof plugin.register).toBe('function')
   })
 
+  it('declares its own users:manage permission catalog entry, with no default grant', () => {
+    const plugin = oauth({ issuer: 'http://x/oauth', audience: 'a' })
+    expect(plugin.permissions.items).toEqual([
+      { key: 'users:manage', label: 'Manage users & permissions', description: 'Invite, remove, and set permissions for teammates' },
+    ])
+    expect(plugin.permissions.defaults).toEqual([])
+  })
+
   it('basePath is derived from issuer\'s own path, never separately configurable — a mismatch between the two is architecturally impossible', () => {
     // Indirect check: register() must not throw when mounting at whatever
     // path issuer implies, for any of these issuer shapes.

@@ -7,6 +7,14 @@ import logger from './logger.js'
 // loader just runs each one in order. (No dynamic name → package resolution —
 // the config file's `import` statements are the explicit, checkable manifest.)
 async function load(app, ctx) {
+  // Pre-pass: aggregate every plugin's declared permission catalog BEFORE
+  // any register() runs, so it's available to all of them regardless of
+  // load order (e.g. oauth's own register() needs analytics/audiences/
+  // campaigns' entries even if oauth is registered first). A plugin's
+  // `permissions` is a static field on its factory's return value — no
+  // register() call needed to read it.
+  ctx.permissions = { catalog: ctx.config.plugins.filter(p => p?.permissions).map(p => ({ module: p.name, ...p.permissions })) }
+
   for (const plugin of ctx.config.plugins) {
     if (!plugin || typeof plugin.register !== 'function') {
       throw new Error(`Invalid entry in config.plugins — expected a plugin factory result { name, register }, got ${typeof plugin}. Did you forget to call the factory, e.g. engagement({ ... })?`)

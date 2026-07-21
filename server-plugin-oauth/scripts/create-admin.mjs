@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// Bootstrap the first admin user — the only way to get one, since regular
-// (non-admin) users are created through the invite flow once an admin
-// exists, and only an admin can send invites.
+// Bootstrap the first user, granted permissions: ['*'] — the reserved
+// sentinel meaning "every permission that exists, including ones added
+// later." This is the only place that sentinel is ever set: there's no
+// admin yet to grant `users:manage` to a fresh install's first account, so
+// this script is the one bootstrapping escape hatch. Every subsequent user
+// comes through the invite flow, and only someone holding `users:manage`
+// can send an invite.
 //
 //   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=... node scripts/create-admin.mjs
 //   node scripts/create-admin.mjs                 # prompts for both instead
@@ -30,7 +34,7 @@ async function main() {
   const db = await connect()
   users.init({ db })
   try {
-    const user = await users.createUser({ email, password, isAdmin: true })
+    const user = await users.createUser({ email, password, permissions: ['*'] })
     console.log(`Created admin ${user.email} (${user.id})`)
   } finally {
     await db.destroy()

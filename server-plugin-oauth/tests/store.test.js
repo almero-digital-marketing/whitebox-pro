@@ -53,12 +53,12 @@ describe('store — refresh tokens (rotation)', () => {
   })
 })
 
-describe('store — users (invites, no role system)', () => {
-  it('createInvite makes a pending user (no password) with a live token', async () => {
+describe('store — users (invites, per-module permission grants)', () => {
+  it('createInvite makes a pending user (no password) with a live token and no permissions yet', async () => {
     const invited = await store.createInvite({ email: 'new@example.com' })
     expect(invited.email).toBe('new@example.com')
     expect(invited.invite_token).toBeTruthy()
-    expect(invited.is_admin).toBe(false)
+    expect(invited.permissions).toEqual([])
     const row = db._rows('whitebox_oauth_users').find(r => r.id === invited.id)
     expect(row.password_hash).toBeFalsy()
   })
@@ -67,7 +67,7 @@ describe('store — users (invites, no role system)', () => {
     await store.createInvite({ email: 'pending@example.com' })
     db._rows('whitebox_oauth_users').push({
       id: 'u-active', email: 'active@example.com', password_hash: 'h', password_salt: 's',
-      is_admin: false, created_at: new Date(),
+      permissions: JSON.stringify([]), created_at: new Date(),
     })
     const list = await store.listUsers()
     expect(list.find(u => u.email === 'pending@example.com').active).toBe(false)
@@ -84,7 +84,7 @@ describe('store — users (invites, no role system)', () => {
 
     db._rows('whitebox_oauth_users').push({
       id: 'u-active2', email: 'already@example.com', password_hash: 'h', password_salt: 's',
-      is_admin: false, created_at: new Date(),
+      permissions: JSON.stringify([]), created_at: new Date(),
     })
     expect(await store.regenerateInvite('u-active2')).toBeNull()   // not pending — nothing to resend
   })
@@ -94,5 +94,45 @@ describe('store — users (invites, no role system)', () => {
     expect(await store.deleteUser(invited.id)).toBe(true)
     expect(await store.getUser(invited.id)).toBeFalsy()
     expect(await store.deleteUser(invited.id)).toBe(false)   // already gone
+  })
+
+  it('setPermissions replaces a user\'s grant set wholesale', async () => {
+    const invited = await store.createInvite({ email: 'grantee@example.com' })
+    expect(await store.setPermissions(invited.id, ['analytics:use', 'audiences:use'])).toBe(true)
+    expect((await store.getUser(invited.id)).permissions).toEqual(['analytics:use', 'audiences:use'])
+    expect(await store.setPermissions(invited.id, ['analytics:use'])).toBe(true)   // overwrites, doesn't merge
+    expect((await store.getUser(invited.id)).permissions).toEqual(['analytics:use'])
+  })
+
+  it('setPermissions on an unknown id reports failure', async () => {
+    expect(await store.setPermissions('does-not-exist', ['analytics:use'])).toBe(false)
+  })
+
+  it('hasOtherActiveManager only counts ACTIVE users:manage/"*" holders, excluding the given id', async () => {
+    db._rows('whitebox_oauth_users').push(
+      { id: 'u-solo', email: 'solo@example.com', password_hash: 'h', password_salt: 's', permissions: JSON.stringify(['users:manage']), created_at: new Date() },
+      // a pending invite holding users:manage doesn't count — they can't log in yet
+      { id: 'u-pending', email: 'pending-mgr@example.com', password_hash: null, permissions: JSON.stringify(['users:manage']), created_at: new Date() },
+      // an active user with no relevant permission doesn't count either
+      { id: 'u-other', email: 'other@example.com', password_hash: 'h', password_salt: 's', permissions: JSON.stringify(['analytics:use']), created_at: new Date() },
+    )
+    expect(await store.hasOtherActiveManager('u-solo')).toBe(false)
+
+    db._rows('whitebox_oauth_users').push(
+      { id: 'u-wildcard', email: 'wildcard@example.com', password_hash: 'h', password_salt: 's', permissions: JSON.stringify(['*']), created_at: new Date() },
+    )
+    expect(await store.hasOtherActiveManager('u-solo')).toBe(true)   // '*' counts too
+    expect(await store.hasOtherActiveManager('u-wildcard')).toBe(true)   // u-solo still counts
+  })
+})
+
+describe('store — expandPermissions (the "*" bootstrap sentinel)', () => {
+  it('a concrete grant list passes through unchanged', () => {
+    expect(store.expandPermissions(['analytics:use'], ['analytics:use', 'audiences:use', 'users:manage'])).toEqual(['analytics:use'])
+  })
+
+  it('"*" expands to every key in the current catalog', () => {
+    const allKeys = ['analytics:use', 'audiences:use', 'campaigns:use', 'users:manage']
+    expect(store.expandPermissions(['*'], allKeys)).toEqual(allKeys)
   })
 })

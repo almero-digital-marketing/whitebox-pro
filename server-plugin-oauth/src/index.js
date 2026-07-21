@@ -28,7 +28,7 @@ import { mountRoutes } from './routes.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function oauth(options = {}) {
-  const { issuer, audience, adminScope = 'admin:manage', appUrl, fromEmail } = options
+  const { issuer, audience, appUrl, fromEmail } = options
   if (!issuer) throw new Error('oauth(): issuer is required, e.g. "http://localhost:3000/oauth"')
   if (!audience) throw new Error('oauth(): audience is required — the value every issued token\'s aud claim carries')
 
@@ -41,6 +41,16 @@ export function oauth(options = {}) {
 
   return {
     name: 'oauth',
+
+    // This plugin's own entry in the aggregated permission catalog (see
+    // server/src/plugins.js) — managing users & permissions is just another
+    // module capability now, not a special is_admin flag. Never a default:
+    // the only way to hold it is an explicit grant, or the '*' bootstrap
+    // sentinel scripts/create-admin.mjs sets for the very first user.
+    permissions: {
+      items: [{ key: 'users:manage', label: 'Manage users & permissions', description: 'Invite, remove, and set permissions for teammates' }],
+      defaults: [],
+    },
 
     async migrate(db) {
       await db.migrate.latest({
@@ -61,7 +71,10 @@ export function oauth(options = {}) {
       // after oauth) — mirrors server-plugin-mail's own getShortener.
       const getMail = () => ctx.plugins?.mail?.service
 
-      mountRoutes(app, { basePath, issuer, audience, logger, adminScope, appUrl, fromEmail, getMail })
+      mountRoutes(app, {
+        basePath, issuer, audience, logger, appUrl, fromEmail, getMail,
+        permissionsCatalog: ctx.permissions?.catalog || [],
+      })
 
       logger.info('Built-in OAuth 2.1 authorization server ready at %s', basePath)
     },

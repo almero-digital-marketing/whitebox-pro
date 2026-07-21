@@ -78,19 +78,54 @@ export function voip(options = {}) {
 
       app.use('/voip/records', express.static(recordsFolder))
 
-      // Inbound-call ingestion WITHOUT a PBX: a telephony provider (or the demo's
-      // "simulate call") POSTs a completed call here. We resolve the dialed
-      // company number to the visitor holding it and record a voip exposure — the
-      // same shape ARI produces. (With a PBX, ARI does this automatically.)
+      // Call ingestion WITHOUT a PBX: a telephony provider/dialer (or the demo's
+      // "simulate call") POSTs a completed call here — WhiteBox stays an observer
+      // either way (the PBX/dialer decides who to call and when; we just record
+      // what happened, same as ARI does automatically when there IS a PBX).
+      //
+      // `direction` distinguishes the two scenarios:
+      //   'inbound'  (default) — the customer dialed one of OUR tracked numbers,
+      //              so `number` is looked up in the DNI pool to find who's holding it.
+      //   'outbound' — WE called the customer, so `number` is THEIR real phone —
+      //              not something the pool tracks. Resolve/create their passport by
+      //              phone identity instead, the exact same strong-identity link
+      //              ari.js's own live inbound path already falls back to for an
+      //              anonymous caller with no live web session (STRONG identities
+      //              non-destructively merge into whatever passport already holds
+      //              that phone — see server/src/passports.js).
       app.post('/voip/calls', async (req, res) => {
-        const { number, caller = null, transcription = '', duration = null, ts } = req.body || {}
+        const { number, caller = null, transcription = '', duration = null, ts, direction = 'inbound' } = req.body || {}
         if (!number) return res.status(400).json({ error: 'number is required' })
-        const holder = pool.findByNumber(number)
-        if (!holder?.passportId) return res.status(202).json({ reason: 'no_visitor_for_number' })
+
+        let passportId, sessionId, tag
+        if (direction === 'outbound') {
+          let recipient
+          try {
+            recipient = phonebook.toE164(number, voipConfig.country)
+          } catch (err) {
+            logger.error({ err, number }, 'voip call ingest: failed to parse outbound recipient number')
+            return res.status(400).json({ error: 'could not parse number' })
+          }
+          try {
+            passportId = await passports.identify(null)
+            await passports.link(passportId, [{ type: 'phone', name: 'e164', value: recipient }])
+          } catch (err) {
+            logger.warn({ err }, 'Failed to identify/link outbound call recipient: %s', recipient)
+          }
+          const session = passportId ? await sessions.resolve(passportId).catch(() => null) : null
+          sessionId = session?.id || null
+        } else {
+          const holder = pool.findByNumber(number)
+          if (!holder?.passportId) return res.status(202).json({ reason: 'no_visitor_for_number' })
+          passportId = holder.passportId
+          sessionId = holder.sessionId
+          tag = holder.tag
+        }
+
         try {
           await awareness.record({
-            passport_id: holder.passportId,
-            session_id:  holder.sessionId,
+            passport_id: passportId,
+            session_id:  sessionId,
             ts:          ts ? new Date(ts) : new Date(),
             channel:     'voip',
             direction:   'conversation',
@@ -98,9 +133,9 @@ export function voip(options = {}) {
             content_id:  `call:webhook:${number}:${ts || Date.now()}`,
             text:        transcription || '(call connected, no transcript)',
             dwell_ms:    duration ? duration * 1000 : null,
-            meta: { caller, line: number, tag: holder.tag, via: 'webhook' },
+            meta: { caller, line: number, tag, via: 'webhook', call_direction: direction },
           })
-          res.json({ passport_id: holder.passportId, recorded: true })
+          res.json({ passport_id: passportId, recorded: true })
         } catch (err) {
           logger.error({ err }, 'voip call ingest failed')
           res.status(500).json({ error: 'voip call ingest failed' })
