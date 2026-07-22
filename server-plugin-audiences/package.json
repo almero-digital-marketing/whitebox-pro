@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-audiences",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhiteBox server — AI audience plugin. Builds ad-network audiences by reasoning over per-passport awareness against declarative rules, and reports custom events (Mode A) to Meta, TikTok and Google (GA4).",
   "type": "module",
   "main": "./src/index.js",

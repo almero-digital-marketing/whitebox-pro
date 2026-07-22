@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Whitebox backend core — HTTP server, awareness, passports, sessions, plugin loader. Channels (mail, voip, crm, engagement, analytics) ship as separate whitebox-pro-server-plugin-* packages.",
   "type": "module",
   "main": "src/server.js",
