@@ -28,6 +28,7 @@ onMounted(async () => {
       <img src="/logo.svg" alt="WhiteBox" width="36" height="36" />
       <h1>Sign in</h1>
       <p v-if="route.query.error" class="err">Incorrect email or password.</p>
+      <p v-else-if="route.query.created" class="ok">Admin account created — log in below.</p>
 
       <input v-for="(v, k) in fields" :key="k" type="hidden" :name="k" :value="v" />
       <input type="email" name="email" placeholder="Email" required autofocus class="field" />
@@ -45,6 +46,7 @@ onMounted(async () => {
 }
 .login-card h1 { font-size: 17px; margin: 0 0 6px; color: var(--text-strong); }
 .err { color: var(--danger); font-size: 13px; margin: -4px 0 4px; }
+.ok { color: var(--accent); font-size: 13px; margin: -4px 0 4px; }
 .field {
   width: 100%; padding: 9px 10px; border: 1px solid var(--border-2); border-radius: 8px;
   font-size: 14px; background: var(--panel); color: var(--text);

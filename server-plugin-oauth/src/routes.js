@@ -311,6 +311,23 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
     }
   })
 
+  // Self-service password change — gated by anyAuth (any valid token, not
+  // users:manage) since this is a "manage MYSELF" action, unrelated to
+  // whatever other permissions the caller holds. Still hard-restricted to
+  // your OWN account regardless: :id must match the token's own subject, so
+  // there's no way for this route to become an admin-resets-anyone's-
+  // password path even by URL manipulation.
+  router.patch('/users/:id/password', anyAuth.middleware, async (req, res) => {
+    if (req.params.id !== req.auth.sub) return res.status(403).json({ error: 'can only change your own password' })
+    try {
+      const { currentPassword, newPassword } = req.body || {}
+      await users.changePassword({ id: req.params.id, currentPassword, newPassword })
+      res.status(204).send()
+    } catch (err) {
+      res.status(400).json({ error: err.message })
+    }
+  })
+
   // Login history — real logins only (see recordLogin's call site), newest first.
   router.get('/users/:id/logins', manageUsers.middleware, async (req, res) => {
     res.json(await store.listLogins(req.params.id))
@@ -386,6 +403,42 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
       res.status(400).json({ error: err.message })
     }
   })
+
+  // ── /setup (public — a THIRD bootstrap path alongside scripts/create-admin.mjs
+  // and index.js's own ADMIN_EMAIL/ADMIN_PASSWORD auto-bootstrap on boot, for
+  // when neither of those ran: the UI itself asks for the first admin's email
+  // + password instead of requiring shell access. Same gate as the other two —
+  // store.hasAnyUser() must be false — so it's a no-op the instant any user
+  // exists, admin or not, closing the window the moment either of the other
+  // two paths (or a previous /setup submission) has already run. ──
+  router.get('/setup-required', async (req, res) => {
+    res.json({ required: !(await store.hasAnyUser()) })
+  })
+
+  router.post('/setup', async (req, res) => {
+    if (await store.hasAnyUser()) return res.status(409).json({ error: 'setup already completed' })
+    const { email, password } = req.body || {}
+    if (!email || !password) return res.status(400).json({ error: 'email and password are required' })
+    if (password.length < 12) return res.status(400).json({ error: 'password must be at least 12 characters' })
+    const admin = await users.createUser({ email, password, permissions: ['*'] })
+    res.status(201).json({ id: admin.id, email: admin.email })
+  })
+
+  // Alias bare /authorize and /token to this basePath's real routes. Some
+  // OAuth clients (confirmed: the `claude mcp login` CLI) resolve the
+  // issuer's discovery URLs with an absolute-path join — new URL('/token', issuer)
+  // — which replaces the issuer's path instead of extending it, so they call
+  // bare /authorize and /token instead of e.g. /oauth/authorize and /oauth/token.
+  // Must be registered BEFORE the router below: Express only checks a given
+  // layer's path against req.url once, when the stack walk reaches that layer,
+  // so rewriting req.url here only takes effect on layers still ahead of it.
+  // Harmless when basePath is already '/'; only matters for nested basePaths.
+  if (basePath !== '/') {
+    app.use((req, res, next) => {
+      if (req.path === '/authorize' || req.path === '/token') req.url = basePath + req.url
+      next()
+    })
+  }
 
   app.use(basePath, router)
 }

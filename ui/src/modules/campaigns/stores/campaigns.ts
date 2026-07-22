@@ -4,13 +4,14 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { campaignsClient as client } from '../campaigns'
 import { api as analyticsApi } from '../../analytics/api'
+import { notifyError } from '../../../shell/toast'
 
 export const useCampaignsStore = defineStore('campaigns', () => {
   const campaigns = ref<any[]>([])   // light list rows (no audiences); getCampaign() returns the full one
   const error = ref('')
 
   async function loadCampaigns() {
-    try { campaigns.value = await client.list() } catch (e: any) { error.value = e.message }
+    try { campaigns.value = await client.list() } catch (e: any) { error.value = e.message; notifyError(`Couldn't load campaigns: ${e.message}`) }
   }
   const getCampaign = (id: string) => client.get(id)
 

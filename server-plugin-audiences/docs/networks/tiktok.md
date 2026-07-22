@@ -46,7 +46,8 @@ A successful response has `code: 0`.
 ## Create the audience (one-time)
 
 Ads Manager → Assets → Audiences → Custom Audience → from your event activity (or engagement) →
-choose `wb_enterprise_ready` → set the retention window (≥ `keepWarmDays`).
+choose `wb_enterprise_ready` → set the retention window generously (there's no automatic re-fire in this
+plugin — see [05 · Networks](../05-networks.md)).
 
 ## Gotchas
 

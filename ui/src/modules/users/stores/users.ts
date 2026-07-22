@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { usersClient as client } from '../users'
+import { notifyError } from '../../../shell/toast'
 
 export const useUsersStore = defineStore('users', () => {
   const users = ref<any[]>([])
@@ -11,15 +12,16 @@ export const useUsersStore = defineStore('users', () => {
   const error = ref('')
 
   async function loadUsers() {
-    try { users.value = await client.list() } catch (e: any) { error.value = e.message }
+    try { users.value = await client.list() } catch (e: any) { error.value = e.message; notifyError(`Couldn't load users: ${e.message}`) }
   }
 
   async function loadCatalog() {
-    try { catalog.value = await client.catalog() } catch (e: any) { error.value = e.message }
+    try { catalog.value = await client.catalog() } catch (e: any) { error.value = e.message; notifyError(`Couldn't load the permissions catalog: ${e.message}`) }
   }
 
   async function loadLogins(id: string) {
-    try { logins.value = await client.logins(id) } catch (e: any) { error.value = e.message }
+    logins.value = []   // clear the previous user's rows so a failure below can't leave them showing under this one
+    try { logins.value = await client.logins(id) } catch (e: any) { error.value = e.message; notifyError(`Couldn't load login history: ${e.message}`) }
   }
 
   function upsertLocal(row: any) {
@@ -53,6 +55,13 @@ export const useUsersStore = defineStore('users', () => {
     upsertLocal(row)
     return row
   }
+  // No row to upsert — password isn't part of a user's displayed profile.
+  async function changePassword(id: string, currentPassword: string, newPassword: string) {
+    await client.changePassword(id, currentPassword, newPassword)
+  }
 
-  return { users, catalog, logins, error, loadUsers, loadCatalog, loadLogins, inviteUser, resendInvite, removeUser, setPermissions, updateProfile }
+  return {
+    users, catalog, logins, error,
+    loadUsers, loadCatalog, loadLogins, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
+  }
 })

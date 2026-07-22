@@ -2,9 +2,6 @@
 
 let db
 
-const RULES = 'whitebox_audience_rules'
-const MATCHES = 'whitebox_audience_matches'
-const DELIVERIES = 'whitebox_audience_deliveries'
 const SUPPRESSION = 'whitebox_audience_suppression'
 const IDENTITIES = 'whitebox_audience_identities'
 const SEGMENTS = 'whitebox_audience_segments'
@@ -42,43 +39,6 @@ export async function updateAudience(id, fields) {
   return row
 }
 export const deleteAudience = id => db(AUDIENCES).where({ id }).del()
-
-// --- rules ---
-export const listRules = () => db(RULES).orderBy('id')
-export const getRule = id => db(RULES).where({ id }).first()
-export async function upsertRule(rule) {
-  const [row] = await db(RULES).insert(rule).onConflict('id').merge({ ...rule, updated_at: db.fn.now() }).returning('*')
-  return row
-}
-export const deleteRule = id => db(RULES).where({ id }).del()
-export const enabledRules = () => db(RULES).where({ enabled: true })
-
-// --- matches (qualification + fire records) ---
-export const getMatch = (ruleId, passportId) => db(MATCHES).where({ rule_id: ruleId, passport_id: passportId }).first()
-export async function upsertMatch(m) {
-  const [row] = await db(MATCHES).insert(m)
-    .onConflict(['rule_id', 'passport_id']).merge({ ...m, last_evaluated_at: db.fn.now() }).returning('*')
-  return row
-}
-export const ruleMatches = (ruleId, { qualified = true, limit = 50, offset = 0 } = {}) =>
-  db(MATCHES).where({ rule_id: ruleId, qualified }).orderBy('last_evaluated_at', 'desc').limit(limit).offset(offset)
-export const ruleMatchCount = (ruleId, qualified = true) =>
-  db(MATCHES).where({ rule_id: ruleId, qualified }).count('* as n').first()
-export const passportMatches = passportId =>
-  db(MATCHES).where({ passport_id: passportId, qualified: true })
-// matches due for a keep-warm re-fire (last_fired older than cutoff, still qualified)
-export const dueForRefire = (ruleId, cutoff) =>
-  db(MATCHES).where({ rule_id: ruleId, qualified: true }).andWhere(b => b.whereNull('last_fired_at').orWhere('last_fired_at', '<', cutoff))
-
-// --- deliveries (audit) ---
-export const insertDelivery = d => db(DELIVERIES).insert(d)
-export const listDeliveries = ({ ruleId, network, status, limit = 50, offset = 0 } = {}) => {
-  let q = db(DELIVERIES).orderBy('created_at', 'desc').limit(limit).offset(offset)
-  if (ruleId) q = q.where({ rule_id: ruleId })
-  if (network) q = q.where({ network })
-  if (status) q = q.where({ status })
-  return q
-}
 
 // --- suppression ---
 export const isSuppressed = async passportId => !!(await db(SUPPRESSION).where({ passport_id: passportId }).first())

@@ -9,7 +9,7 @@ import { api } from '../api'
 import { useAudiencesStore } from '../stores/audiences'
 
 const props = defineProps<{ widget: any; state: any; selected?: boolean }>()
-const emit = defineEmits(['remove', 'select'])
+const emit = defineEmits(['remove', 'select', 'deselect'])
 
 // segments are created here but live in the shared audiences store (consumed by the
 // Audiences/Campaigns modules), so preview + save go through it, not a bare client.
@@ -231,12 +231,20 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
         <h3 class="title">{{ widget.title }}</h3>
         <p v-if="querySummary" class="subtitle">{{ querySummary }}</p>
       </div>
-      <!-- explicit Edit (opens the Query editor) + Remove; revealed on header hover -->
-      <div class="actions" @click.stop>
-        <Button label="Edit" icon="pi pi-pencil" text size="small" severity="secondary"
-          aria-label="Edit query" title="Edit query" @click="emit('select', widget.id)" />
-        <Button label="Remove" icon="pi pi-trash" text size="small" severity="secondary"
-          aria-label="Remove widget" title="Remove widget" @click="emit('remove', widget.id)" />
+      <!-- Edit/Remove, revealed on header hover — swapped for an always-visible Cancel
+           in the same spot while this card is the one being edited, so backing out of an
+           edit never depends on hovering back over the card you're already looking away from. -->
+      <div class="actions" :class="{ persistent: selected }" @click.stop>
+        <template v-if="selected">
+          <Button label="Cancel" icon="pi pi-times" text size="small" severity="secondary"
+            aria-label="Cancel edit" title="Cancel edit" @click="emit('deselect')" />
+        </template>
+        <template v-else>
+          <Button label="Edit" icon="pi pi-pencil" text size="small" severity="secondary"
+            aria-label="Edit query" title="Edit query" @click="emit('select', widget.id)" />
+          <Button label="Remove" icon="pi pi-trash" text size="small" severity="secondary"
+            aria-label="Remove widget" title="Remove widget" @click="emit('remove', widget.id)" />
+        </template>
       </div>
     </div>
 
@@ -271,7 +279,7 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
           <template v-if="pendingSegment">
             <template v-if="wholeCohort">
               <div v-if="pendingSegment.saved" class="seg-done"><i class="pi pi-check" /> Saved to segments</div>
-              <Button v-else label="Save segment" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
+              <Button v-else label="Save segment" icon="pi pi-check" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
               <p v-if="pendingSegment.error" class="seg-err">{{ pendingSegment.error }}</p>
             </template>
             <template v-else>
@@ -279,7 +287,7 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
               <div class="seg-size">{{ pendingSegment.size != null ? `~${pendingSegment.size.toLocaleString()} people` : (pendingSegment.sizing ? 'sizing…' : 'size unavailable') }}</div>
               <div v-if="pendingSegment.saved" class="seg-done"><i class="pi pi-check" /> Saved to segments</div>
               <div v-else class="seg-actions">
-                <Button label="Save segment" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
+                <Button label="Save segment" icon="pi pi-check" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
                 <button type="button" class="seg-dismiss" @click="dismissSegment">Dismiss</button>
               </div>
               <p v-if="pendingSegment.error" class="seg-err">{{ pendingSegment.error }}</p>
@@ -376,14 +384,18 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
 /* container-type: inline-size → each card queries its OWN width (which depends on the
    board's column count + whether the compose pane is open, not the viewport), so a
    narrow card can stack its insight/segment columns below the content. See @container below. */
-.card { position: relative; background: transparent; border-radius: 10px; display: flex; flex-direction: column; cursor: pointer; container-type: inline-size; }
-.card.selected { outline: 1.5px solid var(--border-2); outline-offset: 8px; border-radius: 6px; }   /* a light border, no fill */
+/* padding is ALWAYS on, selected or not — .doc's gap is shrunk by the same amount (see
+   Board.vue) so the two add up to the same visual spacing as before. That's what lets
+   selection just toggle a background: the breathing room already exists either way, so
+   nothing about the card's box (and therefore its content) ever moves when you select it. */
+.card { position: relative; background: transparent; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; cursor: pointer; container-type: inline-size; }
+.card.selected { background: var(--accent-soft); }
 /* header row: title/subtitle + actions, vertically centred */
 .card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
 /* the title is a standard heading; it doubles as the drag handle and wraps in full */
 .card-head { flex: 1 1 auto; min-width: 0; cursor: grab; }
 .card-head:active { cursor: grabbing; }
-.title { margin: 0; font-weight: 650; font-size: 15px; line-height: 1.3; color: var(--text-strong); word-break: break-word; }
+.title { margin: 0; font-weight: 650; font-size: 16px; line-height: 1.3; color: var(--text-strong); word-break: break-word; }
 /* query summary — what the widget actually measures, in plain language */
 .subtitle { margin: 3px 0 0; font-size: 11.5px; font-weight: 400; line-height: 1.35; color: var(--muted); word-break: break-word; }
 
@@ -392,6 +404,8 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
 /* reveal on header-row hover; the .actions:hover bridge keeps them reachable as the
    pointer moves onto the buttons. */
 .card-top:hover .actions, .actions:hover { opacity: 1; pointer-events: auto; }
+/* Cancel stays visible for as long as this card is the one being edited — not hover-gated */
+.actions.persistent { opacity: 1; pointer-events: auto; }
 
 /* two-column: AI insight on the left (~1/3), the result on the right (~2/3) */
 .card-main { display: flex; gap: 24px; align-items: flex-start; }

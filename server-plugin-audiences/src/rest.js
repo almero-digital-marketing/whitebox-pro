@@ -4,12 +4,8 @@
 // which index.js already ran this through). Full reference: docs/09-api.md.
 //
 // The split is by MUTATION, not HTTP verb — several POST routes here are
-// previews/name-suggestions/dry-run-by-default that never persist anything
-// (segments/preview, audiences/preview, rules/:id/preview, draft, …) and stay
-// read-gated; conversely rules/:id/evaluate and passports/:pid/evaluate are
-// POST-and-`dryRun`-flag-named but ALWAYS persist match rows via
-// store.upsertMatch (dryRun only controls whether the ad-network side effect
-// fires), so both are write-gated.
+// previews/name-suggestions that never persist anything (segments/preview,
+// audiences/preview, audiences/:id/delivery/preview, …) and stay read-gated.
 
 export function register(app, { service, requireRead, requireWrite }) {
   const read  = (method, path, fn) => app[method](`/audiences${path}`, requireRead,  wrap(fn))
@@ -53,21 +49,7 @@ export function register(app, { service, requireRead, requireWrite }) {
   write('post',  '/audiences/:id/client-side', async (req) => service.setClientSide(req.params.id, !!req.body?.enabled))
   write('post',  '/audiences/:id/campaigns', async (req) => service.setCampaigns(req.params.id, !!req.body?.enabled))
 
-  // rules
-  read('get',    '/rules',          async (req) => service.listRules())
-  write('post',  '/rules',          async (req) => service.saveRule(req.body, req.get('x-actor')))
-  read('get',    '/rules/:id',      async (req) => service.getRule(req.params.id))
-  write('patch', '/rules/:id',      async (req) => service.saveRule({ ...(await service.getRule(req.params.id)), ...req.body, id: req.params.id }, req.get('x-actor')))
-  write('delete', '/rules/:id',      async (req) => ({ deleted: await service.deleteRule(req.params.id) }))
-  read('post',   '/rules/:id/preview',  async (req) => service.preview(req.params.id, { sample: req.body?.sample }))
-  // persists match rows regardless of dryRun (see file-header note) — write-gated
-  write('post',  '/rules/:id/evaluate', async (req) => service.evaluateRule(req.params.id, { dryRun: req.body?.dryRun !== false }))
-  read('get',    '/rules/:id/members',  async (req) => service.members(req.params.id, { limit: +req.query.limit || 50, offset: +req.query.offset || 0 }))
-  read('get',    '/rules/:id/stats',    async (req) => service.stats(req.params.id))
-
   // passports
-  read('get',    '/passports/:pid/segments', async (req) => service.passportSegments(req.params.pid))
-  write('post',  '/passports/:pid/evaluate', async (req) => service.evaluatePassport(req.params.pid))   // persists match rows — see file-header note
   write('post',  '/passports/:pid/suppress', async (req) => ({ ok: await service.suppress(req.params.pid, req.body?.reason) }))
   write('delete', '/passports/:pid/suppress', async (req) => ({ ok: await service.unsuppress(req.params.pid) }))
 
@@ -76,12 +58,8 @@ export function register(app, { service, requireRead, requireWrite }) {
   read('get',    '/networks/:net/identity-manifest', async () => service.manifest())
   read('get',    '/facts',                    async () => service.availableFacts())
 
-  // audit / suppression
-  read('get',    '/deliveries',  async (req) => service.deliveries({ ruleId: req.query.rule, network: req.query.network, status: req.query.status, limit: +req.query.limit || 50 }))
+  // suppression
   read('get',    '/suppression', async () => service.listSuppression())
-
-  // drafting — AI-proposes a rule definition for review; nothing persists until POST /rules
-  read('post',   '/draft', async (req) => service.draft(req.body?.description || ''))
 }
 
 const wrap = fn => async (req, res) => {

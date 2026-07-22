@@ -495,6 +495,84 @@ describe('/users — gated by the users:manage permission (per-module grants, no
     expect(rejected.status).toBe(403)
   })
 
+  describe('PATCH /users/:id/password — self-service, requires the current password', () => {
+    async function meId(token) {
+      return (await (await fetch(`${base}${ISSUER_PATH}/me`, { headers: { authorization: `Bearer ${token}` } })).json()).id
+    }
+
+    it('changes your own password, and the new one actually works while the old one no longer does', async () => {
+      const admin = await adminToken()
+      const adminId = await meId(admin)
+
+      const res = await fetch(`${base}${ISSUER_PATH}/users/${adminId}/password`, {
+        method: 'PATCH', headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'correct horse battery staple', newPassword: 'a brand new admin password' }),
+      })
+      expect(res.status).toBe(204)
+
+      // /authorize redirects either way (302) — success vs. failure differs in
+      // the redirect target's query params (?code= vs ?error=), not the status.
+      const oldPwAttempt = await login({ email: 'admin@example.com', password: 'correct horse battery staple' })
+      expect(new URL(oldPwAttempt.headers.get('location')).searchParams.get('code')).toBeFalsy()
+
+      const relogged = await login({ email: 'admin@example.com', password: 'a brand new admin password' })
+      expect(relogged.status).toBe(302)
+      expect(new URL(relogged.headers.get('location')).searchParams.get('code')).toBeTruthy()
+    })
+
+    it('rejects the wrong current password, and never touches the stored one', async () => {
+      const admin = await adminToken()
+      const adminId = await meId(admin)
+
+      const res = await fetch(`${base}${ISSUER_PATH}/users/${adminId}/password`, {
+        method: 'PATCH', headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'totally wrong password', newPassword: 'a brand new admin password' }),
+      })
+      expect(res.status).toBe(400)
+      const stillWorks = await login({ email: 'admin@example.com', password: 'correct horse battery staple' })
+      expect(new URL(stillWorks.headers.get('location')).searchParams.get('code')).toBeTruthy()
+    })
+
+    it('rejects a new password under 12 characters', async () => {
+      const admin = await adminToken()
+      const adminId = await meId(admin)
+      const res = await fetch(`${base}${ISSUER_PATH}/users/${adminId}/password`, {
+        method: 'PATCH', headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'correct horse battery staple', newPassword: 'short' }),
+      })
+      expect(res.status).toBe(400)
+    })
+
+    it('403s an attempt to change a DIFFERENT user\'s password, even with users:manage', async () => {
+      const admin = await adminToken()
+      const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
+      const jane = list.find(u => u.email === 'jane@example.com')
+
+      const res = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}/password`, {
+        method: 'PATCH', headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'whatever', newPassword: 'a brand new admin password' }),
+      })
+      expect(res.status).toBe(403)
+    })
+
+    it('requires SOME token, but not users:manage specifically — a plain member can change their own', async () => {
+      const member = await memberToken()
+      const memberId = await meId(member)
+
+      const noAuth = await fetch(`${base}${ISSUER_PATH}/users/${memberId}/password`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'correct horse battery staple', newPassword: 'a brand new member password' }),
+      })
+      expect(noAuth.status).toBe(401)
+
+      const res = await fetch(`${base}${ISSUER_PATH}/users/${memberId}/password`, {
+        method: 'PATCH', headers: { authorization: `Bearer ${member}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ currentPassword: 'correct horse battery staple', newPassword: 'a brand new member password' }),
+      })
+      expect(res.status).toBe(204)
+    })
+  })
+
   it('GET /users/:id/logins records a real login (authorization_code grant) but never a silent refresh', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
@@ -635,5 +713,58 @@ describe('/invite/:token — public accept-invite flow', () => {
 
   it('an unknown or expired token 404s', async () => {
     expect((await fetch(`${base}${ISSUER_PATH}/invite/does-not-exist`)).status).toBe(404)
+  })
+})
+
+describe('/setup — public first-run admin bootstrap (a third path alongside scripts/create-admin.mjs and ADMIN_EMAIL/ADMIN_PASSWORD)', () => {
+  it('setup-required is false and POST /setup 409s when a user already exists (this suite\'s beforeEach seeds jane + admin)', async () => {
+    expect(await (await fetch(`${base}${ISSUER_PATH}/setup-required`)).json()).toEqual({ required: false })
+
+    const res = await fetch(`${base}${ISSUER_PATH}/setup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'someone@example.com', password: 'correct horse battery staple' }),
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it('a genuinely empty table lets setup create the wildcard admin exactly once', async () => {
+    await db('whitebox_oauth_users').del()   // simulate a fresh install — beforeEach seeded jane + admin, wipe them
+    expect(await (await fetch(`${base}${ISSUER_PATH}/setup-required`)).json()).toEqual({ required: true })
+
+    const res = await fetch(`${base}${ISSUER_PATH}/setup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'first-admin@example.com', password: 'correct horse battery staple' }),
+    })
+    expect(res.status).toBe(201)
+    const created = await store.getUser((await res.json()).id)
+    expect(created.email).toBe('first-admin@example.com')
+    expect(created.permissions).toEqual(['*'])
+
+    // the gate closes the instant that one admin exists — a second attempt 409s
+    expect(await (await fetch(`${base}${ISSUER_PATH}/setup-required`)).json()).toEqual({ required: false })
+    const replay = await fetch(`${base}${ISSUER_PATH}/setup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'second-admin@example.com', password: 'correct horse battery staple' }),
+    })
+    expect(replay.status).toBe(409)
+  })
+
+  it('rejects a password under 12 characters, still gated by table-emptiness first', async () => {
+    await db('whitebox_oauth_users').del()
+    const res = await fetch(`${base}${ISSUER_PATH}/setup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'weak@example.com', password: 'short' }),
+    })
+    expect(res.status).toBe(400)
+    expect(await store.hasAnyUser()).toBe(false)   // rejected before any row was written
+  })
+
+  it('rejects a missing email or password', async () => {
+    await db('whitebox_oauth_users').del()
+    const res = await fetch(`${base}${ISSUER_PATH}/setup`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'only-email@example.com' }),
+    })
+    expect(res.status).toBe(400)
   })
 })

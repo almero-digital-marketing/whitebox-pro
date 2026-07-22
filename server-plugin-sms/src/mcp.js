@@ -1,9 +1,15 @@
+// MCP capability registrations for the sms plugin. Every tool carries
+// scope: 'sms:use' — sms has no read/write split (a single resolveAuth()
+// secret gates its REST surface too), so this is the one permission that
+// gates all of it, on top of the endpoint-level mcp:use gate.
+
 import { z } from 'zod'
 import * as outbox from './outbox.js'
 import * as suppressions from './suppressions.js'
 
 const TABLE_OUTBOX = 'whitebox_sms_outbox'
 const TABLE_INBOX = 'whitebox_sms_inbox'
+const SCOPE = 'sms:use'
 
 export function registerMcp(ctx, { db }) {
   if (!ctx.mcp) return
@@ -19,6 +25,7 @@ export function registerMcp(ctx, { db }) {
       media:       z.array(z.string().url()).optional(),
       passport_id: z.string().uuid().optional(),
     },
+    scope: SCOPE,
     handler: async ({ to, from, body, template, media, passport_id: passportId }) => {
       if (!body && !template) {
         return { isError: true, content: [{ type: 'text', text: 'body or template is required' }] }
@@ -36,6 +43,7 @@ export function registerMcp(ctx, { db }) {
     name: 'sms.outbox_get',
     description: 'Fetch a single SMS outbox row by id: status, recipient, body, provider, timestamps, segments.',
     inputSchema: { id: z.number().int().positive() },
+    scope: SCOPE,
     handler: async ({ id }) => {
       const row = await db(TABLE_OUTBOX).where({ id }).first()
       if (!row) return { isError: true, content: [{ type: 'text', text: `No outbox row #${id}` }] }
@@ -51,6 +59,7 @@ export function registerMcp(ctx, { db }) {
       since:       z.string().datetime().optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
+    scope: SCOPE,
     handler: async ({ passport_id: passportId, since, limit = 50 }) => {
       let q = db(TABLE_INBOX).orderBy('created_at', 'desc').limit(limit)
       if (passportId) q = q.where({ passport_id: passportId })
@@ -64,6 +73,7 @@ export function registerMcp(ctx, { db }) {
     name: 'sms.suppress',
     description: 'Add a phone number to the SMS suppression (opt-out) list.',
     inputSchema: { phone: z.string(), reason: z.enum(['unsubscribed', 'complained', 'manual']).optional() },
+    scope: SCOPE,
     handler: async ({ phone, reason }) => {
       const row = await suppressions.add({ phone, reason: reason || 'manual', source: 'mcp' })
       if (!row) return { isError: true, content: [{ type: 'text', text: 'invalid phone' }] }
@@ -75,6 +85,7 @@ export function registerMcp(ctx, { db }) {
     name: 'sms.unsuppress',
     description: 'Remove a phone number from the SMS suppression list.',
     inputSchema: { phone: z.string() },
+    scope: SCOPE,
     handler: async ({ phone }) => {
       const removed = await suppressions.remove(phone)
       return { content: [{ type: 'text', text: removed ? 'removed' : 'not found' }] }

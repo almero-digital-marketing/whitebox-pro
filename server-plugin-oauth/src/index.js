@@ -67,6 +67,25 @@ export function oauth(options = {}) {
       users.init({ db })
       keys.init({ db })
 
+      // Auto-bootstrap the first admin from ADMIN_EMAIL/ADMIN_PASSWORD (the
+      // same env vars scripts/create-admin.mjs reads) when the users table
+      // is completely empty — lets a fresh deploy self-bootstrap straight
+      // from .env with no separate manual script run, handy for
+      // containerized/automated deploys. Gated on the table being EMPTY
+      // (not just "no admin yet"), so it only ever fires once: any existing
+      // user, admin or not, skips it — safe to leave these two vars sitting
+      // in .env permanently across every restart. Same validation as the
+      // script (password length), same '*' wildcard sentinel, same
+      // one-time-bootstrap-only semantics — see scripts/create-admin.mjs.
+      if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !(await store.hasAnyUser())) {
+        if (process.env.ADMIN_PASSWORD.length < 12) {
+          logger.warn('ADMIN_EMAIL/ADMIN_PASSWORD are set but the password is under 12 characters — skipping admin auto-bootstrap')
+        } else {
+          const admin = await users.createUser({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD, permissions: ['*'] })
+          logger.info('Bootstrapped admin %s from ADMIN_EMAIL/ADMIN_PASSWORD (users table was empty)', admin.email)
+        }
+      }
+
       // Lazy lookup so plugin load order doesn't matter (mail may register
       // after oauth) — mirrors server-plugin-mail's own getShortener.
       const getMail = () => ctx.plugins?.mail?.service

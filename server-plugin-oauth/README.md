@@ -96,23 +96,48 @@ make the discovery document lie about its own location.
 
 ## Bootstrapping
 
-There's no way to create the *first* user or register a client except two
-one-off CLI scripts — after that, an admin invites everyone else through
-the UI's Users module:
+There's no way to create the *first* user except through `ADMIN_EMAIL`/
+`ADMIN_PASSWORD` — after that, an admin invites everyone else through the
+UI's Users module. Two ways to set it, same effect either way:
+
+**Automatic, on server boot** — set both in `.env` and just start the
+server normally. `oauth`'s `register()` checks whether the users table is
+completely empty; if so (and both vars are set, and the password is ≥12
+characters), it creates that first user with every permission via the `'*'`
+sentinel and logs that it did. Because it's gated on the table being empty
+— not just "no admin yet" — it only ever fires once: any existing user,
+admin or not, makes it a no-op, so it's safe to leave both vars sitting in
+`.env` permanently across every restart.
 
 ```bash
-# Create the first user — granted every permission via the '*' sentinel,
-# since there's no admin yet to grant them users:manage individually:
-ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' node scripts/create-admin.mjs
+# .env
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=correct horse battery staple
+```
 
-# Register an OAuth client (the WhiteBox UI, an MCP client, …):
+**Manual, one-off script** — if you'd rather not put a password in `.env`
+at all (e.g. you're bootstrapping by hand and want the interactive prompt
+instead):
+
+```bash
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' node scripts/create-admin.mjs
+# or with no env vars at all — prompts for both instead
+node scripts/create-admin.mjs
+```
+
+Either way, you still need to register an OAuth client (the WhiteBox UI, an
+MCP client, …) — there's no automatic path for this one, it's always a
+one-off CLI script:
+
+```bash
 node scripts/create-client.mjs --name="WhiteBox UI" \
   --redirect-uri="http://localhost:5173/callback"
 ```
 
-Both read the same `WB_DB_*` env vars the main WhiteBox server does, and
-run their own migration first (in case this is the very first thing ever
-run against a fresh database).
+All of the above read the same `WB_DB_*` env vars the main WhiteBox server
+does; `create-admin.mjs`/`create-client.mjs` also run their own migration
+first (in case this is the very first thing ever run against a fresh
+database).
 
 ## Users & invites
 
@@ -173,10 +198,12 @@ another module capability, not a special superuser flag.
 
 A user's `permissions` column is a flat array of these keys, or the single
 reserved sentinel `"*"` ("every permission that exists, including ones added
-later"). `"*"` is **bootstrap-only** — `scripts/create-admin.mjs` is the one
-place it's ever set (there's no admin yet to grant the first user
-`users:manage` individually); it's never a value the Users module (or
-`PUT /users/:id/permissions`) will accept, so there's no way to re-grant it
+later"). `"*"` is **bootstrap-only** — set either by `scripts/create-admin.mjs`
+or by `register()`'s own auto-bootstrap from `ADMIN_EMAIL`/`ADMIN_PASSWORD`
+(see "Bootstrapping" above) — never anywhere else, since there's no admin
+yet to grant the first user `users:manage` individually. It's never a value
+the Users module (or `PUT /users/:id/permissions`) will accept, so there's
+no way to re-grant it
 through the running product.
 
 **Enforcement is JWT-scope-only, with no per-request DB re-check** — same as

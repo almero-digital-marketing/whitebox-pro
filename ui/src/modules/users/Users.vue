@@ -16,6 +16,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import ConfirmDialog from 'primevue/confirmdialog'
+import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import DataTable from 'primevue/datatable'
@@ -23,6 +24,7 @@ import Column from 'primevue/column'
 import RailSearch from '../../components/RailSearch.vue'
 import { useUsersStore } from './stores/users'
 import { useAuthStore } from '../../shell/stores/auth'
+import { notifyError } from '../../shell/toast'
 
 const LOGIN_PAGE_ROWS = 10   // matches analytics' WidgetCard table — rows per page, not an inner scrollbar
 
@@ -115,8 +117,59 @@ function loadPermDraft() {
 watch(() => working.value?.id, () => {
   resetDraft()
   loadPermDraft()
+  resetPasswordFields()
   if (working.value) store.loadLogins(working.value.id)
 })
+
+// ── change MY OWN password — self-service only, shown just when viewing your
+// own account (see isSelf) — never someone else's, and never a case of an
+// admin having to know a teammate's password. New password + confirm live
+// inline, same draft/dirty shape as the profile fields above; only the
+// CURRENT password (proof this is really you, not just an active session)
+// moves into a popup, asked at the moment you actually submit — the server
+// independently enforces this can only ever change your own account
+// regardless of what this UI shows.
+const isSelf = computed(() => !!working.value && working.value.id === authStore.user?.id)
+const newPassword = ref('')
+const confirmNewPassword = ref('')
+const newPasswordDirty = computed(() => !!newPassword.value || !!confirmNewPassword.value)
+const passwordsMatch = computed(() => newPassword.value === confirmNewPassword.value)
+const passwordError = ref('')
+
+const showCurrentPasswordDialog = ref(false)
+const currentPassword = ref('')
+const currentPasswordError = ref('')
+const savingPassword = ref(false)
+
+function resetPasswordFields() {
+  newPassword.value = ''
+  confirmNewPassword.value = ''
+  passwordError.value = ''
+  currentPassword.value = ''
+  currentPasswordError.value = ''
+  showCurrentPasswordDialog.value = false
+}
+// Match is enforced by the button's :disabled state (see template) — only the length
+// check is left to validate here, since it's the one precondition that button doesn't gate.
+function startPasswordChange() {
+  passwordError.value = ''
+  if (newPassword.value.length < 12) { passwordError.value = 'New password must be at least 12 characters.'; return }
+  currentPassword.value = ''
+  currentPasswordError.value = ''
+  showCurrentPasswordDialog.value = true
+}
+async function confirmPasswordChange() {
+  currentPasswordError.value = ''
+  savingPassword.value = true
+  try {
+    await store.changePassword(working.value.id, currentPassword.value, newPassword.value)
+    resetPasswordFields()   // closing the popup + clearing the fields IS the confirmation — no toast system in this app
+  } catch (e: any) {
+    currentPasswordError.value = e.message   // wrong current password — keep the popup open, don't lose the new password already typed
+  } finally {
+    savingPassword.value = false
+  }
+}
 function togglePerm(key: string) {
   if (key === 'users:manage' && isLastManager.value && permDraft.value.includes(key)) return
   const i = permDraft.value.indexOf(key)
@@ -186,6 +239,7 @@ async function submitInvite() {
 async function resend(u: any) {
   saving.value = true
   try { justInvited.value = await store.resendInvite(u.id) }
+  catch (e: any) { notifyError(`Couldn't resend the invite: ${e.message}`) }
   finally { saving.value = false }
 }
 
@@ -195,8 +249,12 @@ function remove(u: any) {
     defaultFocus: 'reject', acceptProps: { label: 'Remove', severity: 'danger' }, rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
     accept: async () => {
       const open = working.value?.id === u.id
-      await store.removeUser(u.id)
-      if (open) { working.value = null; router.replace({ name: 'users', params: {} }) }
+      try {
+        await store.removeUser(u.id)
+        if (open) { working.value = null; router.replace({ name: 'users', params: {} }) }
+      } catch (e: any) {
+        notifyError(`Couldn't remove ${u.email}: ${e.message}`)
+      }
     },
   })
 }
@@ -250,11 +308,27 @@ function fmtDateTime(iso?: string) {
           <label class="fld grow"><span class="fld-l">Phone</span><InputText v-model="draft.phone" placeholder="—" /></label>
         </div>
         <p v-if="profileError" class="err">{{ profileError }}</p>
-        <div v-if="profileDirty" class="save-bar">
-          <span class="save-note"><i class="pi pi-circle-fill" /> Unsaved changes</span>
-          <Button label="Discard" text severity="secondary" size="small" @click="resetDraft" />
-          <Button label="Save" icon="pi pi-check" size="small" :loading="savingProfile" @click="saveProfile" />
+        <div class="save-bar">
+          <span class="save-note" :class="{ 'save-note--hidden': !profileDirty }"><i class="pi pi-circle-fill" /> Unsaved changes</span>
+          <Button label="Discard" text severity="secondary" size="small" :disabled="!profileDirty" @click="resetDraft" />
+          <Button label="Save" icon="pi pi-check" size="small" :disabled="!profileDirty" :loading="savingProfile" @click="saveProfile" />
         </div>
+
+        <template v-if="isSelf">
+          <div class="password-block">
+            <div class="password-head">Change password</div>
+            <div class="row">
+              <label class="fld grow"><span class="fld-l">New password</span><InputText v-model="newPassword" type="password" autocomplete="new-password" placeholder="Min. 12 characters" /></label>
+              <label class="fld grow"><span class="fld-l">Confirm new password</span><InputText v-model="confirmNewPassword" type="password" autocomplete="new-password" /></label>
+            </div>
+            <p v-if="passwordError" class="err">{{ passwordError }}</p>
+            <div class="save-bar">
+              <span class="save-note" :class="{ 'save-note--hidden': !newPasswordDirty }"><i class="pi pi-circle-fill" /> Unsaved changes</span>
+              <Button label="Discard" text severity="secondary" size="small" :disabled="!newPasswordDirty" @click="resetPasswordFields" />
+              <Button label="Change password" icon="pi pi-check" size="small" :disabled="!newPasswordDirty || !passwordsMatch" @click="startPasswordChange" />
+            </div>
+          </div>
+        </template>
 
         <dl class="meta">
           <div><dt>Status</dt><dd>{{ working.active ? 'Active' : 'Invite pending' }}</dd></div>
@@ -304,30 +378,42 @@ function fmtDateTime(iso?: string) {
         <p v-if="working.permissions?.includes('*')" class="tip">This account has full access — editing switches it off full access onto whatever's checked below.</p>
         <div v-for="mod in catalog" :key="mod.module" class="side-section">
           <div class="perm-group-label">{{ mod.module }}</div>
+          <p v-if="mod.module === 'oauth' && isLastManager" class="perm-group-hint">The only active user who can manage users &amp; permissions — grant it to someone else first.</p>
           <label v-for="item in mod.items" :key="item.key" class="perm-item" :class="{ disabled: item.key === 'users:manage' && isLastManager }">
             <input type="checkbox" :checked="permDraft.includes(item.key)" :disabled="item.key === 'users:manage' && isLastManager" @change="togglePerm(item.key)" />
             <span>
               <span class="perm-item-label">{{ item.label }}</span>
               <span class="perm-item-desc">{{ item.description }}</span>
-              <span v-if="item.key === 'users:manage' && isLastManager" class="perm-item-hint">The only active user who can manage users &amp; permissions — grant it to someone else first.</span>
             </span>
           </label>
         </div>
         <p v-if="permsError" class="err">{{ permsError }}</p>
         <div class="actions">
-          <Button label="Save permissions" size="small" :disabled="!permsDirty" :loading="savingPerms" @click="savePermissions" />
+          <span class="save-note" :class="{ 'save-note--hidden': !permsDirty }"><i class="pi pi-circle-fill" /> Unsaved changes</span>
+          <Button label="Discard" text severity="secondary" size="small" :disabled="!permsDirty" @click="loadPermDraft" />
+          <Button label="Save" icon="pi pi-check" size="small" :disabled="!permsDirty" :loading="savingPerms" @click="savePermissions" />
         </div>
       </div>
     </aside>
     <ConfirmDialog />
+
+    <Dialog v-model:visible="showCurrentPasswordDialog" modal header="Confirm it's you" :style="{ width: '340px' }">
+      <p class="tip">Enter your current password to confirm this change.</p>
+      <label class="fld grow"><span class="fld-l">Current password</span><InputText v-model="currentPassword" type="password" autocomplete="current-password" autofocus @keyup.enter="confirmPasswordChange" /></label>
+      <p v-if="currentPasswordError" class="err">{{ currentPasswordError }}</p>
+      <template #footer>
+        <Button label="Cancel" text severity="secondary" size="small" @click="showCurrentPasswordDialog = false" />
+        <Button label="Confirm" icon="pi pi-check" size="small" :loading="savingPassword" :disabled="!currentPassword" @click="confirmPasswordChange" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
 .usr-console { display: flex; height: 100%; min-height: 0; }
 .usr-left { flex: none; width: 300px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
-.usr-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 22px 26px; overflow: auto; background: var(--bg); }
-.usr-side { flex: none; width: 320px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+.usr-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 22px 26px; overflow: auto; background: var(--panel); }
+.usr-side { flex: none; width: 480px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
 .side-body { flex: 1 1 auto; overflow: auto; padding: 18px; }
 .usr-empty { margin: auto; color: var(--muted); font-size: 14px; }
 
@@ -345,7 +431,7 @@ function fmtDateTime(iso?: string) {
 .badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; border-radius: 999px; padding: 1px 8px; }
 .badge.admin { color: var(--p-primary-contrast-color, #fff); background: var(--accent); }
 
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: 100%; display: flex; flex-direction: column; min-height: 0; }
+.panel { width: 100%; display: flex; flex-direction: column; min-height: 0; }
 .panel-head { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 650; color: var(--text-strong); margin-bottom: 16px; }
 .tip { margin: 0 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 .email-input { width: 100%; }
@@ -358,9 +444,13 @@ function fmtDateTime(iso?: string) {
 .fld.grow { flex: 1 1 220px; }
 .fld-l { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .fld :deep(input) { width: 100%; }
-.save-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+/* no border of its own — always followed by a section that already has its
+   own border-top (.password-block or .meta), so adding one here too would
+   just stack two dividers back to back with barely any gap between them */
+.save-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 14px; }
 .save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin-right: auto; }
 .save-note .pi-circle-fill { font-size: 8px; color: #d97706; }
+.save-note--hidden { visibility: hidden; }
 
 /* read-only system fields */
 .meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px 24px; margin: 0 0 14px; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -369,6 +459,15 @@ function fmtDateTime(iso?: string) {
 .meta dd { margin: 0; color: var(--text-strong); font-weight: 550; }
 .invite-link { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
 .link-box { display: block; width: 100%; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; word-break: break-all; }
+
+/* self-service password change — shown only when viewing your own account.
+   New password + confirm live here; the current-password re-auth step is a
+   separate Dialog, popped up only once these two validate (see startPasswordChange). */
+.password-block { border-top: 1px solid var(--border); padding-top: 14px; margin-bottom: 4px; }
+/* sentence-case, no letter-spacing/uppercase — matches the query builder's
+   .lab tier (analytics/components/query/qb.css), not the .fld-l micro-caps
+   field labels directly below it, so the two don't blend into each other */
+.password-head { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
 
 .logins-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .logins-head { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
@@ -394,10 +493,13 @@ function fmtDateTime(iso?: string) {
 .side-section { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
 .side-section:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 .perm-group-label { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+/* module-level note, not tied to one checkbox's own label/description — same idea as
+   Campaigns' Objectives tip: an explanation lives with the section it concerns, not
+   buried inside a single item or off in an unrelated action area. */
+.perm-group-hint { margin: -2px 0 10px; font-size: 12px; color: var(--danger); line-height: 1.4; }
 .perm-item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; cursor: pointer; }
 .perm-item input { margin-top: 3px; accent-color: var(--accent); }
 .perm-item.disabled { cursor: default; }
 .perm-item-label { display: block; font-size: 13.5px; font-weight: 550; color: var(--text-strong); }
 .perm-item-desc { display: block; font-size: 12px; color: var(--muted); }
-.perm-item-hint { display: block; font-size: 11.5px; color: var(--danger); margin-top: 2px; line-height: 1.4; }
 </style>

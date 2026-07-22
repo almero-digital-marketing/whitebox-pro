@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import * as store from './store.js'
 import * as service from './service.js'
 import * as rest from './rest.js'
+import * as mcpTools from './mcp.js'
 import { resolveReadWriteAuth } from 'whitebox-pro-server/auth'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -69,6 +70,7 @@ export function campaigns(options = {}) {
       service.init({ store, audiences, dryRun, deliver, logger })
 
       rest.register(app, { service, requireRead: readAuth.middleware, requireWrite: writeAuth.middleware })
+      if (ctx.mcp) mcpTools.register(ctx.mcp, { service, logger })
 
       logger.info(`Campaigns plugin ready (delivery: ${dryRun ? 'dry-run' : 'live'})`)
       return { service }   // exposed for other plugins/tests

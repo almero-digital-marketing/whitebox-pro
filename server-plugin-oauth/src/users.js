@@ -68,6 +68,25 @@ export async function getByInviteToken(token) {
 // exact moment — materialized onto the row, not recomputed later, so a
 // plugin changing its defaults afterward doesn't retroactively change
 // already-onboarded users.
+// Self-service password change — the ONLY password mutation available to an
+// already-authenticated user, and only ever for their OWN account (routes.js
+// enforces id === req.auth.sub before this is ever called; there is no
+// admin-resets-someone-else's-password path — that's a different, more
+// sensitive capability this doesn't build). Requires the CURRENT password,
+// unlike every other action an admin can take on a teammate's row (profile
+// edits, permission grants) — a hijacked session shouldn't be able to lock
+// the real owner out by rotating their password with no proof of ownership.
+export async function changePassword({ id, currentPassword, newPassword }) {
+  if (!currentPassword || !newPassword) throw new Error('currentPassword and newPassword are required')
+  if (newPassword.length < 12) throw new Error('newPassword must be at least 12 characters')
+  const user = await db('whitebox_oauth_users').where({ id }).first()
+  if (!user || !user.password_hash) throw new Error('account not found or not yet active')
+  const ok = await verifyPassword(currentPassword, user.password_hash, user.password_salt)
+  if (!ok) throw new Error('current password is incorrect')
+  const { hash, salt } = await hashPassword(newPassword)
+  await db('whitebox_oauth_users').where({ id }).update({ password_hash: hash, password_salt: salt })
+}
+
 export async function completeInvite({ token, password, firstName, lastName, phone, defaultPermissions = [] }) {
   if (!token || !password) throw new Error('completeInvite: token and password are required')
   if (password.length < 12) throw new Error('completeInvite: password must be at least 12 characters')

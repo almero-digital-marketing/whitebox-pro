@@ -37,6 +37,7 @@ import { html as cmHtml } from '@codemirror/lang-html'
 import RailSearch from '../../components/RailSearch.vue'
 import { useCampaignsStore } from './stores/campaigns'
 import { useAudiencesStore } from '../analytics/stores/audiences'
+import { notifyError } from '../../shell/toast'
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -138,7 +139,7 @@ onActivated(async () => {
 
 // ── routing: the open campaign lives in the URL (/campaigns/:campaignId) ──
 async function openCampaign(id: string) {
-  const c = await store.getCampaign(id).catch(() => null)
+  const c = await store.getCampaign(id).catch((e: any) => { notifyError(`Couldn't open that campaign: ${e.message}`); return null })
   working.value = c
   resetDraft()              // seed the editable draft from the freshly-loaded campaign
   pv.value = null
@@ -163,7 +164,15 @@ function removeCampaign(c: any) {
   confirm.require({
     header: 'Delete campaign', message: `Delete “${c.name}”? This can’t be undone.`, icon: 'pi pi-trash',
     defaultFocus: 'reject', acceptProps: { label: 'Delete', severity: 'danger' }, rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: async () => { const open = working.value?.id === c.id; await store.removeCampaign(c.id); if (open) { working.value = null; router.replace({ name: 'campaigns', params: {} }) } },
+    accept: async () => {
+      const open = working.value?.id === c.id
+      try {
+        await store.removeCampaign(c.id)
+        if (open) { working.value = null; router.replace({ name: 'campaigns', params: {} }) }
+      } catch (e: any) {
+        notifyError(`Couldn't delete “${c.name}”: ${e.message}`)
+      }
+    },
   })
 }
 
@@ -171,7 +180,7 @@ function removeCampaign(c: any) {
 // each other with out-of-order responses — each op runs after the previous and reads the latest
 // backend state. (Patch only updates the fields it's given, so order-preserving = no lost edits.)
 let opChain: Promise<any> = Promise.resolve()
-const serialize = (fn: () => Promise<any>) => { opChain = opChain.then(fn).catch(() => {}); return opChain }
+const serialize = (fn: () => Promise<any>) => { opChain = opChain.then(fn).catch((e: any) => notifyError(`Couldn't save that change: ${e.message}`)); return opChain }
 
 // ── right-pane SETTINGS (channel · schedule · objectives) — applied immediately ──
 // Optimistic: apply locally so the UI reacts instantly (and the delivery preview updates), then
@@ -182,7 +191,7 @@ function patch(fields: Record<string, any>) {
   if (!working.value || locked.value) return
   const id = working.value.id
   working.value = { ...working.value, ...fields }
-  return serialize(() => store.patchCampaign(id, fields).catch(() => {}))
+  return serialize(() => store.patchCampaign(id, fields))
 }
 
 // ── composed CONTENT (name · subject · message) — buffered in `draft`, committed with Save ──
@@ -213,9 +222,12 @@ async function save() {
     fields.objective = { goals: [...(d.objective?.goals || [])], notes: d.objective?.notes ?? '' }
   saving.value = true
   try {
-    working.value = { ...working.value, ...(await store.patchCampaign(id, fields)) }
+    const row = await store.patchCampaign(id, fields)
+    if (working.value?.id !== id) return   // switched to a different campaign mid-save — don't stamp it with these fields
+    working.value = { ...working.value, ...row }
     resetDraft()
-  } finally { saving.value = false }
+  } catch (e: any) { notifyError(`Couldn't save changes: ${e.message}`) }
+  finally { saving.value = false }
 }
 // scheduled_at is a single timestamp; the UI splits it into local date + time inputs and
 // recombines on change (default 09:00 when only a date is given).
@@ -266,8 +278,11 @@ function refreshPreview() {
 // The UI never "sends"; it schedules + locks. Delivery is a server-side job at scheduled_at.
 async function schedule() {
   if (!schedulable.value || saving.value) return
+  const id = working.value.id
   let p = pv.value
-  try { if (!p) p = await store.previewDelivery(working.value.id) } catch { return }
+  try { if (!p) p = await store.previewDelivery(id) }
+  catch (e: any) { notifyError(`Couldn't preview delivery: ${e.message}`); return }
+  if (working.value?.id !== id) return   // switched to a different campaign while the preview was loading
   const when = [dateValue.value, timeValue.value].filter(Boolean).join(' ')
   // A send time that's already passed is "due" — delivery fires immediately (dry-run or live is a
   // server config; the post-send badge reflects which it was, so the dialog doesn't assert a mode).
@@ -282,7 +297,15 @@ async function schedule() {
     icon: 'pi pi-clock',
     acceptProps: { label: 'Schedule' },
     rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: async () => { saving.value = true; try { working.value = { ...working.value, ...(await store.scheduleCampaign(working.value.id, p)) } } finally { saving.value = false } },
+    accept: async () => {
+      saving.value = true
+      try {
+        const row = await store.scheduleCampaign(id, p)
+        if (working.value?.id !== id) return   // switched away while the confirm/request was in flight
+        working.value = { ...working.value, ...row }
+      } catch (e: any) { notifyError(`Couldn't schedule the campaign: ${e.message}`) }
+      finally { saving.value = false }
+    },
   })
 }
 
@@ -290,20 +313,29 @@ async function schedule() {
 // (A sent campaign is final: no unlock in the UI; delete it from the rail if you want it gone.)
 async function unlock() {
   if (!working.value || !locked.value || saving.value) return
+  const id = working.value.id
   saving.value = true
-  try { working.value = { ...working.value, ...(await store.unlockCampaign(working.value.id)) }; pv.value = null; refreshPreview() }
+  try {
+    const row = await store.unlockCampaign(id)
+    if (working.value?.id !== id) return   // switched to a different campaign mid-request
+    working.value = { ...working.value, ...row }
+    pv.value = null; refreshPreview()
+  } catch (e: any) { notifyError(`Couldn't unlock the campaign: ${e.message}`) }
   finally { saving.value = false }
 }
 
 // ── build / open the Analytics performance report (sent campaigns) ──
 async function buildReport() {
   if (building.value || !working.value) return
+  const id = working.value.id
   building.value = true
   try {
     const reportId = await store.buildReport(working.value)   // prompt is the objective-derived analytics_prompt
+    if (working.value?.id !== id) return   // switched to a different campaign — don't stamp it, and don't navigate into a report it didn't ask for
     working.value.report_id = reportId
     router.push({ name: 'analytics', params: { reportId } })
-  } finally { building.value = false }
+  } catch (e: any) { notifyError(`Couldn't build the report: ${e.message}`) }
+  finally { building.value = false }
 }
 function openReport() { if (working.value?.report_id) router.push({ name: 'analytics', params: { reportId: working.value.report_id } }) }
 
@@ -368,7 +400,7 @@ function ago(iso?: string) {
       <div v-else class="builder" :class="{ tall: working.channel === 'email' }">
         <div class="b-head">
           <InputText v-model="draft.name" class="b-name" :disabled="locked" placeholder="Campaign name" />
-          <i v-if="locked" class="pi pi-lock lock" title="Locked — unlock to edit" />
+          <i v-if="locked" class="pi pi-lock lock b-name-lock" title="Locked — unlock to edit" />
         </div>
 
         <!-- attached audiences -->
@@ -458,6 +490,7 @@ function ago(iso?: string) {
         <div class="side-section">
           <div class="blk-head">Objectives</div>
           <p v-if="!locked" class="obj-tip">What is this campaign for? The performance report is built around these.</p>
+          <p v-else-if="working.status === 'sent'" class="obj-tip">{{ working.report_id ? 'The performance report is built from these.' : 'Delivered — build a performance report from these.' }}</p>
           <div class="obj-chips">
             <button v-for="o in OBJECTIVES" :key="o" type="button" class="obj-chip" :class="{ on: goals.includes(o) }" :disabled="locked" @click="toggleGoal(o)">{{ o }}</button>
           </div>
@@ -467,24 +500,24 @@ function ago(iso?: string) {
         <!-- action: Send (draft) → Open / Build report (sent) -->
         <div class="send-section">
           <template v-if="!locked">
-            <Button class="send-btn" label="Schedule" icon="pi pi-clock"
-              :loading="saving" :disabled="!schedulable" @click="schedule" />
             <p v-if="dirty" class="hint">Save your changes first.</p>
             <p v-else-if="!working.audiences?.length" class="hint">Attach an audience first.</p>
             <p v-else-if="!ready" class="hint">{{ working.channel === 'sms' ? 'Write the SMS first.' : 'Write the email first.' }}</p>
-            <p v-else-if="!working.scheduled_at" class="hint">Set a send date &amp; time above.</p>
-            <p v-else class="hint">Scheduling commits delivery for that time and locks the campaign — unlock to change it.</p>
+            <p v-else-if="!working.scheduled_at" class="hint">Set a send date above.</p>
+            <p v-else class="hint long">Scheduling commits delivery for that time and locks the campaign — unlock to change it.</p>
+            <Button class="send-btn" label="Schedule" icon="pi pi-clock"
+              :loading="saving" :disabled="!schedulable" @click="schedule" />
           </template>
           <template v-else-if="working.status === 'sent'">
-            <!-- delivered: a final record. No unlock — you can't un-send. Only the report. -->
+            <!-- delivered: a final record. No unlock — you can't un-send. Only the report.
+                 What it means is now described under Objectives above, not repeated here. -->
             <Button v-if="working.report_id" class="send-btn" label="Open report" icon="pi pi-chart-bar" @click="openReport" />
             <Button v-else class="send-btn" label="Build report" icon="pi pi-sparkles" :loading="building" @click="buildReport" />
-            <p class="hint">{{ working.report_id ? 'Performance report built from the objectives above.' : 'Delivered — build a performance report from the objectives above.' }}</p>
           </template>
           <template v-else>
             <!-- scheduled but not yet delivered: nothing to report on yet -->
-            <Button class="unlock-btn solo" label="Unlock to edit" icon="pi pi-lock-open" text severity="secondary" :loading="saving" @click="unlock" />
-            <p class="hint"><i class="pi pi-clock" /> Scheduled{{ dateValue ? ` for ${dateValue}${timeValue ? ` ${timeValue}` : ''}` : '' }} — locked. The performance report becomes available once it’s delivered.</p>
+            <p class="hint long"><i class="pi pi-clock" /> Scheduled{{ dateValue ? ` for ${dateValue}${timeValue ? ` ${timeValue}` : ''}` : '' }} — locked. The performance report becomes available once it’s delivered.</p>
+            <Button class="send-btn unlock-btn solo" label="Unlock to edit" icon="pi pi-lock-open" text severity="secondary" :loading="saving" @click="unlock" />
           </template>
         </div>
       </div>
@@ -497,8 +530,8 @@ function ago(iso?: string) {
 .cmp-console { display: flex; height: 100%; min-height: 0; }
 .cmp-left, .cmp-mid { flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .cmp-left { width: 300px; } .cmp-mid { width: 300px; }
-.cmp-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 22px 26px; overflow: auto; background: var(--bg); }
-.cmp-side { flex: none; width: 320px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+.cmp-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 22px 26px; overflow: auto; background: var(--panel); }
+.cmp-side { flex: none; width: 480px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
 .side-body { flex: 1 1 auto; overflow: auto; padding: 18px; }
 .cmp-empty { margin: auto; color: var(--muted); font-size: 14px; }
 
@@ -526,10 +559,15 @@ function ago(iso?: string) {
 .sp-name { flex: 1 1 auto; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sp-used { font-size: 11px; color: var(--accent); }
 
-.builder { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: 100%; display: flex; flex-direction: column; min-height: 0; }
+.builder { width: 100%; display: flex; flex-direction: column; min-height: 0; }
 .builder.tall { flex: 1 1 auto; }   /* email: builder fills the pane height so the editor can too */
-.b-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.b-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; position: relative; }
 .b-name { flex: 1 1 auto; min-width: 0; font-size: 16px; font-weight: 650; }
+.b-name:disabled { padding-right: 32px; }
+/* positioned against .b-head (which now only has the input as a real flex item, so its
+   box matches the input's) rather than the shared .lock rule, which also styles the
+   small inline lock in the rail's .ri-sub and must stay in normal flow there. */
+.b-name-lock { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; pointer-events: none; }
 .b-name-static { flex: 1 1 auto; margin: 0; font-size: 18px; font-weight: 650; color: var(--text-strong); display: flex; align-items: center; gap: 8px; }
 .chan-static { font-size: 12px; color: var(--muted); text-transform: capitalize; }
 
@@ -627,11 +665,15 @@ function ago(iso?: string) {
 .dlv-sub { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .sched-row { gap: 10px; margin: 14px 0 16px; }
 .sched-row .fld { flex: 1 1 0; min-width: 0; }
-.send-section { margin-top: 18px; }
-.send-btn { width: 100%; }
-.unlock-btn { width: 100%; margin-top: 8px; }
+/* hint on the left, button on the right, same row — a short hint (.hint) shrinks to fit
+   beside the button; a full-sentence one (.hint.long) takes its own line via flex-basis:
+   100% instead (see below), so it's never squeezed into an awkward multi-line column. */
+.send-section { margin-top: 18px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.send-btn { flex: none; margin-left: auto; }
+.unlock-btn { margin-top: 8px; }
 .unlock-btn.solo { margin-top: 0; }
-.hint { display: block; margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.hint { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.hint.long { flex-basis: 100%; }
 .side-section { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
 
 /* far-right RESULTS pane (sent) */

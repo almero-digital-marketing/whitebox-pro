@@ -49,8 +49,9 @@ Match rate rises with more keys — email + `fbp`/`fbc` together is much better 
 ## Create the audience (one-time)
 
 Ads Manager → Audiences → Create Custom Audience → **Website** → *Events* → choose your custom event
-(`wb_enterprise_ready`) → set retention (1–180 days; use ≥ your `keepWarmDays`). Server (CAPI) events
-populate Website Custom Audiences as long as they're matched to a user.
+(`wb_enterprise_ready`) → set retention (1–180 days; generous enough to cover your re-sync cadence — see
+[05 · Networks](../05-networks.md)). Server (CAPI) events populate Website Custom Audiences as long as
+they're matched to a user.
 
 ## Gotchas
 

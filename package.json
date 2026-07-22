@@ -15,7 +15,8 @@
     "test": "npm test --workspaces --if-present",
     "test:server": "npm test --workspace=whitebox-pro-server",
     "link:integrations": "bash scripts/link-integrations.sh",
-    "postinstall": "bash scripts/link-integrations.sh"
+    "postinstall": "bash scripts/link-integrations.sh",
+    "publish:all": "node scripts/publish.mjs"
   },
   "engines": {
     "node": ">=18"

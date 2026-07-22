@@ -18,4 +18,8 @@ export const usersClient = {
   updateProfile: (id: string, fields: { first_name?: string; last_name?: string; phone?: string; email?: string }) =>
     req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   logins: (id: string) => req(`/users/${id}/logins`),
+  // Self-service only — the server independently enforces id === the
+  // caller's own subject regardless of what this UI shows.
+  changePassword: (id: string, currentPassword: string, newPassword: string) =>
+    req(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ currentPassword, newPassword }) }),
 }

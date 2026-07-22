@@ -54,6 +54,22 @@ Canonical status vocabulary: `queued → sent → delivered / undelivered / fail
 
 Some providers (e.g. Mobica) allow only **one** delivery-callback URL per account, with no per-message override. To run several instances on one such account, fan that URL out to every instance: the status handler advances a row **only** when the report's message id matches one of *its own* sends, and stays completely silent otherwise — no status event, no awareness, no blocklisting of another instance's recipient. This requires the message id to be globally unique across instances; the Mobica provider's `instanceId` prefix guarantees that. See [`whitebox-pro-sms-mobica`](../whitebox-pro-sms-mobica#multi-instance-dlr-fan-out-instanceid).
 
+## MCP tools
+
+Five tools are registered on the shared `/mcp` server, gated by the host's MCP auth (`config.mcp.auth`) — not this plugin's own `auth` option, which only guards the REST routes above. `registerMcp` is a no-op when the host has no MCP server (`ctx.mcp` falsy): no tools mounted, no error.
+
+| tool | purpose |
+|---|---|
+| `sms.send` | queue an SMS (body or template) to an E.164 number; returns the outbox row |
+| `sms.outbox_get` | fetch one outbox row by id — status, recipient, body, provider, timestamps, segments |
+| `sms.inbox_list` | list inbound SMS (replies, STOP/START), most-recent-first; filter by passport or date |
+| `sms.suppress` | add a phone number to the suppression (opt-out) list |
+| `sms.unsuppress` | remove a phone number from the suppression list |
+
+`sms.send` calls the same `outbox.queueSend()` the REST `POST /sms/outbox` route uses, so it queues onto the same worker and is routed to a provider by `router.forNumber` (default + per-prefix overrides, longest match wins) exactly as REST sends are — no separate MCP-side routing.
+
+Not exposed over MCP: bulk send/cancel (`/sms/bulk*`), the invalid-number list (`/sms/invalid`), and inbound/DLR webhooks — those stay REST/provider-callback only. No resources are registered, only tools.
+
 ## Compliance: STOP/START
 
 Inbound `STOP`/`UNSUBSCRIBE`/`CANCEL`/`END`/`QUIT`/`OPTOUT` adds the sender to `suppressions`; `START`/`YES`/`UNSTOP` removes them. The outbox worker preflight-blocks suppressed + invalid numbers before sending. Phone numbers are normalized to E.164 (with `defaultCountry`) everywhere, so national and international forms match the same record.

@@ -22,6 +22,27 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<{ id: string; email: string; permissions: string[] } | null>(null)
   const ready = ref(false)   // true once the boot-time silent refresh has resolved either way
 
+  // null = not yet checked. Memoized — this flips at most once, ever, for a
+  // given server's lifetime (the instant any user exists, admin or not, the
+  // server-side gate closes for good — see server-plugin-oauth's GET
+  // /setup-required) — so there's no reason to re-fetch on every navigation.
+  const setupRequired = ref<boolean | null>(null)
+  async function checkSetupRequired() {
+    if (setupRequired.value !== null) return setupRequired.value
+    try {
+      const res = await fetch(`${OAUTH_BASE}/setup-required`)
+      setupRequired.value = res.ok ? !!(await res.json()).required : false
+    } catch {
+      setupRequired.value = false   // fail open to the normal login screen, don't strand the user on a broken check
+    }
+    return setupRequired.value
+  }
+  // Called by Setup.vue right after its own POST succeeds — updates the
+  // cached value in place so the router's very next navigation (its
+  // redirect to /login) doesn't read the stale "still required" answer and
+  // bounce straight back to /setup.
+  function markSetupComplete() { setupRequired.value = false }
+
   const isAuthenticated = computed(() => !!accessToken.value)
   // Already expanded server-side (GET /me resolves the '*' bootstrap sentinel
   // into every real catalog key) — a plain membership check is always enough.
@@ -116,5 +137,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   function logout() { clear() }
 
-  return { accessToken, user, ready, isAuthenticated, permissions, hasPermission, buildAuthorizeRequest, completeLogin, refresh, init, logout }
+  return {
+    accessToken, user, ready, isAuthenticated, permissions, hasPermission,
+    buildAuthorizeRequest, completeLogin, refresh, init, logout,
+    setupRequired, checkSetupRequired, markSetupComplete,
+  }
 })

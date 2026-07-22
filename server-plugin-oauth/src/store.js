@@ -146,6 +146,16 @@ export async function createInvite({ email }) {
   return normalizeUser(row)
 }
 
+// Whether the table has any row at all (admin, pending invite, anyone) —
+// the signal oauth's register() uses to decide whether it's safe to
+// auto-bootstrap an admin from ADMIN_EMAIL/ADMIN_PASSWORD: only a truly
+// fresh install has zero rows, so this fires at most once ever, regardless
+// of how many times the server restarts with those env vars still set.
+export async function hasAnyUser() {
+  const row = await db('whitebox_oauth_users').select(['id']).first()
+  return !!row
+}
+
 export async function listUsers() {
   const rows = await db('whitebox_oauth_users').select([...USER_COLUMNS, 'password_hash']).orderBy('created_at', 'asc')
   return rows.map(({ password_hash, ...rest }) => ({ ...normalizeUser(rest), active: password_hash != null }))

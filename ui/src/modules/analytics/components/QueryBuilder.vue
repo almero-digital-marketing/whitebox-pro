@@ -38,6 +38,10 @@ const fields = computed(() => {
 })
 
 const isNew = computed(() => !props.widget)
+// m.hasContent() already knows what "empty" means per kind (no metric picked, no funnel
+// steps, etc.) — it just wasn't wired to the button before, so an empty/broken query could
+// be saved as a blank, unlabeled widget with no warning at all.
+const canSave = computed(() => m.hasContent() && !!m.title?.trim())
 const preview = ref('')
 const previewing = ref(false)
 async function run() {
@@ -52,7 +56,11 @@ async function run() {
   } catch (e: any) { preview.value = 'Error: ' + e.message }
   finally { previewing.value = false }
 }
-function save() { emit('save', { title: m.title, kind: m.kind, query: m.build() }); m.captureOriginal() }
+function save() {
+  if (!canSave.value) return
+  emit('save', { title: m.title, kind: m.kind, query: m.build() })
+  m.captureOriginal()
+}
 // Cancel backs out entirely — no edit applied, no widget left selected. The editor
 // unmounts (parent clears the selection + returns to Agent), so no form revert needed.
 function cancel() { preview.value = ''; emit('cancel') }
@@ -74,7 +82,7 @@ defineExpose({ build: m.build, hasContent: m.hasContent, isDirty: m.isDirty })
       <Button label="Cancel" text severity="secondary" size="small" class="cancel" @click="cancel" />
       <span v-if="preview" class="result" :class="{ err: preview.startsWith('Error') }">{{ preview }}</span>
       <Button label="Run" :loading="previewing" severity="secondary" outlined size="small" @click="run" />
-      <Button :label="isNew ? 'Add to report' : 'Save'" size="small" @click="save" />
+      <Button :label="isNew ? 'Add to report' : 'Save'" size="small" :disabled="!canSave" @click="save" />
     </div>
   </div>
 </template>

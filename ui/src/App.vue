@@ -5,13 +5,17 @@
 // module's state across switches. Each module is self-contained under src/modules/.
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
+import Toast from 'primevue/toast'
 import ActivityBar from './shell/ActivityBar.vue'
 import { modules } from './shell/modules'
 import { useAuthStore } from './shell/stores/auth'
+import { initToast } from './shell/toast'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+initToast(useToast())
 // /login, /callback, /accept-invite are standalone screens — no activity bar chrome.
 const isAuthScreen = computed(() => ['login', 'callback', 'accept-invite'].includes(route.name as string))
 const visibleModules = computed(() => modules.filter((m) => !m.requiresAnyPermission || m.requiresAnyPermission.some((k) => authStore.hasPermission(k))))
@@ -38,6 +42,7 @@ function select(id: string) {
 </script>
 
 <template>
+  <Toast position="top-right" />
   <router-view v-if="isAuthScreen" />
   <div v-else class="shell">
     <ActivityBar :modules="visibleModules" :active-id="activeId" @select="select" @logout="logout" />

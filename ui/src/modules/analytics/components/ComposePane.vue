@@ -135,7 +135,7 @@ function cancelEdit() { nameEdit.value = props.report?.name || ''; editing.value
     <!-- footer action bar — mirrors the Query tab's Cancel / … / action layout -->
     <div class="agent-actions">
       <Button label="Cancel" text severity="secondary" size="small" class="ag-cancel" @click="cancelAgent" />
-      <Button :label="composing ? 'Composing…' : 'Ask'" :loading="composing" size="small" :disabled="summarizing" @click="send" />
+      <Button :label="composing ? 'Composing…' : 'Ask'" :loading="composing" size="small" :disabled="summarizing || !q.trim()" @click="send" />
     </div>
     <p v-if="report" class="muted hint">Ask a follow-up to add more widgets — or click a widget and switch to Query to edit it.</p>
     <div class="suggest" :class="{ dim: loadingSug }">

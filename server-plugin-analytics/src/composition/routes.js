@@ -31,7 +31,7 @@ import { maskIdentity, maskEmail, maskPhone, CONTACT_KEYS } from './mask.js'
 // donut/radar render a breakdown differently (pie / polygon, same query shape); distribution is a
 // histogram of one numeric variable; scatter plots two numeric facts per person; pivot/heatmap render
 // a 2-D compare matrix; cohort is a retention grid.
-const KINDS = new Set(['stat', 'timeseries', 'breakdown', 'donut', 'radar', 'distribution', 'scatter', 'pivot', 'heatmap', 'cohort', 'funnel', 'dropoff', 'table', 'answer'])
+export const KINDS = new Set(['stat', 'timeseries', 'breakdown', 'donut', 'radar', 'distribution', 'scatter', 'pivot', 'heatmap', 'cohort', 'funnel', 'dropoff', 'table', 'answer'])
 
 // Pick the best contact identity to fall back on (email > phone > user > any non-opaque) —
 // only ever returned MASKED. Null when a passport has only opaque identities (fingerprint).
@@ -50,7 +50,7 @@ function bestIdentity(ids = []) {
 //   · contacts   — { email, phone } MASKED (m•••@…, +359•••89) for the table's contact columns
 // The raw identity values are never serialized. Names come from one batched query; identities
 // are fetched per row (one page) and masked here before anything leaves the server.
-async function enrichPeople(result, passports, limit = 100) {
+export async function enrichPeople(result, passports, limit = 100) {
   if (!Array.isArray(result?.passports)) return result
   const page = result.passports.slice(0, limit)
   const names = await store.namesByPassports(page.map((p) => p.id)).catch(() => ({}))
@@ -90,8 +90,9 @@ async function resolveSeries(deps, subs) {
 
 // Resolve one query def. Branches by shape so a widget can be a cohort count, a
 // time-series, a fact-value breakdown, a funnel, a grounded answer, or a multi-
-// series comparison (series[] / splitBy).
-async function runQuery(deps, q = {}) {
+// series comparison (series[] / splitBy). Exported so mcp.js can run the exact
+// same live-preview/widget-resolve logic the REST routes below use.
+export async function runQuery(deps, q = {}) {
   const { selector, awareness } = deps
   // `scope` confines a query to a cohort: an explicit passport-id array, OR a people
   // sub-selector (a cohort filter) resolved to ids here — so an aggregate (group/
@@ -216,7 +217,7 @@ async function runQuery(deps, q = {}) {
 // Reduce a widget's resolved data to the essentials the explainer needs (and a stable
 // fingerprint to cache by). Keeps the AI prompt small and skips identity/PII rows.
 const seriesOf = (d) => (Array.isArray(d) ? d : d?.series || [])
-function compactForExplain(kind, data) {
+export function compactForExplain(kind, data) {
   if (data?.multi) {   // a comparison — give the explainer each named series so it can say which leads
     return { comparison: (data.series || []).map((s) => ({ name: s.name, points: s.points.slice(0, 40).map((p) => [p.bucket, p.value]) })) }
   }
@@ -259,16 +260,56 @@ const explainCache = new Map()
 // report-state fingerprint → suggested questions (the compose "Try one:" chips).
 const suggestCache = new Map()
 
+// question → AI assembles widget specs → persisted into a (draft) report, each
+// validated by actually resolving it (a widget whose query the selector rejects
+// is dropped, never saved) → resolved data attached so the caller can render
+// immediately. Exported so both the REST /compose route and the MCP
+// analytics_compose tool run this exact same logic — one implementation, two
+// transports, matching the rest of this codebase.
+export async function composeReport({ selector, awareness, passports, logger }, { question, report_id } = {}) {
+  if (!question || typeof question !== 'string') { const e = new Error('question is required'); e.status = 400; throw e }
+  const deps = { selector, awareness }
+  const specs = await compose.composeWidgets(question)
+
+  let report = report_id ? await store.getReport(report_id) : null
+  if (!report) report = await store.createReport({ name: question.slice(0, 80) })
+  let sort = report.widgets?.length || 0
+
+  const widgets = []
+  for (const s of specs) {
+    let data
+    try { data = await runQuery(deps, s.query) }
+    catch (e) {
+      logger?.warn?.({ err: e.message, title: s.title, kind: s.kind }, 'compose: dropping widget whose query failed to resolve')
+      continue
+    }
+    const row = await store.addWidget(report.id, { ...s, provenance: 'ai', sort: sort++ })
+    if (row.kind === 'table') { try { data = await enrichPeople(data, passports) } catch { /* keep raw */ } }
+    widgets.push({ ...row, data, error: null })
+  }
+  return { report: { id: report.id, name: report.name }, widgets }
+}
+
+// The widget summary = the AI's plain-language reading of the query (the same text
+// the Agent tab shows). Generated lazily on first request and persisted, so the AI
+// runs ONCE per query version — re-runs only after a query edit (which clears the
+// stored summary). Exported for the same one-implementation-two-transports reason
+// as composeReport above.
+export async function widgetSummary(logger, id) {
+  const w = await store.getWidget(id)
+  if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
+  if (w.summary) return { summary: w.summary, cached: true }
+  let summary = null
+  try { summary = await compose.describeQuery(w.query) }
+  catch (err) { logger?.warn?.({ err }, 'describe (widget summary) failed') }
+  if (summary) await store.updateWidget(id, { summary })
+  return { summary }
+}
+
 export function mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger }) {
   const router = express.Router()
   const deps = { selector, awareness }
   const fail = (res, err, msg) => { logger.error({ err }, msg); res.status(500).json({ error: msg }) }
-  // Live broadcasts are emitted by the store on every mutation (caller-agnostic).
-  // Best-effort describe for the widget summary — a failure just leaves it blank.
-  const describeSafe = async (query) => {
-    try { return await compose.describeQuery(query) }
-    catch (err) { logger.warn({ err }, 'describe (widget summary) failed'); return null }
-  }
 
   // ── reports ────────────────────────────────────────────────────────────────
   router.get('/reports', requireRead, async (req, res) => {
@@ -336,14 +377,11 @@ export function mountComposition(app, { requireRead, requireWrite, selector, awa
   // that's an implementation detail (avoid re-asking the AI), not a
   // user-facing write action; viewing a widget shouldn't need edit rights.
   router.post('/widgets/:id/summary', requireRead, async (req, res) => {
-    try {
-      const w = await store.getWidget(req.params.id)
-      if (!w) return res.status(404).json({ error: 'widget not found' })
-      if (w.summary) return res.json({ summary: w.summary, cached: true })
-      const summary = await describeSafe(w.query)
-      if (summary) await store.updateWidget(req.params.id, { summary })
-      res.json({ summary })
-    } catch (err) { res.status(502).json({ error: `summary failed: ${err.message}` }) }
+    try { res.json(await widgetSummary(logger, req.params.id)) }
+    catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message })
+      res.status(502).json({ error: `summary failed: ${err.message}` })
+    }
   })
 
   router.delete('/widgets/:id', requireWrite, async (req, res) => {
@@ -384,32 +422,9 @@ export function mountComposition(app, { requireRead, requireWrite, selector, awa
   // write-gated: the "just ask" loop persists a (draft) report + widgets, not
   // just a read — see analytics:write's catalog description.
   router.post('/compose', requireWrite, async (req, res) => {
-    const { question, report_id } = req.body || {}
-    if (!question || typeof question !== 'string') return res.status(400).json({ error: 'question is required' })
-    try {
-      const specs = await compose.composeWidgets(question)
-
-      let report = report_id ? await store.getReport(report_id) : null
-      if (!report) report = await store.createReport({ name: question.slice(0, 80) })
-      let sort = report.widgets?.length || 0
-
-      const widgets = []
-      for (const s of specs) {
-        // Validate the generated query by resolving it BEFORE persisting — a widget whose query
-        // the selector rejects (the AI mis-shaped it) is dropped, never saved. A report only ever
-        // contains widgets that actually render; no broken tiles. (The resolved data is reused.)
-        let data
-        try { data = await runQuery(deps, s.query) }
-        catch (e) {
-          logger.warn({ err: e.message, title: s.title, kind: s.kind }, 'compose: dropping widget whose query failed to resolve')
-          continue
-        }
-        const row = await store.addWidget(report.id, { ...s, provenance: 'ai', sort: sort++ })
-        if (row.kind === 'table') { try { data = await enrichPeople(data, passports) } catch { /* keep raw */ } }
-        widgets.push({ ...row, data, error: null })
-      }
-      res.json({ report: { id: report.id, name: report.name }, widgets })
-    } catch (err) {
+    try { res.json(await composeReport({ selector, awareness, passports, logger }, req.body || {})) }
+    catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message })
       logger.error({ err }, 'compose failed')
       res.status(502).json({ error: `compose failed: ${err.message}` })
     }

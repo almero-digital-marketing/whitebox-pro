@@ -7,61 +7,72 @@
 // each request stands alone). One McpServer instance for the whole process;
 // every request reuses it.
 //
-// Auth: a single bearer token gates the endpoint. Any client with the token
-// can invoke any registered capability. Per-tool ACLs are a follow-up.
+// Auth: a bearer token/JWT gates the endpoint (mcp:use scope). That alone only
+// answers "can this client use MCP at all" — WHICH capabilities it can invoke
+// is enforced per-tool/resource below via an optional `scope` on tool()/
+// resource(), checked against the verified JWT's `scope` claim. The SDK
+// threads a bearer middleware's `req.auth` through to every handler as
+// `extra.authInfo` by convention (see streamableHttp.js) — our own jwt()
+// middleware already sets `req.auth = { sub, scope, claims }`, so this needs
+// no extra plumbing beyond reading extra.authInfo.scope here.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 
 // Dependencies + state captured once via init() — module-level singleton, no
 // wrapping factory closure. Matches the core pattern (passports, sessions, …).
-// init() builds a FRESH McpServer and registration ledger every call: the SDK
-// throws if a tool name is registered twice on one server, so a clean rebuild
-// is what keeps re-init (and per-test isolation) sound.
+// init() resets the registration ledger every call: the SDK throws if a tool
+// name is registered twice on one server, so a clean rebuild is what keeps
+// re-init (and per-test isolation) sound.
+//
+// Registrations are recorded here rather than applied to one live McpServer,
+// because the transport can't be shared across requests (see mount() below) —
+// each request needs its own fresh McpServer with the full catalog replayed
+// onto it, and replaying from a plain list is what makes that replay possible.
 let logger
 let enabled
-let server
-let registered = { tools: [], resources: [], prompts: [] }
+let name, version
+let registrations = { tools: [], resources: [], prompts: [] }
+let registered = { tools: [], resources: [], prompts: [] }   // names only, for inspect()
 
 export function init({ config = {}, logger: log } = {}) {
   logger = log
   enabled = config.enabled !== false
-
-  // The McpServer instance. Plugins register capabilities on this during
-  // ctx.mcp.tool/resource/prompt; the transport pipes JSON-RPC frames
-  // through it on each request.
-  server = new McpServer(
-    {
-      name:    config.name    || 'whitebox',
-      version: config.version || '2.0.0',
-    },
-    {
-      capabilities: { logging: {} },
-    },
-  )
-
-  // Track registrations locally so /mcp/inspect (and tests) can list what's
-  // available without reaching into McpServer internals.
+  name = config.name || 'whitebox'
+  version = config.version || '2.0.0'
+  registrations = { tools: [], resources: [], prompts: [] }
   registered = { tools: [], resources: [], prompts: [] }
 }
+
+// True when the verified token's space-separated `scope` claim includes the
+// given scope. No scope required (undefined/null) always passes — that's how
+// mcp:use-only tools (or a host running without per-tool scopes) keep working.
+function hasScope(extra, scope) {
+  if (!scope) return true
+  const granted = String(extra?.authInfo?.scope || '').split(' ')
+  return granted.includes(scope)
+}
+const insufficientScope = scope => ({
+  isError: true,
+  content: [{ type: 'text', text: `insufficient_scope: this requires the "${scope}" permission` }],
+})
 
 // Register a tool. `inputSchema` is a ZodRawShape (plain object of Zod
 // schemas, NOT z.object(...) — the SDK wraps it). `handler(args)` returns
 // an MCP CallToolResult: `{ content: [{ type: 'text', text: '...' }] }`.
-export function tool({ name, description, inputSchema, outputSchema, annotations, handler }) {
+// `scope`, when given, gates the tool on top of the endpoint-level mcp:use
+// gate — e.g. a plugin declares 'audiences:write' on a mutating tool so a
+// token with mcp:use but not audiences:write can't invoke it.
+export function tool({ name, description, inputSchema, outputSchema, annotations, scope, handler }) {
   if (!enabled) return
   if (!name)    throw new Error('mcp.tool: name is required')
   if (!handler) throw new Error('mcp.tool: handler is required')
 
-  server.registerTool(
+  registrations.tools.push({
     name,
-    {
-      description,
-      inputSchema,
-      outputSchema,
-      annotations,
-    },
-    async (args, extra) => {
+    config: { description, inputSchema, outputSchema, annotations },
+    handler: async (args, extra) => {
+      if (!hasScope(extra, scope)) return insufficientScope(scope)
       try {
         return await handler(args, extra)
       } catch (err) {
@@ -72,22 +83,23 @@ export function tool({ name, description, inputSchema, outputSchema, annotations
         }
       }
     },
-  )
+  })
   registered.tools.push(name)
 }
 
 // Register a resource at a static URI. For templated URIs, pass a
 // ResourceTemplate instance (imported from @modelcontextprotocol/sdk).
-export function resource({ name, uri, description, mimeType, handler }) {
+export function resource({ name, uri, description, mimeType, scope, handler }) {
   if (!enabled) return
   if (!name) throw new Error('mcp.resource: name is required')
   if (!uri)  throw new Error('mcp.resource: uri is required')
 
-  server.registerResource(
+  registrations.resources.push({
     name,
     uri,
-    { description, mimeType },
-    async (parsedUri, extra) => {
+    config: { description, mimeType },
+    handler: async (parsedUri, extra) => {
+      if (!hasScope(extra, scope)) throw new Error(`insufficient_scope: this requires the "${scope}" permission`)
       try {
         return await handler(parsedUri, extra)
       } catch (err) {
@@ -95,7 +107,7 @@ export function resource({ name, uri, description, mimeType, handler }) {
         throw err
       }
     },
-  )
+  })
   registered.resources.push(name)
 }
 
@@ -106,26 +118,38 @@ export function prompt({ name, description, argsSchema, handler }) {
   if (!name)    throw new Error('mcp.prompt: name is required')
   if (!handler) throw new Error('mcp.prompt: handler is required')
 
-  server.registerPrompt(
+  registrations.prompts.push({
     name,
-    { description, argsSchema },
-    async (args, extra) => handler(args, extra),
-  )
+    config: { description, argsSchema },
+    handler: async (args, extra) => handler(args, extra),
+  })
   registered.prompts.push(name)
 }
 
-// Wire the single shared McpServer to a Streamable HTTP transport and
-// mount the three required Express handlers (POST/GET/DELETE). Stateless
-// mode: sessionIdGenerator is omitted, each request is independent.
+// Build a fresh McpServer with the full recorded catalog replayed onto it —
+// cheap (plain function calls, no I/O), and what lets every request start
+// from a clean, never-before-connected server instance.
+function buildServer() {
+  const server = new McpServer({ name, version }, { capabilities: { logging: {} } })
+  for (const r of registrations.tools) server.registerTool(r.name, r.config, r.handler)
+  for (const r of registrations.resources) server.registerResource(r.name, r.uri, r.config, r.handler)
+  for (const r of registrations.prompts) server.registerPrompt(r.name, r.config, r.handler)
+  return server
+}
+
+// Mount the three required Express handlers (POST/GET/DELETE). Stateless
+// mode: sessionIdGenerator is omitted, each request is independent — and,
+// per the SDK's own stateless example, that independence has to extend to
+// the McpServer + transport pair too: a Server can only ever `connect()` one
+// transport in its lifetime, so reusing one shared pair across requests (the
+// previous approach here) works for exactly the first request and then
+// errors on every one after it. A fresh pair per request avoids that entirely
+// and is naturally safe under concurrent in-flight requests too.
 export async function mount(app, { path = '/mcp', auth } = {}) {
   if (!enabled) {
     logger?.info?.('MCP disabled — endpoint not mounted')
     return
   }
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  })
-  await server.connect(transport)
 
   // `auth` is a verifier: { middleware, authorizationServers?, resource?, scopesSupported? }.
   const gate = auth?.middleware || (typeof auth === 'function' ? auth : null)
@@ -147,9 +171,22 @@ export async function mount(app, { path = '/mcp', auth } = {}) {
     logger?.info?.('MCP OAuth discovery at /.well-known/oauth-protected-resource (AS: %s)', auth.authorizationServers.join(', '))
   }
 
-  app.post(path,   ...middlewares, (req, res) => transport.handleRequest(req, res, req.body))
-  app.get(path,    ...middlewares, (req, res) => transport.handleRequest(req, res))
-  app.delete(path, ...middlewares, (req, res) => transport.handleRequest(req, res))
+  async function handle(req, res) {
+    const server = buildServer()
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    res.on('close', () => { transport.close(); server.close() })
+    try {
+      await server.connect(transport)
+      await transport.handleRequest(req, res, req.body)
+    } catch (err) {
+      logger?.error?.({ err }, 'MCP request failed')
+      if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null })
+    }
+  }
+
+  app.post(path,   ...middlewares, handle)
+  app.get(path,    ...middlewares, handle)
+  app.delete(path, ...middlewares, handle)
 
   logger?.info?.('MCP mounted at %s (%d tools, %d resources, %d prompts)',
     path, registered.tools.length, registered.resources.length, registered.prompts.length)

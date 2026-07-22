@@ -6,6 +6,7 @@ import { registerMcp } from './mcp.js'
 import * as compositionStore from './composition/store.js'
 import * as compose from './composition/compose.js'
 import { mountComposition } from './composition/routes.js'
+import { registerMcp as registerCompositionMcp } from './composition/mcp.js'
 
 // Factory: import { analytics } from 'whitebox-pro-server-plugin-analytics' and call
 // it with options in whitebox.config.js — analytics({ auth: { secret } }).
@@ -69,6 +70,7 @@ export function analytics(options = {}) {
         compositionStore.init({ db, connect })   // store broadcasts every mutation → all clients live
         compose.init({ db, ai, selector, awareness, facts, logger })
         mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger })
+        registerCompositionMcp(ctx, { selector, awareness, passports, logger })
         logger.info('Analytics composition surface ready (reports · resolve · compose)')
       } else {
         logger.warn('Analytics composition surface skipped (no db/selector in ctx)')

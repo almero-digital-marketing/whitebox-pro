@@ -20,7 +20,7 @@ const paramStr = (p: any): string => (Array.isArray(p) ? p[0] : p) || ''
 // Data lives in the store; selection lives in the URL; view/layout stays local here.
 // storeToRefs keeps the template's `reports`/`current`/… names unchanged.
 const store = useAnalyticsStore()
-const { reports, current, widgetData, schema, composing, error } = storeToRefs(store)
+const { reports, current, widgetData, schema, composing } = storeToRefs(store)
 // client-side rail search
 const q = ref('')
 const filteredReports = computed(() => {
@@ -220,7 +220,6 @@ onActivated(() => { store.loadReports(); nextTick(updateHandle) })
         <ComposePane v-model:mode="mode" :composing="composing" :report="current" :selected-widget="selectedWidget" :schema="schema"
           @compose="compose" @rename="renameReport" @save="saveWidget" @cancel="cancelEdit" />
       </div>
-      <p v-if="error && !centerCollapsed" class="err">{{ error }}</p>
     </main>
     <section class="right" ref="rightEl">
       <Board :report="current" :data="widgetData" :selected-id="selectedWidget?.id" :columns="centerCollapsed ? 2 : 1"
