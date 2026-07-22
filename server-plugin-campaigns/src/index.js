@@ -23,7 +23,8 @@ import { fileURLToPath } from 'node:url'
 import * as store from './store.js'
 import * as service from './service.js'
 import * as rest from './rest.js'
-import { resolveAuth } from 'whitebox-pro-server/auth'
+import * as mcpTools from './mcp.js'
+import { resolveReadWriteAuth } from 'whitebox-pro-server/auth'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -36,6 +37,14 @@ export function campaigns(options = {}) {
   return {
     name: 'campaigns',
 
+    permissions: {
+      items: [
+        { key: 'campaigns:read', label: 'View Campaigns', description: 'View campaigns and their delivery status' },
+        { key: 'campaigns:write', label: 'Edit Campaigns', description: 'Create, schedule, and send email/SMS campaigns' },
+      ],
+      defaults: [],
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),
@@ -47,8 +56,8 @@ export function campaigns(options = {}) {
     async register(app, ctx) {
       const cfg = options
       const { logger } = ctx
-      const authVerifier = resolveAuth(cfg.auth, { logger })
-      if (!authVerifier) throw new Error('campaigns: auth (a secret or a composed verifier) is required')
+      const { read: readAuth, write: writeAuth } = resolveReadWriteAuth(cfg.auth, { logger })
+      if (!readAuth || !writeAuth) throw new Error('campaigns: auth (a secret, a composed verifier, or { read, write }) is required')
       const audiences = options.audiences || ctx.plugins?.audiences?.service
       if (!audiences) logger.warn('campaigns: audiences service not wired — delivery preview + send will fail (register audiences first)')
 
@@ -60,7 +69,8 @@ export function campaigns(options = {}) {
       store.init({ db: ctx.db })
       service.init({ store, audiences, dryRun, deliver, logger })
 
-      rest.register(app, { service, requireAuth: authVerifier.middleware })
+      rest.register(app, { service, requireRead: readAuth.middleware, requireWrite: writeAuth.middleware })
+      if (ctx.mcp) mcpTools.register(ctx.mcp, { service, logger })
 
       logger.info(`Campaigns plugin ready (delivery: ${dryRun ? 'dry-run' : 'live'})`)
       return { service }   // exposed for other plugins/tests

@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-// Bootstrap the first (or another) user. No UI exists to do this yet — every
-// user is created this way.
+// Bootstrap the first user, granted permissions: ['*'] — the reserved
+// sentinel meaning "every permission that exists, including ones added
+// later." There's no admin yet to grant `users:manage` to a fresh install's
+// first account, so this is one of the two bootstrapping escape hatches
+// (the other being ../src/index.js's own auto-bootstrap on server boot,
+// which reads the same ADMIN_EMAIL/ADMIN_PASSWORD — use this script instead
+// if you'd rather not put a password in .env at all). Every subsequent user
+// comes through the invite flow, and only someone holding `users:manage`
+// can send an invite.
 //
 //   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD=... node scripts/create-admin.mjs
 //   node scripts/create-admin.mjs                 # prompts for both instead
@@ -29,8 +36,8 @@ async function main() {
   const db = await connect()
   users.init({ db })
   try {
-    const user = await users.createUser({ email, password })
-    console.log(`Created user ${user.email} (${user.id})`)
+    const user = await users.createUser({ email, password, permissions: ['*'] })
+    console.log(`Created admin ${user.email} (${user.id})`)
   } finally {
     await db.destroy()
   }

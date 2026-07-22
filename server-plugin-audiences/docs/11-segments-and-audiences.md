@@ -1,129 +1,122 @@
 # 11 · Segments, audiences & activation
 
-**Status:** Design — the evolution of the [rule](03-rules.md) model into a shared
-targeting layer. Segments and audience-composition are new; ad-network delivery
-([02](02-concepts.md), [05](05-networks.md)) is unchanged and becomes *one* activation.
+A **segment** is a named, dynamic sub-query — a saved selector/funnel source, typically born from a
+chart selection in the Analytics module. An **audience** is an `AND`/`OR`/`NOT` composition of segments.
+Both are **living queries** (resolved at read-time, never a stored roster) — see
+[02 · Concepts](02-concepts.md). An audience is the **activation-agnostic targeting primitive**: the
+same audience can sync **delivery** to an ad network, be exposed **client-side** (on-site membership),
+or be exposed to the **campaigns** module (email/SMS).
 
-> **One line:** a **segment** is a named, dynamic sub-query born from a chart selection;
-> an **audience** is an `AND/OR/NOT` composition of segments; both are **living queries**
-> (resolved at apply-time, never a stored roster). An audience is the **single
-> activation-agnostic targeting primitive** that every consumer points at — ad-network
-> **CAPI delivery** *and* the **campaigns** module (email/SMS) alike.
+This is the plugin's primary, actually-used concept — see [01 · Architecture](01-architecture.md) and
+[03 · Segment sources](03-segment-sources.md) for the source grammar a segment is built from.
 
 ---
 
-## 1. Why this exists — un-bundle the cohort from the activation
+## 1. Why segments are split from audiences
 
-Today a [rule](03-rules.md) bundles two things: a cohort (a saved selector / funnel-slot)
-**and** an ad-network delivery. That's fine when ad networks are the only consumer. They
-aren't: the **campaigns** module targets email/SMS at the *same* cohorts.
+A cohort (a saved selector / funnel-slot) and an ad-network delivery used to be bundled into one thing —
+an earlier `Rule` entity that carried both. That coupling didn't survive contact with a second consumer:
+the **campaigns** module needs to target email/SMS at the *same* cohorts ad delivery targets. So the
+plugin splits the two:
 
-So we split the two:
-
-| layer | what it is | who owns it |
+| layer | what it is | schema |
 |---|---|---|
-| **segment** | one chart-derived dynamic sub-query (the atom) | this plugin |
-| **audience** | an `AND/OR/NOT` composition of segments — **activation-agnostic** | this plugin |
-| **activation** | how an audience is *used*: ad-network CAPI **delivery**, or a **campaign** send | the consumer (audiences / campaigns) |
-
-The old "rule" is now just **a single-segment audience + an ad-delivery activation** — it
-keeps working (§7), but the cohort it targets is no longer welded to ad networks.
+| **segment** | one saved source (the atom) | [`src/segments.js`](../src/segments.js) |
+| **audience** | an `AND`/`OR`/`NOT` composition of segments — activation-agnostic | [`src/audiences.js`](../src/audiences.js) |
+| **activation** | how an audience is *used*: ad-network delivery, client-side exposure, or a campaign | flags/status on the audience row, or the consumer plugin |
 
 ```
 analytics (a chart selection)
-        │  derive
+        │  derive + dedup
         ▼
-   SEGMENT ──compose (AND/OR/NOT)──▶ AUDIENCE ──┬─▶ ad-network delivery (CAPI, Mode A)
-   (dynamic, named, dedup'd)        (dynamic)   └─▶ campaign send (email / SMS)
-        └──────────── resolved LIVE at apply-time ───────────┘
+   SEGMENT ──compose (all/any + negate)──▶ AUDIENCE ──┬─▶ ad-network delivery (Mode A sync)
+   (dynamic, named, dedup'd)              (dynamic)   ├─▶ client-side exposure (on-site lookup)
+                                                        └─▶ campaigns module (email / SMS)
+        └───────────────── resolved LIVE, every call ─────────────────┘
 ```
 
 ## 2. Segment — the atom
 
-A segment is a **saved core selector source**, exactly like a rule's source, but with **no
-delivery and no lifecycle of its own** — it's a reusable cohort fragment.
-
 ```js
 segment {
   id,                       // uuid
-  name,                     // AI-generated, human-facing ("Lapsed clients", "Opened, didn't click")
-  source: { ... },          // SELECTOR  { select: {about?, filter?, judge?} }
-                            //   OR  FUNNEL-SLOT { funnel, slot:'gap:2→3', status? }
-  predicate_key,            // deterministic stable-hash of source → dedup identity
-  origin,                   // provenance: { widget_id?, report_id?, selection } (optional)
+  name,                     // AI-generated or user-supplied, human-facing
+  source: { ... },          // { select: {about?, filter?, judge?} }  OR  { funnel, slot, status? }
+  predicate_key,            // sha256 of the stable-sorted source → dedup identity
+  origin,                   // provenance: { widget_id?, report_id?, selection, system? } (optional)
+  created_at, updated_at,
 }
 ```
 
-- **Born from a chart selection** (§6). The user clicks a bar; the system derives the
-  predicate, the AI names it, the **query stays hidden** in the UI — you see a named chip.
-- **Dedup on `predicate_key`**, not the name: selecting the "lapsed" bar twice yields the
-  *same* segment. The AI name is a cached label over a deterministic identity.
-- The `source` is resolved by the **core selector engine** — `select` →
-  `selector.resolve(…, {projection:'people'})`, `funnel` → `selector.funnel(…)` + the slot.
-  This is the exact resolution the [evaluator](04-evaluator.md) already does for rule sources.
+- Typically **born from a chart selection** in Analytics: the user clicks a bar, the system derives the
+  predicate, the AI names it (`nameSegment`), and the query stays hidden behind a named chip. Can also
+  be authored directly via REST/MCP (`audiences_create_segment` / `POST /audiences/segments`).
+- **Dedups on `predicate_key`, not the name** (`saveSegment` in `service.js`): selecting the same slice
+  twice returns the *existing* segment. The AI name is a cosmetic label over a deterministic identity.
+- `source` is resolved by the **core selector engine** via `evaluator.resolveSource` — `select` →
+  `selector.resolve(…, {projection:'people'})`, `funnel` → `selector.funnel(…)` + the slot. Same
+  resolution the evaluator has always used for a saved source — see
+  [04 · Evaluator](04-evaluator.md).
+- The plugin seeds one built-in segment on boot: **"Everyone"** — an empty `{select:{filter:{all:[]}}}`
+  (`service.ensureDefaultSegments`), the universal building block for audiences that need a whole-base
+  positive term to subtract from (e.g. *Everyone AND NOT reached*).
 
 ## 3. Audience — the composition
-
-An audience is a **flat boolean combination of segments**, plus zero or more activations.
 
 ```js
 audience {
   id, name,
-  composition: { op: 'all' | 'any', members: [ {segment_id} | {not: segment_id} ] },
-  activations: [ … ],       // §5 — ad delivery and/or campaign; may be empty (defined, not yet activated)
-  ttl_days, policy,         // carried per activation that needs them (ad delivery)
+  activation_id,            // slugified from name (or user-supplied), unique — the CAPI audience key
+                             // and the client-side membership key
+  rule: { op: 'all' | 'any', members: [ { segment, negate? } ] },
+  delivery,                 // per-network sync status — see §5
+  client_side,              // exposed to the client-side membership lookup?
+  campaigns,                // available to the Campaigns module (email & SMS)?
 }
 ```
 
-`all` = AND, `any` = OR, `{not: …}` = NOT a member. **Flat only** — no nested trees in v1
-(it covers the overwhelming majority and keeps the builder simple).
+`all` = AND (intersect the non-negated members), `any` = OR (union them); any `negate: true` member is
+always subtracted. **Flat only** — no nested trees. At least one non-negated member is required (a
+composition can't be defined purely as a NOT of the whole base).
 
-An audience with an **empty** `activations` list is legal: *defined and sizeable, not yet
-firing* — the analog of a `rule { enabled:false }`. You attach a CAPI event or a campaign
-later.
+An audience with `delivery` empty, `client_side: false`, and `campaigns: false` is legal: *defined and
+sizeable, not yet activated anywhere.* You turn on a network, client-side exposure, or campaigns
+eligibility independently and later.
 
 ## 4. Dynamic, never a roster
 
-Membership is **never materialized**. An audience holds the *rule*; "who is in it" is a
-**live read** computed whenever it's applied:
+Membership is **never materialized**. An audience holds the *composition*; "who is in it" is a **live
+read**, recomputed every time:
 
-- **server-side, on input change** — `awareness.recorded` (and, see §8, CRM **fact** changes)
-  → `markDirty` → debounced evaluate → activations fire the delta. This is why delivery is
-  server-side CAPI: most membership movement happens **off-site, with no browser session**
-  (a CRM fact flips and ages someone in/out). See [02 · keep-warm](02-concepts.md).
-- **at activation time** — a campaign resolves its audience to recipients **at send/schedule**.
-
-`whitebox_audience_matches` stays a **qualification + audit** record (who matched, the
-*why*, what fired) — for keep-warm, explainability, and dedup. It is **not** the audience.
-
-### Resolution — two paths
-- **All-`select` (filter) members** → compile the composition into **one** selector
-  `filter: { all | any | not: [ …each segment's filter… ] }` and resolve in a single engine
-  call. `AND` can also chain via `scope` (resolve B within A's ids). Preview, keep-warm, and
-  the per-member *why* all work unchanged.
-- **Any funnel-slot or judge member** (can't be a single `filter`) → resolve **each segment
-  to a live id-set**, then apply **set algebra** (`∪` / `∩` / `∖`). Uniform and correct for
-  every segment kind; the all-filter compile above is just an optimization.
+- `resolveSegment(id)` / `resolveAudience(id)` read straight through the selector engine / set algebra,
+  with no cache — see [02 · Concepts](02-concepts.md) and [04 · Evaluator](04-evaluator.md).
+- **Resolution is always set algebra over member segments.** `service.js`'s `segmentResolver()`
+  memoises each distinct segment resolve within one audience resolution (so a segment referenced twice,
+  or a positive that's also subtracted, resolves only once), then `evaluator.composeAudience` unions/
+  intersects the id-sets and subtracts the negated ones. There is no "compile an all-`select`
+  composition into one selector call" optimization — every member always resolves independently first.
+- There is **no persisted qualification/audit record** for the audience layer — no equivalent of the
+  old `whitebox_audience_matches` table. What persists is coarse: per-network `delivery` status
+  (`{enabled, last_synced_at, last_count, dry_run}`) on the audience row itself.
 
 ## 5. Activation — the consumers
 
-An audience is activation-agnostic; an **activation** binds it to a channel. Same cohort,
-different identity projection and consent surface:
+An audience is activation-agnostic; three independent surfaces read it:
 
-| activation | resolves the cohort to | identity needed | consent | suppression |
-|---|---|---|---|---|
-| **ad delivery** (CAPI, Mode A) | hashed signals fired as a custom event | **hashed** email/phone + click-ids (`identity.resolve`) | marketing | platform window |
-| **campaign** (email / SMS) | a recipient list at send time | **contactable** email/phone (raw, from `passports.identities`) | email / SMS channel consent | unsubscribes / bounces |
+| activation | how | identity needed | consent |
+|---|---|---|---|
+| **ad-network delivery** | `setDelivery(id, {network, enabled})` — resolves the audience, consent-gates it, dry-runs unless the network has an eligible adapter, stamps `last_synced_at`/`last_count` | hashed email/phone + click-ids (`identity.resolve`) | `consent.allowedCohort` (marketing) |
+| **client-side exposure** | `setClientSide(id, enabled)` — a flag; `passportAudiences(passportId)` checks a passport against every `client_side` audience | none beyond the passport id itself (first-party) | none — immediate, first-party only |
+| **campaigns** | `setCampaigns(id, enabled)` — a flag; the Campaigns module (a separate plugin) reads campaign-enabled audiences as send targets and resolves membership itself at send time | contactable email/phone (raw) | the Campaigns plugin's own channel consent |
 
-Key point: ad delivery wants **hashed** PII (privacy-preserving match keys); a campaign
-needs the **actual** address to send. Both start from the same `people` resolve (passport
-ids + why); they differ only in the identity projection applied after. The campaigns plugin
-owns its send/scheduling; it **references an audience by id** and never re-implements
-selection.
+Ad delivery is a **sync you trigger**, not a continuous process — see
+[02 · Concepts](02-concepts.md#nothing-is-materialized) and [10 · Deployment](10-deployment.md).
+Client-side and campaigns flags are immediate — flipping them changes what the next
+`passportAudiences` call or campaigns-module read sees, with no third-party send involved.
 
 ## 6. Chart selection → segment (per chart)
 
-The heart of the feature: translate a visual selection into a predicate. Covered kinds and
+The Analytics module (a separate plugin) translates a visual selection into a source. Covered kinds and
 their derivation:
 
 | chart | selection → source |
@@ -134,41 +127,16 @@ their derivation:
 | heatmap | a cell → `all: [ row-value, col-value ]` |
 | scatter | a **box** brush → `all: [ factX ∈ [x0,x1], factY ∈ [y0,y1] ]` (range predicate — stays dynamic; a freeform lasso can't) |
 
-**No selection** on cohort or timeseries (their cell/point predicates are ambiguous). The
-cheapest first slice is **drop-off**, because `selector.funnelSlot(result, slot, …)` already
-returns that exact cohort.
+No selection on cohort or timeseries charts (their cell/point predicates are ambiguous).
 
-## 7. Mapping to the existing plugin (back-compat)
+## 7. Historical note — the old `Rule` entity
 
-- A **segment** = a rule `source` (select | funnel-slot) extracted into its own row, minus
-  delivery. New table `whitebox_audience_segments`.
-- An **audience** = the generalization of a rule: a *composition* of segment refs +
-  activations. A legacy `rule` ≡ a **one-segment audience** whose single activation is its
-  ad `delivery`. The strict one-source rule schema ([03 §validation](03-rules.md)) becomes the
-  degenerate case; existing rows migrate as single-segment audiences.
-- The **evaluator** gains a *compose* step (§4) in front of its existing source→engine
-  mapping; **delivery, matches, keep-warm, consent, identity stay as-is**.
-
-## 8. Open items to verify when implementing
-
-- **CRM fact-change → re-evaluate.** The dirty path subscribes to `awareness.recorded` only
-  ([`src/index.js`](../src/index.js)). For CRM-driven audience changes to fire promptly (not
-  just at the next keep-warm sweep), a **fact-change** event must also trigger `markDirty`.
-- **Channel consent for campaigns.** Ad delivery gates on `marketing` ([08](08-consent-privacy.md));
-  email/SMS need their own channel consent + unsubscribe suppression — the campaigns plugin's
-  concern, but it should reuse this plugin's consent/suppression tables where they line up.
-- **Segment store home.** Segments live in this plugin for now; if analytics widgets and
-  audiences later need to share a query by id, promote to the core
-  [saved-query store](../../server/docs/saved-queries.md). Not required for v1.
-
-## 9. Build order
-
-1. **Segment primitive** — `whitebox_audience_segments` table + store + `resolveSegment`
-   (selector / funnel-slot → ids) + REST (`/audiences/segments` CRUD + preview size + AI name).
-2. **Chart selection → segment** in analytics — start with **drop-off** (free via
-   `funnelSlot`): select a bar → named segment chip + Save in the insight column.
-3. **Audience composition** — generalize the rule to a segment composition + the set-algebra
-   resolve; migrate existing rules as single-segment audiences.
-4. **Audiences module** (UI) — segment list + the AND/OR/NOT builder; activations (CAPI today,
-   campaign later).
-5. **Campaigns module** consumes an audience id as its recipient targeting (separate plugin).
+An earlier `Rule` entity bundled a segment-like source with delivery + lifecycle in one row
+(`whitebox_audience_rules`), plus a `whitebox_audience_matches` qualification-audit table and a
+`whitebox_audience_deliveries` fired-event log, kept warm by a BullMQ worker and a daily scheduler
+sweep. It was **fully wired — REST/MCP CRUD, worker, scheduler — but never adopted**: no UI ever wrote to
+it, and it lived in a completely separate table from the segments/audiences this doc describes. It was
+removed entirely (migration
+[`011_drop_rule_system.js`](../src/migrations/011_drop_rule_system.js)); `src/rules.js` now only exports
+the shared `Selector`/`Funnel`/`SLOT_RE` grammar segments reuse (see
+[03 · Segment sources](03-segment-sources.md)). Nothing in this doc depends on it.

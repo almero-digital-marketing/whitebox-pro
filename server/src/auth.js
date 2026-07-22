@@ -58,3 +58,21 @@ export function resolveAuth(authConfig, { logger } = {}) {
   if (authConfig.secret) return { middleware: createAuth({ secret: authConfig.secret, logger }) }
   return null
 }
+
+// Read/write split for plugins whose REST surface has a meaningful read vs
+// write distinction (e.g. analytics/audiences/campaigns, gated by their own
+// `:read`/`:write` permission catalog entries — see server/src/plugins.js).
+// Accepts EITHER shape:
+//   auth: <anything resolveAuth takes>       — legacy: one verifier for BOTH
+//                                               read and write (a static
+//                                               secret has no natural split).
+//   auth: { read: <…>, write: <…> }          — independently resolved verifiers.
+// Detected by presence of a `read`/`write` key — resolveAuth's own accepted
+// shapes never use those keys, so there's no ambiguity between the two.
+export function resolveReadWriteAuth(authConfig, { logger } = {}) {
+  if (authConfig && (authConfig.read !== undefined || authConfig.write !== undefined)) {
+    return { read: resolveAuth(authConfig.read, { logger }), write: resolveAuth(authConfig.write, { logger }) }
+  }
+  const shared = resolveAuth(authConfig, { logger })
+  return { read: shared, write: shared }
+}

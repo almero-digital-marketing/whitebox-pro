@@ -12,6 +12,7 @@ import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import RailSearch from '../../components/RailSearch.vue'
 import { useAudiencesStore } from '../analytics/stores/audiences'
+import { notifyError } from '../../shell/toast'
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -101,12 +102,17 @@ function startRename(s: any) {
   nextTick(() => { const el = document.querySelector('.sp-edit') as HTMLInputElement | null; el?.focus(); el?.select() })
 }
 function cancelRename() { editingId.value = null }
-async function commitRename(s: any) {
+function commitRename(s: any) {
   const wasEditing = editingId.value === s.id
   const name = editName.value.trim()
-  editingId.value = null
+  // Deferred, not immediate: blur always fires before the click that dismisses it (e.g.
+  // clicking a different segment pill to end the rename), so clearing editingId here
+  // synchronously would make it read false by the time that click's addMember runs —
+  // silently adding whatever segment the pointer happened to land on. Clearing it a tick
+  // later means it's still true for that click, so addMember's guard actually blocks it.
+  setTimeout(() => { editingId.value = null }, 0)
   if (!wasEditing || !name || name === s.name) return
-  try { await store.renameSegment(s.id, name) } catch { /* keep the old name on failure */ }
+  store.renameSegment(s.id, name).catch(() => { /* keep the old name on failure */ })
 }
 
 function addMember(segmentId: string) {
@@ -169,13 +175,29 @@ async function save() {
     const row = await store.saveAudience({ id: working.value.id || undefined, name: working.value.name?.trim() || 'Untitled audience', activation_id: working.value.activation_id || undefined, rule: rule.value })
     working.value.id = row.id; working.value.activation_id = row.activation_id || ''; dirty.value = false   // backend may have deduped it
     if (paramStr(route.params.audienceId) !== row.id) router.replace({ name: 'audiences', params: { audienceId: row.id } })   // reflect the new id in the URL
-  } finally { saving.value = false }
+  } catch (e: any) { notifyError(`Couldn't save the audience: ${e.message}`) }
+  finally { saving.value = false }
+}
+// Discard: an existing audience reverts to its last-saved row (still sitting untouched in
+// the store); a never-saved draft just goes back to blank — same "Discard" affordance used
+// throughout Users.vue (profile/permissions/password), so editors behave the same everywhere.
+function discardAudience() {
+  if (working.value.id) {
+    const found = audiences.value.find((a: any) => a.id === working.value.id)
+    if (found) openAudience(found)
+  } else {
+    newAudience()
+  }
 }
 function removeAudience(a: any) {
   confirm.require({
     header: 'Delete audience', message: `Delete “${a.name}”? This can’t be undone.`, icon: 'pi pi-trash',
     defaultFocus: 'reject', acceptProps: { label: 'Delete', severity: 'danger' }, rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: async () => { const wasOpen = working.value.id === a.id; await store.removeAudience(a.id); if (wasOpen) startNew() },
+    accept: async () => {
+      const wasOpen = working.value.id === a.id
+      try { await store.removeAudience(a.id); if (wasOpen) startNew() }
+      catch (e: any) { notifyError(`Couldn't delete “${a.name}”: ${e.message}`) }
+    },
   })
 }
 const fmt = (n: number | null) => (n == null ? '—' : n.toLocaleString())
@@ -235,8 +257,11 @@ function connectNetwork(ch: any) {
 async function toggleClientSide() {
   if (!hasPositive.value || saving.value) return
   if (!working.value.id || dirty.value) await save()
-  const row = await store.setClientSide(working.value.id!, !working.value.client_side)
-  working.value.client_side = !!row.client_side
+  if (!working.value.id) return   // the save above failed (already toasted) — nothing to toggle yet
+  try {
+    const row = await store.setClientSide(working.value.id!, !working.value.client_side)
+    working.value.client_side = !!row.client_side
+  } catch (e: any) { notifyError(`Couldn't update client-side availability: ${e.message}`) }
 }
 
 // Campaigns availability — whether this audience can be picked as a send target in the
@@ -244,8 +269,11 @@ async function toggleClientSide() {
 async function toggleCampaigns() {
   if (!hasPositive.value || saving.value) return
   if (!working.value.id || dirty.value) await save()
-  const row = await store.setCampaigns(working.value.id!, !working.value.campaigns)
-  working.value.campaigns = !!row.campaigns
+  if (!working.value.id) return   // the save above failed (already toasted) — nothing to toggle yet
+  try {
+    const row = await store.setCampaigns(working.value.id!, !working.value.campaigns)
+    working.value.campaigns = !!row.campaigns
+  } catch (e: any) { notifyError(`Couldn't update campaigns availability: ${e.message}`) }
 }
 
 // Toggling delivery. Turning OFF is immediate (safe). Turning ON previews the
@@ -253,10 +281,15 @@ async function toggleCampaigns() {
 async function toggleNetwork(n: any) {
   if (!hasPositive.value || saving.value) return
   if (!working.value.id || dirty.value) await save()          // must be saved to deliver
+  if (!working.value.id) return   // the save above failed (already toasted) — nothing to deliver yet
   const id = working.value.id!
-  if (netOn(n)) { const row = await store.setDelivery(id, n.name, false); working.value.delivery = row.delivery || {}; return }
+  if (netOn(n)) {
+    try { const row = await store.setDelivery(id, n.name, false); working.value.delivery = row.delivery || {} }
+    catch (e: any) { notifyError(`Couldn't turn off delivery to ${n.label}: ${e.message}`) }
+    return
+  }
   let pv: any
-  try { pv = await store.previewDelivery(id) } catch { return }
+  try { pv = await store.previewDelivery(id) } catch (e: any) { notifyError(`Couldn't preview delivery: ${e.message}`); return }
   const parts = [`${fmt(pv.deliverable)} of ${fmt(pv.resolved)} people will be shared via CAPI`]
   if (pv.suppressed) parts.push(`${pv.suppressed} suppressed excluded`)
   if (pv.no_consent) parts.push(`${pv.no_consent} without consent excluded`)
@@ -266,7 +299,10 @@ async function toggleNetwork(n: any) {
     icon: 'pi pi-bolt',
     acceptProps: { label: `Send ${fmt(pv.deliverable)}` },
     rejectProps: { label: 'Cancel', severity: 'secondary', outlined: true },
-    accept: async () => { const row = await store.setDelivery(id, n.name, true); working.value.delivery = row.delivery || {} },
+    accept: async () => {
+      try { const row = await store.setDelivery(id, n.name, true); working.value.delivery = row.delivery || {} }
+      catch (e: any) { notifyError(`Couldn't turn on delivery to ${n.label}: ${e.message}`) }
+    },
   })
 }
 </script>
@@ -341,8 +377,9 @@ async function toggleNetwork(n: any) {
         </div>
 
         <div class="b-actions">
-          <Button :label="working.id ? 'Save changes' : 'Create audience'" size="small" :loading="saving" :disabled="!hasPositive || (!dirty && !!working.id)" @click="save" />
-          <span v-if="working.id && !dirty" class="b-saved"><i class="pi pi-check" /> saved</span>
+          <span class="save-note" :class="{ 'save-note--hidden': !dirty }"><i class="pi pi-circle-fill" /> Unsaved changes</span>
+          <Button label="Discard" text severity="secondary" size="small" :disabled="!dirty" @click="discardAudience" />
+          <Button :label="working.id ? 'Save changes' : 'Create audience'" icon="pi pi-check" size="small" :disabled="!hasPositive || !dirty" :loading="saving" @click="save" />
         </div>
       </div>
     </section>
@@ -408,8 +445,8 @@ async function toggleNetwork(n: any) {
 .aud-console { display: flex; height: 100%; min-height: 0; }
 .aud-left, .aud-mid { flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .aud-left { width: 300px; } .aud-mid { width: 300px; }
-.aud-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 18px; padding: 22px 26px; overflow: auto; }
-.aud-activation { flex: none; width: 300px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: var(--panel); }
+.aud-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 18px; padding: 22px 26px; overflow: auto; background: var(--panel); }
+.aud-activation { flex: none; width: 480px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: var(--panel); }
 
 /* pane header — matches the analytics reports pane (.pane-head): a 52px bar with a
    bottom border, uppercase muted title, space-between */
@@ -449,7 +486,6 @@ async function toggleNetwork(n: any) {
 .sp-size { font-size: 11px; color: var(--muted); }
 .sp-used { font-size: 11px; color: var(--accent); }
 
-.builder { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
 .b-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 /* reads as a heading at rest; becomes a regular input box (border + bg) on hover/focus.
    transparent border + negative margin keep the resting position so nothing shifts. */
@@ -482,7 +518,11 @@ async function toggleNetwork(n: any) {
 .mem-x:hover { color: var(--text-strong); }
 
 .b-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-.b-saved { margin-left: auto; font-size: 12px; color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }
+/* same "note fades, buttons disable rather than hide" save/discard behavior as Users.vue's
+   profile/permissions/password editors — kept in sync with those class names on purpose */
+.save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin-right: auto; }
+.save-note .pi-circle-fill { font-size: 8px; color: #d97706; }
+.save-note--hidden { visibility: hidden; }
 
 .act-body { flex: 1 1 auto; overflow: auto; padding: 16px 18px; }
 .actid-field { padding-bottom: 14px; }

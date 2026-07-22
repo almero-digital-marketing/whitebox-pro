@@ -6,6 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { audiences as client } from '../audiences'
+import { notifyError } from '../../../shell/toast'
 
 export const useAudiencesStore = defineStore('audiences', () => {
   const segments = ref<any[]>([])    // saved segments, shared across modules
@@ -18,7 +19,7 @@ export const useAudiencesStore = defineStore('audiences', () => {
   async function loadSegments() {
     loading.value = true; error.value = ''
     try { segments.value = await client.listSegments() }
-    catch (e: any) { error.value = e.message }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load segments: ${e.message}`) }
     finally { loading.value = false }
   }
 
@@ -48,13 +49,13 @@ export const useAudiencesStore = defineStore('audiences', () => {
 
   async function loadAudiences() {
     try { audiences.value = await client.listAudiences() }
-    catch (e: any) { error.value = e.message }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load audiences: ${e.message}`) }
   }
 
   // which ad networks the server can actually deliver to (drives Connect vs live toggle)
   async function loadNetworks() {
     try { networks.value = await client.listNetworks() }
-    catch (e: any) { error.value = e.message }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load ad networks: ${e.message}`) }
   }
 
   // size of an UNSAVED rule (the builder's live "~N people") — pure passthrough.

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wb-analytics-api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--env-file-if-exists=server/.env", "server/scripts/serve-analytics.mjs"],
+      "port": 3000
+    },
+    {
+      "name": "wb-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "ui", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

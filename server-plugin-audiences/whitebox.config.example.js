@@ -31,15 +31,6 @@ export default async (runtime) => ({
       // privileged tier — NOT the public client token. See docs/09-api.md.
       auth: { secret: process.env.WB_AUDIENCES_TOKEN },
 
-      // Evaluation tuning. See docs/04-evaluator.md.
-      evaluation: {
-        candidateLimit: 2000,       // population() vector-narrow cap per rule
-        candidateSimilarity: 0.72,  // min cosine similarity for a candidate
-        model: 'gpt-4o-mini',       // screen model; borderline can escalate
-        debounceMs: 30000,          // per-passport dirty-eval debounce window
-        keepWarmDays: 7,            // re-fire cadence (must be < the audience window)
-      },
-
       // Composed network packages (each eligible only when its secrets are
       // present). Import the factories at the top:
       //   import { meta } from 'whitebox-pro-adnetworks-meta'
@@ -54,7 +45,6 @@ export default async (runtime) => ({
       // Privacy. See docs/08-consent-privacy.md.
       privacy: {
         requireConsentCategory: 'marketing', // forward only consented passports
-        sensitiveCategories: ['health', 'finance', 'religion', 'sexuality', 'politics'],
       },
     }),
   ],

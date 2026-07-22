@@ -34,7 +34,7 @@ function onReorder() {
       <template #item="{ element }">
         <div class="doc-item">
           <WidgetCard :widget="element" :state="data[element.id]" :selected="element.id === selectedId"
-            @remove="emit('remove', $event)" @select="emit('select', $event)" />
+            @remove="emit('remove', $event)" @select="emit('select', $event)" @deselect="emit('deselect')" />
         </div>
       </template>
     </draggable>
@@ -47,9 +47,15 @@ function onReorder() {
 .placeholder h2 { margin: 0 0 6px; color: var(--text); }
 .doc-wrap { min-height: 100%; }
 /* document flow — one full-width section on top of the other */
-.doc { display: flex; flex-direction: column; gap: 32px; padding: 26px 28px 96px; }
+/* shrunk by 2×10px vs. the old 32/30/34 — WidgetCard's .card now carries that 10px as its
+   own permanent padding on every side, so the total space between two cards' content is
+   unchanged; it's just partly owned by each card instead of entirely by this gap. */
+/* the board's own edge padding is deliberately smaller than the rail/compose panes'
+   padding, not matched to them. The 96px bottom is unrelated (functional clearance for
+   the floating "Add widget" button). */
+.doc { display: flex; flex-direction: column; gap: 12px; padding: 16px 16px 96px; }
 /* two-column board (when the compose pane is collapsed) — more widgets at a glance */
-.doc.cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 30px 34px; align-items: start; }
+.doc.cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; align-items: start; }
 .doc-item { width: 100%; min-width: 0; }
 .drag-ghost > * { box-shadow: 0 0 0 2px var(--accent-soft); border-radius: 10px; }
 /* floating action button — pinned to the pane's bottom-right while the doc scrolls */

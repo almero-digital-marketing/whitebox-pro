@@ -1,27 +1,12 @@
 // Thin client for the analytics plugin's composition surface. Calls go to
 // /api/analytics/* — the dev proxy strips /api and forwards to the server's
 // /analytics/* surface. The /api prefix keeps the API off the client routes
-// (/analytics is now a page, not the API). Bearer-auth; the token is injected at
-// build/dev time from VITE_ANALYTICS_TOKEN and must match the server's WB_ANALYTICS_TOKEN.
+// (/analytics is now a page, not the API). Auth is the logged-in user's session
+// token (see shell/apiClient.ts) — every module shares the same authenticated client.
 
-const TOKEN = (import.meta as any).env?.VITE_ANALYTICS_TOKEN || ''
-const BASE = '/api/analytics'
+import { createClient } from '../../shell/apiClient'
 
-async function req(path: string, opts: any = {}): Promise<any> {
-  const res = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      'content-type': 'application/json',
-      ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
-      ...(opts.headers || {}),
-    },
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`${path} → ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`)
-  }
-  return res.status === 204 ? null : res.json()
-}
+const req = createClient('/api/analytics')
 
 export const api = {
   listReports: () => req('/reports'),
