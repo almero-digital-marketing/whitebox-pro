@@ -29,6 +29,7 @@ import * as sessions from '../src/sessions.js'
 import * as ai from '../src/ai.js'
 import * as context from '../src/context.js'
 import * as awareness from '../src/awareness/index.js'
+import * as eventRegistry from '../src/event-registry/index.js'
 import * as facts from '../src/facts/index.js'
 import * as selector from '../src/selector/index.js'
 import * as mcp from '../src/mcp.js'
@@ -38,6 +39,8 @@ import { campaigns } from 'whitebox-pro-server-plugin-campaigns'
 import { oauth } from 'whitebox-pro-server-plugin-oauth'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
+import { journeys } from 'whitebox-pro-server-plugin-journeys'
+import { people } from 'whitebox-pro-server-plugin-people'
 import { mailgun } from 'whitebox-pro-mail-mailgun'
 import { mobica } from 'whitebox-pro-sms-mobica'
 import { jwt } from 'whitebox-pro-auth-auth0'
@@ -55,7 +58,7 @@ const readWriteAuth = (module) => ({ read: scopeAuth(`${module}:read`), write: s
 
 const config = await loadConfig({ argv: process.argv, env: process.env })
 initLogger({ config })
-logger.info('Analytics dev server booting (analytics/audiences/campaigns/mail/sms + built-in OAuth)…')
+logger.info('Analytics dev server booting (analytics/audiences/campaigns/mail/sms/journeys + built-in OAuth)…')
 
 // Real providers — same gpoint.bg Mailgun/Mobica accounts as the production
 // deployment (credentials in .env, gitignored). mail.send/sms.send (and the
@@ -80,7 +83,11 @@ await passports.init({ db: db.get(), lock, config })
 await sessions.init({ db: db.get(), passports })
 await ai.init({ config })
 context.init({ logger })
-awareness.init({ db: db.get(), queue, ai, events, webhooks, config, logger, context, passports })
+eventRegistry.init({ db: db.get(), logger, config })
+await eventRegistry.migrate()
+eventRegistry.initQueue(queue)
+await eventRegistry.startSweep()
+awareness.init({ db: db.get(), queue, ai, events, webhooks, config, logger, context, passports, eventRegistry })
 await awareness.migrate()
 facts.init({ db: db.get(), passports, logger, config }); await facts.migrate()
 selector.init({ db: db.get(), passports, logger, awareness, ai, config })
@@ -90,10 +97,11 @@ const server = http.createServer(app)
 connect.init({ server, events, sessions })
 sessions.register(app)
 mcp.init({ config: config.mcp || {}, logger })
+eventRegistry.register(app, { config, logger })
 
 const ctx = {
   config, db: db.get(), redis: redis.get(), queue, events, cache, lock,
-  webhooks, connect, passports, sessions, ai, awareness, facts, selector,
+  webhooks, connect, passports, sessions, ai, awareness, eventRegistry, facts, selector,
   context, mcp, plugins: {}, logger,
 }
 
@@ -107,9 +115,10 @@ ctx.plugins.audiences = await audiencesPlugin.register(app, ctx)   // { service 
 // Campaigns plugin — reuses the audiences service for resolution + consent, so its factory can
 // only be built once audiences has registered. `dryRun` is the whitebox-config safety switch
 // (default ON) — here it's read from WB_CAMPAIGNS_DRYRUN so it can be toggled without code edits.
-// Mail/sms are registered below with real providers (so their own MCP tools + REST genuinely
-// deliver), but campaigns stays dry-run by default regardless — no `deliver` hook is wired, since
-// it would never be called while dryRun is on (see service.js's runDelivery).
+// Constructed here (audiences is already registered), but its OWN migrate/register calls are
+// sequenced further down, after mail/sms register — campaigns' activateForPassport() (the
+// per-customer send Journeys' trigger_campaign step uses) needs ctx.plugins.mail/sms.service,
+// resolved via the same ctx.plugins.<name>.service fallback pattern as audiences.
 const campaignDryRun = process.env.WB_CAMPAIGNS_DRYRUN !== 'false'
 const campaignsPlugin = campaigns({ auth: readWriteAuth('campaigns'), audiences: ctx.plugins.audiences.service, dryRun: campaignDryRun })
 
@@ -122,6 +131,19 @@ const oauthPlugin = oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, appU
 
 const mailPlugin = mail({ auth: scopeAuth('mail:use'), provider: mailProvider })
 const smsPlugin = sms({ auth: scopeAuth('sms:use'), provider: smsProvider })
+
+// Journeys — constructed here (so its permissions catalog entry is included
+// below) but registered further down, after campaigns/audiences so its
+// ctx.plugins.<name>.service fallback finds every dependency already wired.
+const journeysPlugin = journeys({ auth: readWriteAuth('journeys'), webhookSecret: process.env.WB_JOURNEYS_WEBHOOK_SECRET })
+
+// People — same deal: built here for its catalog entry, registered last so its
+// OPTIONAL journeys/audiences services are already in ctx.plugins. Erasure gets
+// its own scope on top of the usual read/write pair; deleting a person forever
+// is not the same authority as fixing their email.
+const peoplePlugin = people({
+  auth: { ...readWriteAuth('people'), erase: scopeAuth('people:erase') },
+})
 
 // Aggregate every plugin's declared permission catalog BEFORE oauth
 // registers (it reads ctx.permissions.catalog at register time) — mirrors
@@ -136,7 +158,7 @@ const smsPlugin = sms({ auth: scopeAuth('sms:use'), provider: smsProvider })
 // read/write split the other three plugins support), so without these entries
 // expandPermissions(['*'], ...) would never grant them.
 ctx.permissions = {
-  catalog: [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin]
+  catalog: [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin, journeysPlugin, peoplePlugin]
     .filter(p => p.permissions)
     .map(p => ({ module: p.name, ...p.permissions }))
     .concat([{
@@ -160,14 +182,29 @@ await oauthPlugin.register(app, ctx)
 await analyticsPlugin.migrate(db.get())
 await analyticsPlugin.register(app, ctx)
 
-await campaignsPlugin.migrate(db.get())
-await campaignsPlugin.register(app, ctx)
-
 await mailPlugin.migrate(db.get())
 ctx.plugins.mail = await mailPlugin.register(app, ctx)   // { service: { send } } — oauth's invite flow uses it lazily
 
 await smsPlugin.migrate(db.get())
-await smsPlugin.register(app, ctx)
+// Captured (unlike before) — campaigns' activateForPassport (sms channel) needs
+// ctx.plugins.sms.service.queueSend.
+ctx.plugins.sms = await smsPlugin.register(app, ctx)
+
+// Campaigns registers AFTER mail/sms (not right after construction, above) — its
+// activateForPassport() resolves ctx.plugins.mail/sms.service via the same fallback
+// pattern audiences already uses, which only exist once mail/sms have registered.
+await campaignsPlugin.migrate(db.get())
+ctx.plugins.campaigns = await campaignsPlugin.register(app, ctx)
+
+// Journeys — reuses campaigns/audiences' services via ctx.plugins, so it must
+// register after both.
+await journeysPlugin.migrate(db.get())
+ctx.plugins.journeys = await journeysPlugin.register(app, ctx)
+
+// People LAST — it owns no tables (no migrate) and reads journeys/audiences
+// through ctx.plugins, so both must already be registered for the profile
+// view to include enrollments and suppression status.
+ctx.plugins.people = await peoplePlugin.register(app, ctx)
 
 // MCP — mounted last so every plugin's tools are registered on the McpServer first.
 // Reuses the same built-in OAuth server as the UI's own login (scopeAuth === jwt()

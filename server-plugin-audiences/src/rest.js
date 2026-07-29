@@ -25,6 +25,14 @@ export function register(app, { service, requireRead, requireWrite }) {
   write('delete', '/segments/:id',     async (req) => ({ deleted: await service.deleteSegment(req.params.id) }))
   read('get',    '/segments/:id/members', async (req) => service.resolveSegment(req.params.id, { limit: +req.query.limit || 5000 }))
 
+  // static lists — the one segment kind whose membership is assigned, not
+  // computed. Separate paths from /segments so a query segment can never be
+  // handed a member by mistake; the service rejects it either way.
+  read('get',    '/lists',                    async ()    => service.listLists())
+  write('post',  '/lists',                    async (req) => service.createList(req.body || {}))
+  write('post',  '/lists/:id/members',        async (req) => service.addToList(req.params.id, req.body?.passport_id, req.user?.email))
+  write('delete', '/lists/:id/members/:passportId', async (req) => service.removeFromList(req.params.id, req.params.passportId))
+
   // audiences — boolean compositions of segments (the deliverable audience layer)
   read('post',   '/audiences/preview', async (req) => service.previewAudience(req.body?.rule ?? req.body))
   read('post',   '/audiences/name',    async (req) => service.nameAudience(req.body?.rule ?? req.body))
@@ -35,7 +43,7 @@ export function register(app, { service, requireRead, requireWrite }) {
     if (!a) { const e = new Error('audience not found'); e.status = 404; throw e }
     return a
   })
-  read('get',    '/audiences',         async () => service.listAudiences())
+  read('get',    '/audiences',         async (req) => service.searchAudiences(req.query))
   write('post',  '/audiences',         async (req) => service.saveAudience(req.body || {}))
   read('get',    '/audiences/:id',     async (req) => {
     const a = await service.getAudience(req.params.id)

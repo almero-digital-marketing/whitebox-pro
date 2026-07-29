@@ -164,8 +164,8 @@ Each channel plugin owns its own domain (multer/multipart for mail, AMI events f
 
 ## Module documentation
 
-- [`src/plugins/mail/README.md`](src/plugins/mail/README.md) — outbox, inbox, bulk, suppression/invalid lists, tracking webhooks
-- [`src/plugins/voip/README.md`](src/plugins/voip/README.md) — PBX observation, number pool, call recording, Whisper transcription
+- [`whitebox-pro-server-plugin-mail`](../server-plugin-mail/README.md) — outbox, inbox, bulk, suppression/invalid lists, tracking webhooks
+- [`whitebox-pro-server-plugin-voip`](../server-plugin-voip/README.md) — PBX observation, number pool, call recording, Whisper transcription
 
 ## Quick start
 

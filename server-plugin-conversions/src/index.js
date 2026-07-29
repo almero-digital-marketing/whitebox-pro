@@ -14,6 +14,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import { resolveAuth } from 'whitebox-pro-server/auth'
+import createNotify from 'whitebox-pro-server/notify'
 import * as store from './store.js'
 import * as ingest from './ingest.js'
 import { createReporter } from './reporter.js'
@@ -34,7 +35,7 @@ export function conversions(options = {}) {
     },
 
     async register(app, ctx) {
-      const { db, passports, awareness, logger: rootLogger } = ctx
+      const { db, passports, awareness, events, webhooks, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'conversions' })
 
       // The public POST ingress needs no secret. Auth only guards the admin GET
@@ -60,8 +61,9 @@ export function conversions(options = {}) {
       }
 
       // Init singletons in dependency order.
+      const { notify } = createNotify({ webhooksConfig: options.webhooks, events, webhooks, eventRegistry })
       store.init({ db })
-      ingest.init({ awareness, reporter, consentOk, logger, resolvePassport: passports.resolve })
+      ingest.init({ awareness, reporter, consentOk, logger, resolvePassport: passports.resolve, notify })
 
       mountRoutes(app, { requireAuth, logger })
       registerMcp(ctx, { store })

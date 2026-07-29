@@ -2,13 +2,16 @@
 // concerns here. See docs/09-api.md.
 
 import { randomUUID } from 'node:crypto'
-import { validateSource, predicateKey, fromRow as segFromRow } from './segments.js'
+import { validateSource, predicateKey, fromRow as segFromRow, isList } from './segments.js'
 import { validateAudience, slugify, fromRow as audFromRow } from './audiences.js'
 
-let store, evaluator, adapters, identity, consent, logger
+// `passports` is here only so list membership can be stored against the id a
+// merged person actually resolves to — a row pointing at a tombstone would
+// never come back from any resolve.
+let store, evaluator, adapters, identity, consent, passports, logger
 
 export function init(deps) {
-  ({ store, evaluator, adapters, identity, consent, logger } = deps)
+  ({ store, evaluator, adapters, identity, consent, passports, logger } = deps)
 }
 
 // --- segments (chart-derived dynamic sub-queries) ---
@@ -17,8 +20,28 @@ export const getSegment = async id => segFromRow(await store.getSegment(id))
 
 // Size + cost of an UNSAVED source (the chip's "~N people" before Save). Reuses the
 // engine's preview — cheap, never fires, samples the judge when there is one.
+// The single place a segment source becomes a set of people. `select` and
+// `funnel` are predicates the evaluator runs; a `list` is stored membership.
+// Both the audience resolver and resolveSegment() call through here, so a list
+// composes into an audience exactly like a query-backed segment — which is the
+// whole point of making it a segment rather than a fourth concept.
+async function cohortOf(source) {
+  if (isList(source)) return (await store.listMemberIds(source.list)).map(id => ({ id }))
+  return evaluator.resolveSource(source)
+}
+
 export async function previewSegment(input) {
-  return evaluator.previewSource(validateSource(input))
+  const source = validateSource(input)
+  if (isList(source)) {
+    // Same shape the evaluator returns, not a list-specific one — the palette
+    // and every other consumer read `est_matches`, and a list that answered
+    // with its own key would silently render blank next to the query segments.
+    // For a list the number is exact rather than estimated, but it's the same
+    // question: how many people is this segment worth?
+    const n = await store.memberCount(source.list)
+    return { candidate_pool: n, est_matches: n }
+  }
+  return evaluator.previewSource(source)
 }
 
 // AI label for an unsaved source — what the chip shows before Save.
@@ -42,6 +65,75 @@ export async function saveSegment({ source: input, name, origin, context } = {})
 }
 
 export const deleteSegment = id => store.deleteSegment(id)
+
+// --- static lists -----------------------------------------------------------
+
+// A list's source is its own id, so the id has to exist before the source does
+// — hence generating it here rather than letting saveSegment() do it. No AI
+// naming either: a hand-built list is named by the person building it.
+export async function createList({ name } = {}) {
+  const clean = (name || '').trim()
+  if (!clean) { const e = new Error('a name is required'); e.status = 400; throw e }
+  const id = randomUUID()
+  const source = validateSource({ list: id })
+  const row = await store.insertSegment({
+    id, name: clean, source: JSON.stringify(source),
+    predicate_key: predicateKey(source), origin: JSON.stringify({ kind: 'list' }),
+  })
+  return segFromRow(row)
+}
+
+// Only list segments — the ones a person can actually be added to. A query
+// segment is offered nowhere as a target, because putting someone "in" it would
+// be a no-op the next time it resolves.
+export async function listLists() {
+  const segs = (await store.listSegments()).map(segFromRow).filter(s => isList(s.source))
+  return Promise.all(segs.map(async s => ({ ...s, count: await store.memberCount(s.id) })))
+}
+
+async function requireList(segmentId) {
+  const seg = await getSegment(segmentId)
+  if (!seg) { const e = new Error('segment not found'); e.status = 404; throw e }
+  if (!isList(seg.source)) {
+    const e = new Error('that segment is a query, not a list — its membership is computed, not assigned')
+    e.status = 400; throw e
+  }
+  return seg
+}
+
+export async function addToList(segmentId, passportId, addedBy) {
+  await requireList(segmentId)
+  // resolve first: adding a merged-away id would create a row pointing at a
+  // tombstone that no resolve would ever return
+  const id = await passports.resolve(passportId)
+  if (!id) { const e = new Error('person not found'); e.status = 404; throw e }
+  await store.addMember(segmentId, id, addedBy)
+  return { segment_id: segmentId, passport_id: id, count: await store.memberCount(segmentId) }
+}
+
+// Bulk cherry-pick. Returns what actually changed, not what was asked for:
+// "added 187 of 240" is the honest answer when the rest were already on it,
+// and it's the number the operator needs to trust the result.
+export async function addManyToList(segmentId, passportIds, addedBy) {
+  await requireList(segmentId)
+  // resolve every id through merges first — a selection can easily contain an
+  // absorbed id (search results are resolved, but a caller may pass anything),
+  // and a row pointing at a tombstone is invisible to every later read
+  const resolved = [...new Set((await Promise.all((passportIds || []).map(id => passports.resolve(id)))).filter(Boolean))]
+  const added = await store.addMembers(segmentId, resolved, addedBy)
+  return { segment_id: segmentId, requested: passportIds?.length || 0, added, count: await store.memberCount(segmentId) }
+}
+
+export async function removeFromList(segmentId, passportId) {
+  await requireList(segmentId)
+  const id = await passports.resolve(passportId)
+  await store.removeMember(segmentId, id || passportId)
+  return { segment_id: segmentId, passport_id: id || passportId, count: await store.memberCount(segmentId) }
+}
+
+// Which lists is this person on? The read the People browser's right pane uses.
+export const passportLists = async passportId =>
+  store.segmentsForPassport(await passports.resolve(passportId) || passportId)
 
 // Rename a saved segment. Dedup keys on the source predicate, not the name, so a rename is safe.
 export async function renameSegment(id, name) {
@@ -67,6 +159,12 @@ export async function ensureDefaultSegments() {
 
 // --- audiences (boolean compositions of segments) ---
 export const listAudiences = async () => (await store.listAudiences()).map(audFromRow)
+// What GET /audiences serves. `{ total, rows }` — the total is what makes the
+// rail's pager honest about a result set the client has never fully seen.
+export async function searchAudiences(opts = {}) {
+  const { total, rows } = await store.searchAudiences(opts)
+  return { total, rows: rows.map(audFromRow) }
+}
 export const getAudience = async id => audFromRow(await store.getAudience(id))
 
 // resolveSegment(id) → Set of passport ids, memoised within one audience resolution so
@@ -78,7 +176,7 @@ function segmentResolver() {
       const seg = await store.getSegment(segmentId)
       if (!seg) return new Set()                           // a deleted segment contributes nobody
       const source = typeof seg.source === 'string' ? JSON.parse(seg.source) : seg.source
-      const cohort = await evaluator.resolveSource(source)
+      const cohort = await cohortOf(source)
       return new Set(cohort.map(m => m.id))
     })())
     return cache.get(segmentId)
@@ -230,7 +328,7 @@ export async function setDelivery(id, { network, enabled }) {
 export async function resolveSegment(id, { limit = 5000 } = {}) {
   const seg = await getSegment(id)
   if (!seg) { const e = new Error('segment not found'); e.status = 404; throw e }
-  const cohort = (await evaluator.resolveSource(seg.source)).slice(0, limit)
+  const cohort = (await cohortOf(seg.source)).slice(0, limit)
   return { count: cohort.length, ids: cohort.map(m => m.id) }
 }
 
@@ -243,4 +341,8 @@ export const saveSignals = (passportId, signals) => identity.saveSignals(passpor
 // --- deliveries / suppression ---
 export const suppress = (passportId, reason) => store.suppress(passportId, reason)
 export const unsuppress = passportId => store.unsuppress(passportId)
+// Is this one person on the do-not-target list? The store has had this since
+// suppression existed; it was never exposed on the service because nothing
+// asked per-person until the People module wanted to show it on a profile.
+export const isSuppressed = passportId => store.isSuppressed(passportId)
 export const listSuppression = () => store.listSuppression()

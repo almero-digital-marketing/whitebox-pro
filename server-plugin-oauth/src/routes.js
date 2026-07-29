@@ -363,7 +363,7 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
   })
 
   router.get('/users', manageUsers.middleware, async (req, res) => {
-    res.json(await store.listUsers())
+    res.json(await store.searchUsers(req.query))
   })
 
   router.post('/users/:id/resend-invite', manageUsers.middleware, async (req, res) => {

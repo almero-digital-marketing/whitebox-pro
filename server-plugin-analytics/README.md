@@ -658,7 +658,7 @@ const seen = hits.some(h => h.similarity > 0.8)
 
 For richer flows (LLM-synthesized answers, multi-step queries), the consumer layers that on top — analytics gives you grounded retrieval, your code adds synthesis.
 
-A full client wrapper example is in the project root [README.md](../../../README.md).
+A full client wrapper example is in the project root [README.md](../README.md).
 
 ## What this plugin is NOT
 

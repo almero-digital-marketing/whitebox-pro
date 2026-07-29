@@ -160,7 +160,7 @@ Routes (all under the plugin's `basePath`, e.g. `/oauth`):
 |---|---|---|
 | `GET /me` | any valid token | who am I — `{ id, email, permissions }` (permissions already expanded — see below) |
 | `GET /permissions/catalog` | `users:manage` | the full aggregated catalog every plugin declared, grouped by module |
-| `GET /users` | `users:manage` | list every user (never the password hash) |
+| `GET /users` | `users:manage` | `?q` `?limit` `?offset` → `{total, rows}` — **paged**; `q` matches email/first_name/last_name, oldest first. Never the password hash |
 | `POST /users/invite` | `users:manage` | `{ email }` → creates a pending user, emails/returns the invite link |
 | `POST /users/:id/resend-invite` | `users:manage` | re-issues the token (409 if the user already has a password) |
 | `PUT /users/:id/permissions` | `users:manage` | `{ permissions: [...] }` → replaces a user's grant set wholesale; 400 if it would strip `users:manage` from the last active user who holds it |

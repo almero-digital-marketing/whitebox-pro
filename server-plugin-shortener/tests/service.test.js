@@ -35,8 +35,9 @@ function setup() {
     merge: vi.fn(async () => {}),
   }
   const awareness = { record: vi.fn(async () => {}) }
-  service.init({ passports, awareness, logger: { warn() {}, error() {} }, config })
-  return { passports, awareness }
+  const notify = vi.fn()
+  service.init({ passports, awareness, logger: { warn() {}, error() {} }, config, notify })
+  return { passports, awareness, notify }
 }
 
 beforeEach(() => {
@@ -150,7 +151,7 @@ describe('claim', () => {
   const validClick = () => ({ code: 'c', claim_token: 'T', claimed_at: null, expires_at: new Date(Date.now() + 60_000) })
 
   it('hard-binds: merges the anonymous visitor into the linked customer', async () => {
-    const { passports, awareness } = setup()
+    const { passports, awareness, notify } = setup()
     store.getClick.mockResolvedValue(validClick())
     store.getLink.mockResolvedValue({ code: 'c', url: 'https://clinic.com/x', passport_id: 'P_known', identify: null, data: { name: 'Jane' } })
     const r = await service.claim('T', 'P_anon')
@@ -159,15 +160,21 @@ describe('claim', () => {
     expect(store.consumeIdentity).toHaveBeenCalled()
     expect(awareness.record).toHaveBeenCalled()
     expect(r).toMatchObject({ bound: true, passport_id: 'P_known', data: { name: 'Jane' } })
+    expect(notify).toHaveBeenCalledWith('shortener.claimed', {
+      type: 'shortener.claimed', data: { code: 'c', passport_id: 'P_known', merged: true },
+    })
   })
 
   it('first-touch: adopts the customer with no merge', async () => {
-    const { passports } = setup()
+    const { passports, notify } = setup()
     store.getClick.mockResolvedValue(validClick())
     store.getLink.mockResolvedValue({ code: 'c', url: 'x', passport_id: 'P_known', data: {} })
     const r = await service.claim('T', null)
     expect(passports.merge).not.toHaveBeenCalled()
     expect(r.passport_id).toBe('P_known')
+    expect(notify).toHaveBeenCalledWith('shortener.claimed', {
+      type: 'shortener.claimed', data: { code: 'c', passport_id: 'P_known', merged: false },
+    })
   })
 
   it('a repeat claim (identity already consumed) still binds to the target but does NOT merge — a different visitor reusing the link must not get folded into the customer a second time', async () => {
@@ -184,12 +191,13 @@ describe('claim', () => {
   })
 
   it('is single-use — a lost race returns bound:false without merging', async () => {
-    const { passports } = setup()
+    const { passports, notify } = setup()
     store.getClick.mockResolvedValue(validClick())
     store.claimToken.mockResolvedValue(0)   // someone else won the ticket
     const r = await service.claim('T', 'P_anon')
     expect(r).toEqual({ bound: false })
     expect(passports.merge).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
   })
 
   it('returns bound:false for an unknown or expired token', async () => {

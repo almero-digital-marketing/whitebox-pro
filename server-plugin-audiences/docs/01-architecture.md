@@ -112,7 +112,7 @@ built on, and what the client-side membership lookup reports.
 | `whitebox_audience_segments` | a saved selector/funnel source (`source` jsonb), `name`, `predicate_key` (sha256 dedup hash), `origin` (provenance) |
 | `whitebox_audiences` | a boolean composition (`rule` jsonb: `{op, members}`), `activation_id`, per-network `delivery` status, `client_side` / `campaigns` flags |
 | `whitebox_audience_suppression` | hard do-not-target list |
-| `whitebox_audience_identities` | browser-collected ad signals per passport (`fbp`, `ttclid`, `ga_client_id`, …) |
+| `whitebox_audience_signals` | browser-collected ad signals per passport, one row per signal (`fbp`, `ttclid`, `ga_client_id`, …) |
 
 Migrations live in [`src/migrations/`](../src/migrations) and run via the plugin's `migrate(db)` on
 boot. Migrations **001–003** created a standalone `Rule` entity (`whitebox_audience_rules` + its

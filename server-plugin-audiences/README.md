@@ -328,7 +328,8 @@ Everything needed to make it work end-to-end lives in [`docs/`](docs/):
 |---|---|
 | [01 · Architecture](docs/01-architecture.md) | components, data flow, data model |
 | [02 · Concepts](docs/02-concepts.md) | Mode A vs B, matches ≠ membership, selector vs funnel sources |
-| [03 · Rules](docs/03-rules.md) | rule schema (`select` / `funnel` slot), authoring, lifecycle |
+| [03 · Segment sources](docs/03-segment-sources.md) | where a segment's membership comes from |
+| [11 · Segments & audiences](docs/11-segments-and-audiences.md) | the current model — and the dropped `Rule` entity it replaced |
 | [04 · Evaluator](docs/04-evaluator.md) | the thin adapter over `ctx.selector`, cohort resolve, cost, keep-warm |
 | [05 · Networks](docs/05-networks.md) + [meta](docs/networks/meta.md) · [tiktok](docs/networks/tiktok.md) · [ga4](docs/networks/google-ga4.md) | adapter contract + per-network setup |
 | [06 · Identity](docs/06-identity.md) | the manifest, the client capture shim, hashing, match keys |

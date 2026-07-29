@@ -1,6 +1,6 @@
 # TikTok
 
-Adapter: [`src/adapters/tiktok.js`](../../../adnetworks/src/adapters/tiktok.js) — **Mode A** via the Events API.
+Adapter: `whitebox-pro-adnetworks-tiktok` — **Mode A** via the Events API.
 
 ## Flow
 
@@ -53,4 +53,4 @@ plugin — see [05 · Networks](../05-networks.md)).
 
 - Hash email/phone with SHA-256 (lowercased/trimmed email; E.164-digits phone).
 - Min audience size before it serves (~1,000) is the platform's concern — Mode A pools over the window.
-- Consent applies — see [08](08-consent-privacy.md).
+- Consent applies — see [08](../08-consent-privacy.md).

@@ -29,7 +29,7 @@ export function voip(options = {}) {
     },
 
     async register(app, ctx) {
-      const { db, webhooks, events, connect, passports, sessions, ai, awareness } = ctx
+      const { db, webhooks, events, connect, passports, sessions, ai, awareness, eventRegistry } = ctx
       const voipConfig = options
       // The sub-module inits (phonebook/encoder/pool/speech/ari) read `config.voip`
       // and `config.ai` — give them a local config with this plugin's options as the
@@ -48,7 +48,7 @@ export function voip(options = {}) {
       await mkdir(recordsFolder, { recursive: true })
         .catch(err => logger.warn({ err, recordsFolder }, 'VoIP: could not create recordsFolder'))
 
-      const { notify } = createNotify({ webhooksConfig: voipConfig.webhooks, events, webhooks })
+      const { notify } = createNotify({ webhooksConfig: voipConfig.webhooks, events, webhooks, eventRegistry })
 
       // Init module singletons in dependency order.
       phonebook.init({ config })

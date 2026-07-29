@@ -7,8 +7,22 @@ import { createClient } from '../../shell/apiClient'
 
 const req = createClient('/api/oauth')
 
+// Every rail asks the same question — a page of rows matching a term — so the
+// query string is built the same way everywhere. Empty values are dropped so a
+// blank search doesn't become `?q=`.
+const pageQs = (o: { q?: string; limit?: number; offset?: number } = {}) => {
+  const s = new URLSearchParams()
+  if (o.q?.trim()) s.set('q', o.q.trim())
+  if (o.limit != null) s.set('limit', String(o.limit))
+  if (o.offset) s.set('offset', String(o.offset))
+  const out = s.toString()
+  return out ? `?${out}` : ''
+}
+export type Paged<T> = { total: number; rows: T[] }
+
 export const usersClient = {
-  list: () => req('/users'),
+  list: (o?: { q?: string; limit?: number; offset?: number }) =>
+    req(`/users${pageQs(o)}`) as Promise<Paged<any>>,
   invite: (email: string) => req('/users/invite', { method: 'POST', body: JSON.stringify({ email }) }),
   resendInvite: (id: string) => req(`/users/${id}/resend-invite`, { method: 'POST' }),
   remove: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),

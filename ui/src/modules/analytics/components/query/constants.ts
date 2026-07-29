@@ -2,20 +2,20 @@
 // component so the kind field-editors and the model can share one source of truth.
 
 export const KINDS = [
-  { value: 'stat', label: 'Number', icon: 'pi pi-hashtag' },
-  { value: 'table', label: 'List', icon: 'pi pi-list' },
-  { value: 'timeseries', label: 'Trend', icon: 'pi pi-chart-line' },
-  { value: 'breakdown', label: 'Breakdown', icon: 'pi pi-chart-bar' },
-  { value: 'donut', label: 'Donut', icon: 'pi pi-chart-pie' },
-  { value: 'radar', label: 'Radar', icon: 'pi pi-compass' },
-  { value: 'distribution', label: 'Distribution', icon: 'pi pi-objects-column' },
-  { value: 'scatter', label: 'Scatter', icon: 'pi pi-chart-scatter' },
-  { value: 'pivot', label: 'Pivot', icon: 'pi pi-table' },
-  { value: 'heatmap', label: 'Heatmap', icon: 'pi pi-th-large' },
-  { value: 'cohort', label: 'Cohort', icon: 'pi pi-calendar' },
-  { value: 'funnel', label: 'Funnel', icon: 'pi pi-filter' },
-  { value: 'dropoff', label: 'Drop-off', icon: 'pi pi-filter-slash' },
-  { value: 'answer', label: 'Answer', icon: 'pi pi-comment' },
+  { value: 'stat', label: 'Number', icon: 'tag' },
+  { value: 'table', label: 'List', icon: 'list' },
+  { value: 'timeseries', label: 'Trend', icon: 'show_chart' },
+  { value: 'breakdown', label: 'Breakdown', icon: 'bar_chart' },
+  { value: 'donut', label: 'Donut', icon: 'pie_chart' },
+  { value: 'radar', label: 'Radar', icon: 'explore' },
+  { value: 'distribution', label: 'Distribution', icon: 'view_column' },
+  { value: 'scatter', label: 'Scatter', icon: 'scatter_plot' },
+  { value: 'pivot', label: 'Pivot', icon: 'table_chart' },
+  { value: 'heatmap', label: 'Heatmap', icon: 'grid_view' },
+  { value: 'cohort', label: 'Cohort', icon: 'calendar_month' },
+  { value: 'funnel', label: 'Funnel', icon: 'filter_alt' },
+  { value: 'dropoff', label: 'Drop-off', icon: 'filter_alt_off' },
+  { value: 'answer', label: 'Answer', icon: 'chat_bubble' },
 ]
 
 export const COHORT_GRAINS = [{ label: 'Monthly', value: 'month' }, { label: 'Weekly', value: 'week' }]

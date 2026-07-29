@@ -1,9 +1,11 @@
 // Data access. Thin knex wrappers — no business logic. init() + free functions.
 
+import { pagedList } from 'whitebox-pro-server/pagination'
+
 let db
 
 const SUPPRESSION = 'whitebox_audience_suppression'
-const IDENTITIES = 'whitebox_audience_identities'
+const SIGNALS = 'whitebox_audience_signals'
 const SEGMENTS = 'whitebox_audience_segments'
 const AUDIENCES = 'whitebox_audiences'
 
@@ -23,8 +25,50 @@ export async function updateSegment(id, fields) {
 }
 export const deleteSegment = id => db(SEGMENTS).where({ id }).del()
 
+// --- static-list membership (see migrations/014) ---------------------------
+const MEMBERS = 'whitebox_audience_segment_members'
+
+export const listMemberIds = async segmentId =>
+  (await db(MEMBERS).where({ segment_id: segmentId }).select('passport_id')).map(r => r.passport_id)
+
+// onConflict → adding someone already on the list is a no-op, not an error:
+// the caller asked for them to be on it, and they are.
+export const addMember = (segmentId, passportId, addedBy) =>
+  db(MEMBERS).insert({ segment_id: segmentId, passport_id: passportId, added_by: addedBy || null })
+    .onConflict(['segment_id', 'passport_id']).ignore()
+
+// One statement for the whole set. The same onConflict rule applies per row,
+// so a bulk add over people who are already on the list is a partial no-op
+// rather than a failure — which is what makes re-running a selection safe.
+export const addMembers = async (segmentId, passportIds, addedBy) => {
+  if (!passportIds.length) return 0
+  const before = await memberCount(segmentId)
+  await db(MEMBERS).insert(passportIds.map(passportId => ({ segment_id: segmentId, passport_id: passportId, added_by: addedBy || null })))
+    .onConflict(['segment_id', 'passport_id']).ignore()
+  return (await memberCount(segmentId)) - before
+}
+
+export const removeMember = (segmentId, passportId) =>
+  db(MEMBERS).where({ segment_id: segmentId, passport_id: passportId }).del()
+
+export const memberCount = async segmentId =>
+  Number((await db(MEMBERS).where({ segment_id: segmentId }).count('* as n').first())?.n || 0)
+
+// Which lists is this passport on? Joined to the segment so the caller gets
+// names without a second round-trip.
+export const segmentsForPassport = passportId =>
+  db(MEMBERS + ' as m')
+    .join(SEGMENTS + ' as s', 's.id', 'm.segment_id')
+    .where('m.passport_id', passportId)
+    .orderBy('m.added_at', 'desc')
+    .select('s.id', 's.name', 'm.added_at', 'm.added_by')
+
 // --- audiences (boolean compositions of segments) ---
 export const listAudiences = () => db(AUDIENCES).orderBy('created_at', 'desc')
+// The rail's read: one page, plus the real total so the pager can say where you
+// are. Kept beside the unpaged list rather than replacing it — activation still
+// needs every client-side audience at once, and so does the MCP tool.
+export const searchAudiences = opts => pagedList(db(AUDIENCES), { ...opts, fields: ['name'] })
 export const getAudience = id => db(AUDIENCES).where({ id }).first()
 export const getAudienceByActivationId = activation_id => db(AUDIENCES).where({ activation_id }).first()
 export async function upsertAudience(aud) {
@@ -54,9 +98,24 @@ export const suppress = (passportId, reason) =>
 export const unsuppress = passportId => db(SUPPRESSION).where({ passport_id: passportId }).del()
 export const listSuppression = () => db(SUPPRESSION).orderBy('created_at', 'desc')
 
-// --- browser-collected identities ---
-export const getIdentities = passportId => db(IDENTITIES).where({ passport_id: passportId }).first()
-export async function saveIdentities(passportId, signals) {
-  await db(IDENTITIES).insert({ passport_id: passportId, signals }).onConflict('passport_id')
-    .merge({ signals: db.raw('?? || ?', [`${IDENTITIES}.signals`, JSON.stringify(signals)]), updated_at: db.fn.now() })
+// --- browser-collected ad signals (fbp, gclid, ttclid, …) ---
+// Stored one row per signal, but handed to callers as a flat { name: value }
+// object — that's the shape identity.resolve() passes to the ad adapters, and
+// it stayed identical through the jsonb-blob → rows migration.
+export async function getSignals(passportId) {
+  const rows = await db(SIGNALS).where({ passport_id: passportId }).select('name', 'value')
+  return Object.fromEntries(rows.map(r => [r.name, r.value]))
+}
+// Upsert per key: capturing one new signal touches one row and leaves the
+// others (and their individual last_seen_at) alone. Values are coerced to text
+// because the column is a string and an adapter only ever wants a scalar id;
+// empty/nullish keys are dropped rather than stored as "".
+export async function saveSignals(passportId, signals) {
+  const rows = Object.entries(signals || {})
+    .filter(([name, value]) => name && value != null && value !== '' && typeof value !== 'object')
+    .map(([name, value]) => ({ passport_id: passportId, name, value: String(value) }))
+  if (!rows.length) return
+  await db(SIGNALS).insert(rows)
+    .onConflict(['passport_id', 'name'])
+    .merge({ value: db.raw('excluded.value'), last_seen_at: db.fn.now() })
 }

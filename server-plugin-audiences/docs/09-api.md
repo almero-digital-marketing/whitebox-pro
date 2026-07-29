@@ -69,7 +69,7 @@ For a **funnel** source, `candidate_pool`/`est_matches` reflect the slot cohort 
 | `POST` | `/audiences/audiences/name` | `{ rule }` | `{name}` — AI-suggested, never persists |
 | `GET` | `/audiences/audiences/memberships/:passportId` | | `{passport_id, audiences: [{id, activation_id, name}]}` — **client-side-exposed** audiences only |
 | `GET` | `/audiences/audiences/by-activation-id/:activationId` | | the audience |
-| `GET` | `/audiences/audiences` | | all audiences |
+| `GET` | `/audiences/audiences` | `?q` `?limit` (default 25, max 200) `?offset` | `{total, rows}` — **paged**. `q` is a case-insensitive contains on `name`; `total` is the real count of matches, not of `rows` |
 | `POST` | `/audiences/audiences` | audience input (see below) | the saved audience |
 | `GET` | `/audiences/audiences/:id` | | one audience |
 | `DELETE` | `/audiences/audiences/:id` | | `{deleted}` |

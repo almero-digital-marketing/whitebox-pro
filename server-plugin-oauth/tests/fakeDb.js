@@ -1,6 +1,8 @@
 // A minimal in-memory stand-in for the exact slice of knex's query builder
 // this package actually calls (insert/where/andWhere/select/orderBy/first/
-// update/del/returning/onConflict().ignore()) — enough to exercise the real
+// update/del/returning/onConflict().ignore(), plus the
+// clone/clearSelect/clearOrder/count/limit/offset that pagedList() drives)
+// — enough to exercise the real
 // store.js/users.js/keys.js logic without a live Postgres. Not a general
 // knex mock.
 
@@ -21,26 +23,53 @@ export function makeFakeDb() {
 
   function table(name) {
     function makeQuery(state) {
+      // `ilike '%term%'` — the only operator pagedList() emits. Case-insensitive
+      // contains, ORed across the searched columns; a row passes if ANY match.
+      const likes = (r) => !state.orTerms.length || state.orTerms.some(([col, , val]) =>
+        String(r[col] ?? '').toLowerCase().includes(String(val).replace(/%/g, '').toLowerCase()))
       const applyFilters = () => rows(name).filter(r =>
-        matches(r, state.cond) && state.extra.every(([col, op, val]) => OPS[op](r[col], val)))
+        matches(r, state.cond) && state.extra.every(([col, op, val]) => OPS[op](r[col], val)) && likes(r))
       const project = (list) => state.cols
         ? list.map(r => Object.fromEntries(state.cols.map(c => [c, r[c]])))
         : list.map(r => ({ ...r }))
       const resolved = () => {
         const list = applyFilters()
-        if (!state.orderCol) return project(list)
+        if (!state.orderCol) return project(window(list))
         const sorted = [...list].sort((a, b) => {
           const [x, y] = [a[state.orderCol], b[state.orderCol]]
           return state.orderDir === 'desc' ? (x < y ? 1 : x > y ? -1 : 0) : (x > y ? 1 : x < y ? -1 : 0)
         })
-        return project(sorted)
+        return project(window(sorted))
       }
+      // limit/offset applied last, after ordering — same as SQL
+      const window = (list) => (state.limit == null && !state.offset)
+        ? list
+        : list.slice(state.offset || 0, state.limit == null ? undefined : (state.offset || 0) + state.limit)
 
       return {
         select(cols) { return makeQuery({ ...state, cols }) },
-        where(cond) { return makeQuery({ ...state, cond: { ...state.cond, ...cond } }) },
+        where(cond) {
+          // pagedList() passes a CALLBACK to group its ORed ilike terms. Only
+          // that shape is supported, and only orWhere inside it — enough to
+          // exercise the real searchUsers(), not a general WHERE compiler.
+          if (typeof cond === 'function') {
+            const terms = []
+            cond({ orWhere: (col, op, val) => terms.push([col, op, val]) })
+            return makeQuery({ ...state, orTerms: [...state.orTerms, ...terms] })
+          }
+          return makeQuery({ ...state, cond: { ...state.cond, ...cond } })
+        },
         andWhere(col, op, val) { return makeQuery({ ...state, extra: [...state.extra, [col, op, val]] }) },
         orderBy(col, dir = 'asc') { return makeQuery({ ...state, orderCol: col, orderDir: dir }) },
+        // The slice of knex that pagedList() drives. clone() is what makes it
+        // safe to count and then fetch from one builder; the two clear* calls
+        // are how it strips the projection and ordering off the COUNT.
+        clone() { return makeQuery({ ...state }) },
+        clearSelect() { return makeQuery({ ...state, cols: null }) },
+        clearOrder() { return makeQuery({ ...state, orderCol: null, orderDir: null }) },
+        limit(n) { return makeQuery({ ...state, limit: n }) },
+        offset(n) { return makeQuery({ ...state, offset: n }) },
+        async count() { return [{ count: String(applyFilters().length) }] },
         async first() { return resolved()[0] || null },
         async update(patch) {
           const targets = applyFilters()
@@ -96,7 +125,7 @@ export function makeFakeDb() {
       return chain
     }
 
-    return { insert, ...makeQuery({ cond: {}, extra: [], cols: null, orderCol: null, orderDir: null }) }
+    return { insert, ...makeQuery({ cond: {}, extra: [], orTerms: [], cols: null, orderCol: null, orderDir: null, limit: null, offset: 0 }) }
   }
 
   const db = (name) => table(name)

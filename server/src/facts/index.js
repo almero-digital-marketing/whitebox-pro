@@ -97,6 +97,44 @@ export async function record({ passport_id, key, value, type, source, observed_a
   return row
 }
 
+// Record the SAME fact for many passports — one INSERT, not one per person.
+//
+// Exists because the alternative (a loop over record()) is two round trips per
+// passport, which is the difference between a bulk action and a timeout at any
+// realistic cohort size. Merge resolution stays per-id and parallel, matching
+// audiences.addManyToList() — the chain walk isn't set-expressible, and it's
+// the insert that dominates.
+//
+// Returns the rows actually written, which can be FEWER than the ids passed:
+// two people who were merged resolve to the same passport, and recording the
+// same key twice for them would be one fact stated twice, not two facts.
+export async function recordMany({ passport_ids, key, value, type, source, observed_at, entity } = {}) {
+  if (!key) throw new Error('facts.recordMany: key is required')
+  if (value === undefined) throw new Error('facts.recordMany: value is required')
+  const ids = [...new Set((await Promise.all((passport_ids || []).map(resolveId))).filter(Boolean))]
+  if (!ids.length) return []
+
+  const at = observed_at ? new Date(observed_at) : new Date()
+  const rows = await store.insertMany(ids.map(passport_id => ({
+    passport_id,
+    key,
+    value: JSON.stringify(value),
+    type: type || inferType(value),
+    source: source || 'unknown',
+    entity: entity || null,
+    // one timestamp for the whole batch, not one per row: these were observed
+    // as a single act, and per-row clock drift would order them arbitrarily
+    observed_at: at,
+  })))
+  logger?.debug?.({ count: rows.length, key }, 'facts recorded in bulk')
+  return rows
+}
+
+// Every key in use, deployment-wide. describedKeys() is the subset someone has
+// given a human label to; this is all of them, which is what a key field needs
+// to suggest — an undescribed key is still a key you must not misspell.
+export const usedKeys = () => store.distinctKeys()
+
 // Current value of every key (or just `keys`) for a passport → { key: value }.
 export async function current(passport_id, keys) {
   const pid = await resolveId(passport_id)

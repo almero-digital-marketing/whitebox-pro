@@ -13,7 +13,7 @@ export function register(app, { service, requireRead, requireWrite }) {
   write('put', '/upsert', async (req) => service.upsertCampaign(req.body || {}))
 
   // campaigns CRUD (POST = UI create)
-  read('get', '', async () => service.listCampaigns())
+  read('get', '', async (req) => service.searchCampaigns(req.query))
   write('post', '', async (req) => service.saveCampaign(req.body || {}))
   read('get', '/:id', async (req) => {
     const c = await service.getCampaign(req.params.id)
@@ -31,8 +31,15 @@ export function register(app, { service, requireRead, requireWrite }) {
   // delivery preview (consent-gated union counts, read-only) + send (dry-run) + report link
   read('post', '/:id/delivery/preview', async (req) => service.previewDelivery(req.params.id))
   write('post', '/:id/schedule', async (req) => service.schedule(req.params.id, { counts: req.body?.counts }))
+  // manual send — delivers now, does NOT lock (repeatable; see service.js's sendManual)
+  write('post', '/:id/send', async (req) => service.sendManual(req.params.id, { counts: req.body?.counts }))
   write('post', '/:id/unlock', async (req) => service.unlockCampaign(req.params.id))
   write('post', '/:id/report', async (req) => service.setReport(req.params.id, req.body?.report_id))
+  // what actually happened — pre-flight reach + the per-channel delivery funnel
+  read('get', '/:id/results', async (req) => service.getResults(req.params.id))
+
+  // per-customer activation — one passport, independent of bulk schedule/status (see service.js)
+  write('post', '/:id/activate', async (req) => service.activateForPassport(req.params.id, req.body?.passport_id, { idempotencyKey: req.body?.idempotency_key }))
 }
 
 const wrap = fn => async (req, res) => {

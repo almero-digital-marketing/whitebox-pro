@@ -22,6 +22,7 @@ import * as sessions from './sessions.js'
 import * as ai from './ai.js'
 import * as templates from './templates.js'
 import * as awareness from './awareness/index.js'
+import * as eventRegistry from './event-registry/index.js'
 import * as facts from './facts/index.js'
 import * as selector from './selector/index.js'
 import * as query from './query/index.js'
@@ -68,9 +69,19 @@ async function start() {
     template = templates
   }
 
+  // Event registry — a rolling, retention-pruned record of recently-observed
+  // event `type` strings (not a declared catalog — see event-registry/index.js
+  // header comment for why). Initialized before awareness/plugins so its
+  // record() is available to every notify() call from the start.
+  eventRegistry.init({ db: db.get(), logger, config })
+  await eventRegistry.migrate()
+  eventRegistry.initQueue(queue)
+  await eventRegistry.startSweep()
+  logger.info('Event registry ready')
+
   context.init({ logger })
   awareness.init({
-    db: db.get(), queue, ai, events, webhooks, config, logger, context, passports,
+    db: db.get(), queue, ai, events, webhooks, config, logger, context, passports, eventRegistry,
   })
   await awareness.migrate()
   logger.info('Awareness ready')
@@ -111,6 +122,7 @@ async function start() {
   // synthesis layer (knowledge + LLM), REST-only. Registered before plugins (and
   // before mcp.mount) so it's a first-class core capability. See docs/selector.md.
   query.register(app, { selector, ai, mcp, config, logger })
+  eventRegistry.register(app, { config, logger })
 
   await loadPlugins(app, {
     config,
@@ -128,6 +140,7 @@ async function start() {
     ai,
     template,
     awareness,
+    eventRegistry,
     facts,
     selector,
     context,

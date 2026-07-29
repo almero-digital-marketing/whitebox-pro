@@ -3,16 +3,22 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { usersClient as client } from '../users'
+import { useRailPage } from '../../../components/useRailPage'
 import { notifyError } from '../../../shell/toast'
 
 export const useUsersStore = defineStore('users', () => {
+  // The full team, for anything that needs all of it at once. Capped — see the
+  // campaigns store.
+  const CATALOGUE_MAX = 500
   const users = ref<any[]>([])
+  // The rail: a real server query with its own page.
+  const rail = useRailPage<any>(o => client.list(o), { subject: 'users' })
   const catalog = ref<any[]>([])   // [{ module, items: [{key,label,description}], defaults }]
   const logins = ref<any[]>([])   // the currently-selected user's login history, newest first
   const error = ref('')
 
   async function loadUsers() {
-    try { users.value = await client.list() } catch (e: any) { error.value = e.message; notifyError(`Couldn't load users: ${e.message}`) }
+    try { users.value = (await client.list({ limit: CATALOGUE_MAX })).rows } catch (e: any) { error.value = e.message; notifyError(`Couldn't load users: ${e.message}`) }
   }
 
   async function loadCatalog() {
@@ -61,6 +67,8 @@ export const useUsersStore = defineStore('users', () => {
   }
 
   return {
+    rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
+    pageSize: rail.pageSize, searchUsers: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
     users, catalog, logins, error,
     loadUsers, loadCatalog, loadLogins, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
   }

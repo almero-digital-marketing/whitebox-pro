@@ -6,6 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { audiences as client } from '../audiences'
+import { useRailPage } from '../../../components/useRailPage'
 import { notifyError } from '../../../shell/toast'
 
 export const useAudiencesStore = defineStore('audiences', () => {
@@ -44,11 +45,17 @@ export const useAudiencesStore = defineStore('audiences', () => {
   }
 
   // ── audiences — boolean compositions of segments (AND/OR/NOT) ──
+  // The CATALOGUE — every audience, because Campaigns and Journeys both render
+  // pickers from this ref and a page would silently truncate their options.
+  // Capped; a picker over thousands wants a typeahead, not a bigger number.
+  const CATALOGUE_MAX = 500
   const audiences = ref<any[]>([])    // saved audiences
+  // …and the Audiences rail, which is a real server query with its own page.
+  const rail = useRailPage<any>(o => client.listAudiences(o), { subject: 'audiences' })
   const networks = ref<any[]>([])     // CAPI adapters the server has configured (name + eligible)
 
   async function loadAudiences() {
-    try { audiences.value = await client.listAudiences() }
+    try { audiences.value = (await client.listAudiences({ limit: CATALOGUE_MAX })).rows }
     catch (e: any) { error.value = e.message; notifyError(`Couldn't load audiences: ${e.message}`) }
   }
 
@@ -101,6 +108,8 @@ export const useAudiencesStore = defineStore('audiences', () => {
   }
 
   return {
+    rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
+    pageSize: rail.pageSize, searchAudiences: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
     segments, audiences, networks, loading, error,
     previewSegment, loadSegments, saveSegment, removeSegment, renameSegment,
     loadAudiences, loadNetworks, previewAudience, nameAudience, saveAudience, removeAudience,

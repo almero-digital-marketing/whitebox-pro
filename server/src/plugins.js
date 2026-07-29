@@ -6,6 +6,22 @@ import logger from './logger.js'
 // here, `ctx.config.plugins` is already an array of those built objects, so the
 // loader just runs each one in order. (No dynamic name → package resolution —
 // the config file's `import` statements are the explicit, checkable manifest.)
+// Each plugin sees the shared ctx with ONE thing swapped: an awareness whose
+// record() stamps `plugin: <name>`. That's how an exposure row knows which
+// subsystem collected it without every call site having to remember to say so
+// (they all predate the column, and a new plugin would silently omit it).
+//
+// A shallow copy rather than a Proxy: ctx.awareness is a module *namespace*
+// object, whose exotic property invariants make it a poor proxy target. The
+// copy is safe here because nothing mutates ctx during register() — the
+// loader's own `ctx.plugins[name] = api` writes to the original, and
+// `plugins` is shared by reference, so late lookups (journeys → campaigns)
+// still see it.
+const scopedCtx = (ctx, name) =>
+  ctx.awareness
+    ? { ...ctx, awareness: { ...ctx.awareness, record: (event) => ctx.awareness.record({ plugin: name, ...event }) } }
+    : ctx
+
 async function load(app, ctx) {
   // Pre-pass: aggregate every plugin's declared permission catalog BEFORE
   // any register() runs, so it's available to all of them regardless of
@@ -27,7 +43,7 @@ async function load(app, ctx) {
       logger.info('Migrations done: %s', name)
     }
 
-    const api = await plugin.register(app, ctx)
+    const api = await plugin.register(app, scopedCtx(ctx, name))
     if (api) ctx.plugins[name] = api
     logger.info('Plugin ready: %s', name)
   }

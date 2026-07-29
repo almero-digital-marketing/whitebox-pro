@@ -10,15 +10,18 @@ questions about it in natural language, over HTTP or MCP.
 
 ## The 60-second mental model
 
-1. A visitor becomes a **passport** — one identity that email, phone, login and
-   browser fingerprint all merge into.
+1. A visitor becomes a **passport** — one *person*, holding as many identities
+   (emails, phones, logins, fingerprints) as they've been seen by. A strong
+   identity appearing on a second passport merges the two.
 2. A **session** is a time-boxed visit (with UTMs/referrer) attached to a passport.
 3. Every touch is recorded into **awareness**: a row with a `channel`, a
    `direction` (did we reach them, or did they act?), and `text`. The text is
-   chunked and embedded so it's semantically searchable.
-4. **Channels are plugins** — mail, SMS, voip, engagement, crm, conversions,
-   audiences, shortener. Each owns its endpoints and writes to awareness; none
-   import each other.
+   chunked and embedded so it's semantically searchable. Structured state lives
+   beside it in **facts** (valid-time, append-only).
+4. **Everything else is a plugin.** Channels write to the memory — mail, SMS,
+   voip, engagement, crm, conversions, geolocation, shortener. Surfaces read it
+   and act — analytics, audiences, campaigns, journeys, people, oauth. Each owns
+   its endpoints; none import each other.
 5. You **query** the memory through the core **QUERY** surface — REST `POST /query`,
    `/preview`, `/ask`, `/funnel` and MCP `whitebox.query`, `whitebox.preview`,
    `whitebox.funnel` (a selector engine over both memories) — with the analytics
@@ -46,11 +49,21 @@ WhiteBox internals.
 6. **[06 · MCP](06-mcp.md)** — the `/mcp` endpoint, auth (static token or Auth0),
    connecting a client, and the full tool catalog across plugins.
 7. **[07 · Channels](07-channels.md)** — per-channel usage: mail, sms, engagement,
-   crm, voip, conversions, audiences, shortener.
+   crm, voip, conversions, geolocation, shortener.
 8. **[08 · Integrations](08-integrations.md)** — the provider model, the sibling
    integrations repo, the link script, and swapping or adding a provider.
 9. **[09 · Deployment](09-deployment.md)** — production setup, webhooks, scaling,
    migrations, and data/GDPR operations.
+
+The **surface** plugins each document themselves in their own package, because
+each is a product area rather than a transport:
+[audiences](../server-plugin-audiences/docs/) ·
+[campaigns](../server-plugin-campaigns/README.md) ·
+[journeys](../server-plugin-journeys/README.md) ·
+[people](../server-plugin-people/README.md) ·
+[oauth](../server-plugin-oauth/README.md) ·
+[analytics](../server-plugin-analytics/README.md). The operator UI over them is
+[`ui/`](../ui/README.md).
 
 ## Conventions used here
 

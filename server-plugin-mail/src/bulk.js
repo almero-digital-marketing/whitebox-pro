@@ -65,7 +65,13 @@ function chunkJobs(rows, batchId, size) {
   return jobs
 }
 
-export async function send({ subject, from, html, text, template, attachment_urls: attachmentUrls, recipients, shorten }) {
+// `recipients` may carry a passportId per row, and the batch may carry
+// campaign/journey attribution. Both are what make a bulk send visible
+// afterwards: passport_id ties a message to a person (and enrols the row in
+// merge/erase), campaign_id/journey_id answer "who asked for this" — the only
+// thing the results funnels read. A bulk send without them delivers fine and
+// then can't be reported on at all.
+export async function send({ subject, from, html, text, template, attachment_urls: attachmentUrls, recipients, shorten, campaignId, journeyId }) {
   const batchId = crypto.randomUUID()
 
   // Dedupe by normalized email — preserve first occurrence (with its data)
@@ -77,7 +83,7 @@ export async function send({ subject, from, html, text, template, attachment_url
     if (!key) continue
     if (seen.has(key)) { duplicates++; continue }
     seen.add(key)
-    unique.push({ to: key, data: r.data || null })
+    unique.push({ to: key, data: r.data || null, passportId: r.passportId || r.passport_id || null })
   }
 
   // Pre-filter against suppressions + invalid lists
@@ -119,6 +125,9 @@ export async function send({ subject, from, html, text, template, attachment_url
     template: template || null,
     attachments: resolvedAttachments,
     batchId,
+    campaignId: campaignId || null,
+    journeyId: journeyId || null,
+    passportId: r.passportId,
     data: r.data,
     shorten: shorten || null,
   }))

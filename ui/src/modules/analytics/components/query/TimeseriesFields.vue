@@ -6,7 +6,7 @@ defineProps<{ model: any }>()
 </script>
 
 <template>
-  <label class="lab"><i class="pi pi-bolt ic" />Event</label>
+  <label class="lab">Event</label>
   <MultiSelect v-model="model.tsEvents" :options="model.eventOpts" optionLabel="label" optionValue="value" filter display="chip" placeholder="pick event action(s)" class="w" />
   <p class="hint">The action counted per period — e.g. <code>email_open</code>, <code>booking</code>. Pick one or several.</p>
   <label class="lab">Aggregate</label>

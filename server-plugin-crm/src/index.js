@@ -2,6 +2,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import { resolveAuth } from 'whitebox-pro-server/auth'
+import createNotify from 'whitebox-pro-server/notify'
 import * as state from './state.js'
 import * as ingest from './ingest.js'
 
@@ -27,7 +28,7 @@ export function crm(options = {}) {
     },
 
     async register(app, ctx) {
-      const { connect, passports, facts, awareness, context, logger: rootLogger } = ctx
+      const { connect, passports, facts, awareness, context, events, webhooks, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'crm' })
       const crmConfig = options
 
@@ -38,7 +39,9 @@ export function crm(options = {}) {
       // Singleton modules: capture deps once, in dependency order. ingest reaches
       // state directly via `import * as state`; state writes structured records
       // into core facts. Only non-module values come through init.
-      state.init({ facts, logger })
+      const { notify } = createNotify({ webhooksConfig: crmConfig.webhooks, events, webhooks, eventRegistry })
+
+      state.init({ facts, logger, notify })
       ingest.init({ passports, awareness, logger })
 
       mountRoutes(app, { requireAuth, state, ingest, logger })

@@ -28,6 +28,19 @@
 //   node --env-file-if-exists=.env scripts/seed-analytics.mjs --count=150
 //   node --env-file-if-exists=.env scripts/seed-analytics.mjs --no-reports     # data only, no dashboards
 //   node --env-file-if-exists=.env scripts/seed-analytics.mjs --reports-only   # rebuild dashboards only
+//   node --env-file-if-exists=.env scripts/seed-analytics.mjs --no-journeys     # skip the demo journeys
+//   node --env-file-if-exists=.env scripts/seed-analytics.mjs --journeys-only   # rebuild journeys only
+//
+// The demo journeys (below REPORT_DEFS) exercise every trigger kind (event/
+// audience), every step kind, both branch condition modes (by audience,
+// by filter), and a spread of dedupe/status combinations — meant for
+// inspecting the Journeys UI, not as a realistic clinic scenario. Skipped
+// (with a warning) if server-plugin-journeys/server-plugin-audiences aren't
+// installed, or if no saved audience exists yet for the audience-trigger and
+// audience-branch examples (create one in the Audiences module first). The
+// static list the add_to_list step targets is CREATED by the seed (reused by
+// name on a re-run) — unlike an audience, a list encodes no business intent to
+// guess at, so there's nothing to wait for a human to define.
 //
 // Facts + awareness exposures are queryable immediately (charts/breakdowns/funnels
 // work without embeddings). Semantic `about` / answer widgets need the embed worker
@@ -59,6 +72,8 @@ const RESET = argv.includes('--reset')
 const DRAIN = argv.includes('--drain')
 const NO_REPORTS = argv.includes('--no-reports')   // skip seeding the demo dashboards
 const REPORTS_ONLY = argv.includes('--reports-only')   // (re)seed only the dashboards, no client data
+const NO_JOURNEYS = argv.includes('--no-journeys')   // skip seeding the demo journeys
+const JOURNEYS_ONLY = argv.includes('--journeys-only')   // (re)seed only the journeys, no client data/reports
 const COUNT = Number((argv.find(a => a.startsWith('--count=')) || '').split('=')[1] || 80)
 const DEMO_DOMAIN = 'beautyclinic.demo'   // marks rows this script owns (for --reset)
 
@@ -409,6 +424,204 @@ async function seedReports() {
   logger.info('Seeded %d advanced reports: %s', REPORT_DEFS.length, REPORT_DEFS.map(([n]) => n).join(' · '))
 }
 
+// ── demo campaigns — just enough content for journeys' trigger_campaign
+// steps below to reference (one per channel). Idempotent by name, same
+// replace-if-exists convention as journeyDefs.
+const journeyCampaignDefs = [
+  { name: 'Journey Demo — Welcome Email', channel: 'email', subject: 'Welcome to WhiteBox!', message: { html: '<p>Thanks for joining — here\'s what to expect.</p>' } },
+  { name: 'Journey Demo — Cart Recovery SMS', channel: 'sms', message: { text: 'Still thinking it over? Your cart is waiting.' } },
+]
+
+// ── demo journeys — every trigger kind, every step kind, both branch modes ───
+// Not a realistic clinic scenario (that's seedClient() above) — this is a
+// coverage sweep for inspecting the Journeys UI: event/audience
+// triggers, all 7 step kinds, a branch by audience AND a branch by filter,
+// an absolute `until` wait alongside relative-duration waits, and a spread
+// of draft/active/paused statuses.
+//
+// `audienceId` (a real saved audience, or null if none exist yet) backs the
+// audience trigger and the by-audience branch condition — same audience used
+// for both, since the point is exercising the shape, not a realistic pair.
+// `campaignIds` ({email, sms}) back every trigger_campaign step, and `listId`
+// is the static list the add_to_list step drops the passport onto — created by
+// seedJourneys() rather than looked up, since a list is just a container and
+// has no business meaning to guess at (unlike the audience above).
+const journeyDefs = (audienceId, campaignIds, listId) => [
+  {
+    name: 'Welcome Series', trigger: { kind: 'event', event: ['passport.created'] }, dedupe: { reenroll: false, cooldown_days: null },
+    status: 'draft', enroll: false,
+    steps: {
+      entry: 'a1',
+      nodes: {
+        a1: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'a2', position: { x: 40, y: 40 } },
+        a2: { kind: 'wait', config: { duration_ms: 86_400_000 }, next: 'a3', position: { x: 40, y: 190 } },
+        a3: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'a4', position: { x: 40, y: 340 } },
+        a4: { kind: 'exit', config: { reason: 'series complete' }, position: { x: 40, y: 490 } },
+      },
+    },
+  },
+  {
+    name: 'Cart Abandonment Recovery', trigger: { kind: 'event', event: ['cart.abandoned'] },
+    dedupe: { reenroll: true, cooldown_days: 3 }, status: 'active', enroll: true,
+    steps: {
+      entry: 'b1',
+      nodes: {
+        b1: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.sms }, next: 'b2', position: { x: 40, y: 40 } },
+        b2: { kind: 'wait', config: { duration_ms: 7_200_000 }, next: 'b3', position: { x: 40, y: 190 } },
+        b3: { kind: 'branch', config: { condition: { filter: { fact: { purchased_after_abandon: { eq: true } } } } }, on_true: 'b4', on_false: 'b5', position: { x: 40, y: 340 } },
+        b4: { kind: 'exit', config: { reason: 'converted' }, position: { x: -100, y: 490 } },
+        b5: { kind: 'webhook', config: { url: 'https://httpbin.org/post', method: 'POST', payload: { note: 'cart-abandon-discount-eligible' } }, next: 'b6', position: { x: 200, y: 490 } },
+        b6: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'b7', position: { x: 200, y: 640 } },
+        b7: { kind: 'exit', config: { reason: 'discount sent' }, position: { x: 200, y: 790 } },
+      },
+    },
+  },
+  audienceId && {
+    name: 'VIP Segment Nurture', trigger: { kind: 'audience', audience_ids: [audienceId], op: 'any' },
+    // a goal so the results block has something to measure — the nurture exists
+    // to get a campaign in front of these people, so that's what success is
+    goal: { event: ['campaigns.activated'], window_days: 30 },
+    dedupe: { reenroll: false, cooldown_days: null }, status: 'active', enroll: true,
+    steps: {
+      entry: 'c1',
+      nodes: {
+        c1: { kind: 'set_fact', config: { key: 'vip_nurture_started', value: true }, next: 'c2', position: { x: 40, y: 40 } },
+        c2: { kind: 'branch', config: { condition: { audience_id: audienceId } }, on_true: 'c3', on_false: 'c4', position: { x: 40, y: 190 } },
+        c3: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'c5', position: { x: -100, y: 340 } },
+        c4: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.sms }, next: 'c5', position: { x: 200, y: 340 } },
+        c5: { kind: 'exit', config: { reason: 'nurture sent' }, position: { x: 40, y: 490 } },
+      },
+    },
+  },
+  {
+    name: 'Signup Confirmation', trigger: { kind: 'event', event: ['signup.completed'] }, dedupe: { reenroll: true, cooldown_days: null },
+    status: 'paused', enroll: false,
+    steps: {
+      entry: 'd1',
+      nodes: {
+        d1: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'd2', position: { x: 40, y: 40 } },
+        d2: { kind: 'wait', config: { until: new Date(Date.now() + 24 * 3_600_000).toISOString() }, next: 'd3', position: { x: 40, y: 190 } },
+        d3: { kind: 'webhook', config: { url: 'https://httpbin.org/post', method: 'POST', payload: { note: 'signup-confirmation-window-elapsed' } }, next: 'd4', position: { x: 40, y: 340 } },
+        d4: { kind: 'exit', config: {}, position: { x: 40, y: 490 } },
+      },
+    },
+  },
+  {
+    name: 'Full Kitchen Sink (all step kinds)', trigger: { kind: 'event', event: ['kitchen-sink.demo'] }, dedupe: { reenroll: false, cooldown_days: null },
+    status: 'draft', enroll: false,
+    steps: {
+      entry: 'e1',
+      nodes: {
+        e1: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'e2', position: { x: 40, y: 40 } },
+        e2: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.sms }, next: 'e3', position: { x: 40, y: 190 } },
+        e3: { kind: 'wait', config: { duration_ms: 1_800_000 }, next: 'e4', position: { x: 40, y: 340 } },
+        e4: { kind: 'branch', config: { condition: { filter: { fact: { demo_flag: { eq: true } } } } }, on_true: 'e5', on_false: 'e8', position: { x: 40, y: 490 } },
+        e5: { kind: 'set_fact', config: { key: 'kitchen_sink_true_path', value: true }, next: 'e9', position: { x: -100, y: 640 } },
+        e9: { kind: 'add_to_list', config: { segment_id: listId }, next: 'e6', position: { x: -100, y: 790 } },
+        e6: { kind: 'webhook', config: { url: 'https://httpbin.org/post', method: 'POST', payload: { path: 'true' } }, next: 'e7', position: { x: -100, y: 940 } },
+        e7: { kind: 'exit', config: { reason: 'true path done' }, position: { x: -100, y: 1090 } },
+        e8: { kind: 'exit', config: { reason: 'false path done' }, position: { x: 200, y: 640 } },
+      },
+    },
+  },
+].filter(Boolean)
+
+async function seedJourneys() {
+  let jStore, jService, jExecutor, aStore, aEvaluator, aIdentity, aConsent, aService, cStore, cService
+  try {
+    jStore = await import('../../server-plugin-journeys/src/store.js')
+    jService = await import('../../server-plugin-journeys/src/service.js')
+    jExecutor = await import('../../server-plugin-journeys/src/executor.js')
+    aStore = await import('../../server-plugin-audiences/src/store.js')
+    aEvaluator = await import('../../server-plugin-audiences/src/evaluator.js')
+    aIdentity = await import('../../server-plugin-audiences/src/identity.js')
+    aConsent = await import('../../server-plugin-audiences/src/consent.js')
+    aService = await import('../../server-plugin-audiences/src/service.js')
+    cStore = await import('../../server-plugin-campaigns/src/store.js')
+    cService = await import('../../server-plugin-campaigns/src/service.js')
+  } catch (err) {
+    logger.warn('Journey seeding skipped (journeys/audiences/campaigns plugin not found): %s', err.message)
+    return
+  }
+
+  const migDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server-plugin-journeys/src/migrations')
+  await db.get().migrate.latest({ directory: migDir, tableName: 'whitebox_journey_migrations', loadExtensions: ['.js'] })
+  const campaignMigDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server-plugin-campaigns/src/migrations')
+  await db.get().migrate.latest({ directory: campaignMigDir, tableName: 'whitebox_campaign_migrations', loadExtensions: ['.js'] })
+
+  // Reuse the real audiences service (not a stub) so the audience trigger and
+  // audience-branch condition resolve against genuine membership — same
+  // wiring recipe as server-plugin-audiences/src/index.js's register().
+  aStore.init({ db: db.get() })
+  aIdentity.init({ passports })
+  aConsent.init({ passports, config: {} })
+  aEvaluator.init({ selector, ai, db: db.get(), facts, logger })
+  aService.init({ store: aStore, evaluator: aEvaluator, adapters: [], identity: aIdentity, consent: aConsent, logger })
+  const existingAudience = (await aService.listAudiences())[0]
+  // The add_to_list step needs a real list to point at. Reused by name so a
+  // re-run doesn't pile up duplicates (and doesn't discard whoever is already
+  // on it) — the journeys themselves are deleted and rebuilt below, but a list
+  // is people, not fixture data.
+  const LIST_NAME = 'Journey Demo — hand-picked'
+  const listId = (await aService.listLists()).find(l => l.name === LIST_NAME)?.id
+    ?? (await aService.createList({ name: LIST_NAME })).id
+  if (!existingAudience) logger.warn('No saved audience found — skipping the audience-trigger/audience-branch demo journey (create one in Audiences first, then re-run with --journeys-only)')
+
+  // Stubs only reached if dryRun were ever flipped off below — with dryRun
+  // true (this script's default), campaigns.activateForPassport() never
+  // touches mail/sms at all. Not a real send either way.
+  const stubMail = { queueSend: async (args) => ({ id: 'seed-stub', status: 'queued', ...args }) }
+  const stubSms = { queueSend: async (args) => ({ id: 'seed-stub', status: 'queued', ...args }) }
+
+  cStore.init({ db: db.get() })
+  cService.init({ store: cStore, audiences: aService, dryRun: true, mail: stubMail, sms: stubSms, logger })
+
+  // idempotent — replace any existing campaign that shares a seeded name
+  const campaignNames = new Set(journeyCampaignDefs.map(d => d.name))
+  for (const c of await cService.listCampaigns()) if (campaignNames.has(c.name)) await cService.deleteCampaign(c.id)
+  const campaignIds = {}
+  for (const d of journeyCampaignDefs) {
+    const row = await cService.saveCampaign(d)
+    campaignIds[d.channel] = row.id
+  }
+
+  jStore.init({ db: db.get() })
+  jExecutor.init({ store: jStore, campaigns: cService, audiences: aService, selector, facts, webhooks, logger, notifyLifecycle: () => {} })
+  jExecutor.initQueue(queue)
+  jService.init({ store: jStore, lock, logger, notifyLifecycle: () => {}, onTriggerChange: () => {} })
+
+  const defs = journeyDefs(existingAudience?.id ?? null, campaignIds, listId)
+
+  // idempotent — replace any existing journey that shares a seeded name
+  const names = new Set(defs.map(d => d.name))
+  for (const j of await jService.listJourneys()) if (names.has(j.name)) await jService.deleteJourney(j.id)
+
+  const enrollTargets = []
+  for (const def of defs) {
+    const row = await jService.createJourney({ name: def.name, trigger: def.trigger, dedupe: def.dedupe, steps: def.steps, goal: def.goal })
+    if (def.status === 'active' || def.status === 'paused') await jService.activateJourney(row.id)
+    if (def.status === 'paused') await jService.pauseJourney(row.id)
+    if (def.enroll) enrollTargets.push(row.id)
+  }
+
+  // enroll one fresh demo passport (with an email+phone, so a trigger_campaign
+  // step's contact resolution has something to find if dryRun is ever turned
+  // off above) into each journey left active, so there's real enrollment +
+  // step-run data to inspect right away.
+  for (const journeyId of enrollTargets) {
+    const pid = await passports.identify(null)
+    await passports.link(pid, [
+      { type: 'email', name: 'primary', value: `journey-demo-${pid.slice(0, 8)}@${DEMO_DOMAIN}` },
+      { type: 'phone', name: 'e164', value: `+3598${int(10, 99)}${String(int(100000, 999999))}` },
+    ])
+    await jService.enroll(journeyId, pid, { source: 'seed' })
+  }
+  // let the initial advance() jobs actually run before the queue closes
+  if (enrollTargets.length) await new Promise(r => setTimeout(r, 1500))
+
+  logger.info('Seeded %d demo journeys: %s', defs.length, defs.map(d => d.name).join(' · '))
+}
+
 async function boot() {
   const config = await loadConfig({ argv: process.argv, env: process.env })
   initLogger({ config })
@@ -432,9 +645,11 @@ async function boot() {
 async function main() {
   await boot()
 
-  // --reports-only: just (re)build the demo dashboards against existing data
-  if (REPORTS_ONLY) {
-    await seedReports()
+  // --reports-only / --journeys-only: just (re)build the requested demo
+  // content against existing data, skipping the full client-seeding pass.
+  if (REPORTS_ONLY || JOURNEYS_ONLY) {
+    if (REPORTS_ONLY) await seedReports()
+    if (JOURNEYS_ONLY) await seedJourneys()
   } else {
     if (RESET) await resetDemo()
 
@@ -454,6 +669,7 @@ async function main() {
     logger.info('Sanity: %d active clients (people query) · %s awareness exposures', active.count, exposures.n)
 
     if (!NO_REPORTS) await seedReports()
+    if (!NO_JOURNEYS) await seedJourneys()
 
     if (DRAIN) {
       logger.info('Waiting for embeddings to drain (--drain)…')

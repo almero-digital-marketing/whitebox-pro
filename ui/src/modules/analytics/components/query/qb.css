@@ -2,41 +2,35 @@
    the builder root .qb, so the rules reach the kind field-editor child components
    (scoped styles wouldn't cross those component boundaries) without leaking out. */
 .qb { display: flex; flex-direction: column; gap: 6px; }
-.qb .lab { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 8px; }
+/* matches the app-wide field-label convention (see .fld-l in Journeys.vue /
+   Users.vue) — every other right-pane field label is a small uppercase
+   "eyebrow" label, not sentence-case text; .qb's own was the one holdout. */
+.qb .lab { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
 .qb .lab.row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* ConditionsBuilder's own title (.cb-title) isn't a .lab, so its outer
+   .cbx-root wouldn't otherwise get the same top-of-section breathing room
+   every other .qb field group gets — scoped here (not on .cbx-root itself)
+   since Journeys embeds the same component in a different gap-based layout
+   that's already correctly spaced without this extra margin. */
+.qb .cbx-root { margin-top: 8px; }
 .qb .w { width: 100%; }
 .qb .small { font-size: 11px; font-weight: 400; }
 .qb .hint { font-size: 11.5px; line-height: 1.45; color: var(--muted); margin: 2px 0 1px; }
 .qb .hint code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 11px; font-family: ui-monospace, monospace; }
 .qb .hint b { color: var(--text); font-weight: 650; }
-.qb .ic { font-size: 12px; opacity: .6; margin-right: 4px; vertical-align: -1px; }
+/* dropdown option with a provenance/sample subtitle (the breakdown key picker).
+   Lives outside .qb because PrimeVue teleports the overlay to <body>. */
+.opt-row { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.opt-hint { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qb .viz-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 3px; }
 .qb .viz { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 11px 6px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--muted); cursor: pointer; transition: border-color .12s, background .12s, color .12s; font: inherit; font-size: 11.5px; font-weight: 600; }
-.qb .viz i { font-size: 16px; }
+.qb .viz .material-symbols-outlined { font-size: 16px; }
 .qb .viz:hover { border-color: var(--border-2); color: var(--text); }
 .qb .viz.on { border-color: transparent; background: var(--accent-soft); color: var(--accent); }   /* no border, just fill — like the selected report */
-.qb .comb { width: 84px; }
-.qb .cond { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); margin-top: 2px; }
-.qb .cond-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.qb .cond-note { flex: 1; }
-/* condition rows reflow (wrap to a new line) instead of truncating on a narrow pane */
-.qb .cond-fields { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
-.qb .cond-metric { display: flex; flex-direction: column; gap: 6px; }
-.qb .m-row { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
-.qb .m-lab { font-size: 11px; color: var(--muted); width: 58px; flex: none; text-align: right; }
-.qb .m-grow { flex: 1 1 150px; min-width: 0; }
-.qb .m-grow .p-multiselect { width: 100%; }
-/* widths sized to each control's longest label (+ select chrome) so values stay fully visible */
-.qb .notbtn { min-width: 58px; flex: none; }
-.qb .cond-type { width: 120px; flex: none; }            /* 'Activity' */
-.qb .f-key { flex: 1 1 150px; min-width: 140px; }       /* fact key — grows, long keys visible */
-.qb .f-op { flex: 0 1 auto; min-width: 116px; }         /* 'present' / 'count' */
-.qb .f-cmp { flex: none; min-width: 64px; }             /* ≥ / ≤ */
-.qb .f-val { flex: 1 1 130px; min-width: 120px; }       /* fact value — 'lapsed' fully visible, grows */
-.qb .f-num { width: 66px; flex: none; }                 /* a count threshold — a short number */
-.qb .f-win { flex: 0 1 auto; min-width: 104px; }        /* 'any time' */
-/* keep every select's text from clipping: the label area fills its box, no ellipsis */
-.qb .cond .p-select-label, .qb .cond .p-multiselect-label { text-overflow: clip; }
+/* The condition-row rules (.comb, .cond, .m-…, .notbtn, .cond-type, .f-…)
+   moved to ui/src/shared/query/conditions.css — ConditionRow.vue and
+   ConditionsBuilder.vue now live there so Journeys' branch-filter editor
+   can use them too; this file imports that stylesheet below. */
 /* compare — toggle switch (pushed right), mode segmented control, custom-series rows */
 .qb .cmp-sw { margin-left: auto; }
 .qb .seg { display: flex; gap: 4px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; margin-top: 4px; }
@@ -47,7 +41,20 @@
 .qb .step-n { width: 16px; text-align: center; flex: none; color: var(--muted); font-size: 12px; }
 .qb .step-name { width: 104px; flex: none; }
 .qb .step-tag { flex: 1; min-width: 0; }
-.qb .qb-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-.qb .cancel { margin-right: auto; }
+/* same shape as every other right-pane editor's action row (see
+   docs/adr/0001-editor-save-discard-pattern.md) — border-top + spacing match
+   Users'/Journeys' .b-actions verbatim. Buttons (Cancel/Run/Save) are
+   flex-shrink:0 — their own label must never wrap. .save-note is the one
+   flexible element: flex:1 1 auto + min-width:0 lets it both grow (pushing
+   Run/Save to the right, replacing the old margin-right:auto trick) and
+   shrink/wrap its own text if the row is ever genuinely too narrow for
+   everything — a plain text label reflowing is normal; a button reflowing
+   is not. This keeps every button on one line regardless of pane width or
+   how long a contextual label (e.g. "Add to report") gets. */
+.qb .qb-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.qb .qb-actions > .p-button, .qb .qb-actions > .result { flex-shrink: 0; }
+.qb .save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); flex: 1 1 auto; min-width: 0; }
+.qb .save-note .material-symbols-outlined { font-size: 8px; color: #d97706; }
+.qb .save-note--hidden { visibility: hidden; }
 .qb .result { align-self: center; font-size: 11.5px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px; white-space: nowrap; }
 .qb .result.err { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }

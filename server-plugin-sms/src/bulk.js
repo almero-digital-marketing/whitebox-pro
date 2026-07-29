@@ -28,7 +28,9 @@ export function init(deps) {
 
 const defaultCountry = () => config.sms?.defaultCountry
 
-export async function send({ from, body, template, media, recipients }) {
+// campaignId/journeyId + a per-recipient passportId — see mail's bulk.send()
+// for why a bulk send that omits them can't be reported on afterwards.
+export async function send({ from, body, template, media, recipients, campaignId, journeyId }) {
   const batchId = crypto.randomUUID()
 
   // Normalize to E.164 + dedupe; drop unparseable numbers.
@@ -41,7 +43,7 @@ export async function send({ from, body, template, media, recipients }) {
     if (!to) { invalidNumbers++; continue }
     if (seen.has(to)) { duplicates++; continue }
     seen.add(to)
-    unique.push({ to, data: r.data || null })
+    unique.push({ to, data: r.data || null, passportId: r.passportId || r.passport_id || null })
   }
 
   const phones = unique.map(r => r.to)
@@ -62,6 +64,7 @@ export async function send({ from, body, template, media, recipients }) {
   const items = accepted.map(r => ({
     to: r.to, from: from || null, body: body || null, template: template || null,
     media: media || null, batchId, data: r.data,
+    passportId: r.passportId, campaignId: campaignId || null, journeyId: journeyId || null,
   }))
   const rows = await outbox.createMany(items)
 

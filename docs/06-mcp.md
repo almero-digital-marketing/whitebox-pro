@@ -132,6 +132,8 @@ The higher-level, awareness-focused conveniences (callers of the core engine):
 
 ### Channels — act
 
+Channel plugins namespace with a **dot**:
+
 | plugin | tools |
 |---|---|
 | mail | `mail.send` · `mail.outbox_get` · `mail.inbox_list` · `mail.inbox_get` · `mail.suppress` · `mail.unsuppress` |
@@ -141,7 +143,45 @@ The higher-level, awareness-focused conveniences (callers of the core engine):
 | conversions | `conversions.list_events` |
 | shortener | `shortener.create_link` · `shortener.list_links` · `shortener.link_stats` |
 | voip | `voip.list_calls` · `voip.get_call` · `voip.get_transcript` |
-| audiences | `audiences_list_rules` · `audiences_draft_rule` · `audiences_preview_rule` · `audiences_create_rule` · `audiences_enable_rule` · `audiences_evaluate` · `audiences_explain_match` · `audiences_passport_segments` · `audiences_segment_members` · `audiences_network_status` · `audiences_list_facts` · `audiences_delivery_log` · `audiences_suppress` |
+
+### Surfaces — target, send, automate, look someone up
+
+The surface plugins namespace with an **underscore** (`audiences_…`, not
+`audiences.…`). The inconsistency with the channel tools above is historical, not
+meaningful — match whichever the plugin actually registers.
+
+**audiences** — segments (a saved query) and audiences (a boolean composition of
+segments), plus hand-built static lists and suppression:
+
+| group | tools |
+|---|---|
+| segments | `audiences_list_segments` · `audiences_get_segment` · `audiences_create_segment` · `audiences_preview_segment` · `audiences_rename_segment` · `audiences_name_segment` · `audiences_delete_segment` · `audiences_segment_members` |
+| audiences | `audiences_list_audiences` · `audiences_get_audience` · `audiences_create_audience` · `audiences_preview_audience` · `audiences_name_audience` · `audiences_delete_audience` · `audiences_audience_members` · `audiences_passport_audiences` |
+| static lists | `audiences_lists` · `audiences_create_list` · `audiences_add_to_list` · `audiences_remove_from_list` |
+| delivery & networks | `audiences_set_delivery` · `audiences_set_client_side` · `audiences_set_campaigns` · `audiences_delivery_preview` · `audiences_network_status` |
+| suppression & facts | `audiences_suppress` · `audiences_unsuppress` · `audiences_list_suppression` · `audiences_list_facts` |
+
+**campaigns** — one send to one or more audiences:
+
+`campaigns_list` · `campaigns_get` · `campaigns_create` · `campaigns_update` ·
+`campaigns_delete` · `campaigns_attach_audience` · `campaigns_detach_audience` ·
+`campaigns_delivery_preview` · `campaigns_schedule` · `campaigns_send_manual` ·
+`campaigns_unlock` · `campaigns_set_report` · `campaigns_activate_for_passport`
+
+**journeys** — multi-step automation and its enrollments:
+
+`journeys_list` · `journeys_get` · `journeys_create` · `journeys_update` ·
+`journeys_delete` · `journeys_activate` · `journeys_pause` · `journeys_enroll` ·
+`journeys_list_enrollments` · `journeys_enrollment_status` · `journeys_exit_enrollment`
+
+**people** — one customer, in full:
+
+`people_search` · `people_get` · `people_activity` · `people_link_identity` ·
+`people_unlink_identity` · `people_record_fact` · `people_merge` · `people_erase`
+
+> `people_erase` is gated on its own `people:erase` permission, separate from
+> `people:write` — deleting someone forever is a different authority from
+> correcting their email. See [04 · Configuration](04-configuration.md).
 
 Several plugins also expose read-only **resources** (e.g. recent conversion events,
 recent voip calls) for browsing.
@@ -152,8 +192,12 @@ recent voip calls) for browsing.
    understand a customer, then synthesize a summary in your own context.
 2. `whitebox.query` (`people`, after `whitebox.preview`) to build a cohort over both
    memories, or `whitebox.funnel` for a windowed drop-off.
-3. `mail.send` or `sms.send` to follow up — or `audiences_draft_rule` →
-   `audiences_preview_rule` → `audiences_create_rule` to activate a segment.
+3. `mail.send` or `sms.send` to follow up — or `audiences_preview_segment` →
+   `audiences_create_segment` → `audiences_create_audience` to build a cohort you
+   can send to, then `campaigns_create` → `campaigns_attach_audience` →
+   `campaigns_send_manual`.
+4. `people_search` → `people_get` when the question is about one named customer
+   rather than a cohort.
 
 Because tools share the same identity, auth, and awareness as the HTTP API, an
 agent acting over MCP is indistinguishable from your app acting over HTTP — every

@@ -5,6 +5,8 @@
 // refs below, so only the *access* (model.x in templates) moved out of the SFC.
 import { ref, computed, reactive, watch } from 'vue'
 import { KIND_HINTS } from './constants'
+import { factKeyOptions } from '../../../../shared/query/constants'
+import { coerceScalar, eventArr, newCondition as sharedNewCondition, buildClause, parseClause, parseFilter, buildFilter } from '../../../../shared/query/clause'
 
 export interface QueryBuilderProps { widget: any; schema: any }
 
@@ -20,7 +22,7 @@ export function useQueryModel(props: QueryBuilderProps) {
   const tsAgg = ref('count')
   const grain = ref('week')
   const breakdownDim = ref('')         // 'channel' | 'session:utm_*' | 'attr:event' | 'fact:<key>'
-  const breakdownValues = ref('')      // only for a fact dimension
+  const breakdownValues = ref<any[]>([]) // only for a fact dimension — picked from the fact's discovered values
   const breakdownMeasure = ref('people')
   const distSource = ref<'fact' | 'event'>('fact')   // distribution: bin a numeric fact, or an event's per-person count
   const distKey = ref('')              // the fact key or event action to bin
@@ -45,22 +47,133 @@ export function useQueryModel(props: QueryBuilderProps) {
   const newStep = () => ({ name: '', event: '' })
 
   // option lists from the discovered schema
-  const factKeys = computed(() => (props.schema?.factKeys || []).map((k: any) => ({ label: k.key, value: k.key })))
+  const factKeys = computed(() => factKeyOptions(props.schema))
   const eventOpts = computed(() => (props.schema?.events || []).map((e: string) => ({ label: e, value: e })))
   const campaignOpts = computed(() => (props.schema?.campaigns || []).map((c: string) => ({ label: c, value: c })))
-  const breakdownDims = computed(() => [
+  // The dimension is picked in two steps instead of one long prefixed list:
+  // first the KIND ("Fact", "Event attribute", …), then — only for the two
+  // kinds that have many members — WHICH key. breakdownDim stays the single
+  // stored value ('fact:<key>' | 'attr:<key>' | 'channel' | 'session:utm_*'),
+  // so nothing about the saved query shape changes; these are just two views
+  // onto it. Kinds with no sub-choice resolve to breakdownDim immediately.
+  const BREAKDOWN_SLICES = [
+    { label: 'Fact', value: 'fact' },
+    { label: 'Event attribute', value: 'attr' },
+    { label: 'Event action', value: 'attr:event' },
     { label: 'Channel', value: 'channel' },
     { label: 'Acquisition source', value: 'session:utm_source' },
     { label: 'Campaign', value: 'session:utm_campaign' },
-    { label: 'Event action', value: 'attr:event' },
-    ...(props.schema?.attrKeys || []).map((k: string) => ({ label: 'Event · ' + k, value: 'attr:' + k })),
-    ...factKeys.value.map((k: any) => ({ label: 'Fact · ' + k.label, value: 'fact:' + k.value })),
-  ])
+  ]
+  // 'attr:event' is a leaf kind, so it must be matched before the 'attr:' prefix.
+  const deriveSlice = (dim: string) =>
+    !dim ? ''
+      : dim === 'attr:event' ? 'attr:event'
+        : dim.startsWith('fact:') ? 'fact'
+          : dim.startsWith('attr:') ? 'attr'
+            : dim
+  const sliceRef = ref('')
+  const attrSourceRef = ref('')   // event-attribute source filter; '' = don't narrow
+  const breakdownSlices = computed(() => BREAKDOWN_SLICES)
+  const breakdownSlice = computed({
+    get: () => sliceRef.value,
+    set: (v: string) => {
+      sliceRef.value = v
+      breakdownValues.value = []
+      attrSourceRef.value = ''   // the source narrows the attribute list only; a new slice starts wide
+      // leaf kinds ARE the dimension; the two-part kinds wait for a key
+      breakdownDim.value = v === 'fact' || v === 'attr' ? '' : v
+    },
+  })
+  const needsBreakdownKey = computed(() => sliceRef.value === 'fact' || sliceRef.value === 'attr')
+  // Attributes aren't a designed vocabulary — they're whatever payload each
+  // plugin attached to awareness.record() — so the flat list mixes a crm
+  // `treatment` in with an engagement image `width`, and picking one means
+  // scanning ~20 unrelated names. Narrowing by the collecting subsystem first
+  // makes it a two-step choice over a list that's actually related.
+  //
+  // This is a PICKER filter only: the stored dimension stays `attr:<key>`, so
+  // the query shape never sees the source and an existing widget round-trips
+  // unchanged. One attribute can be written by several subsystems (`kind`
+  // comes from conversions, crm AND engagement), so this narrows a list — it
+  // doesn't partition one.
+  const attrSources = computed(() => {
+    const seen = new Set<string>()
+    for (const a of props.schema?.attrKeys || []) {
+      if (typeof a !== 'string') for (const p of a.plugins || []) seen.add(p)
+    }
+    // "All sources" isn't just a convenience: attributes from before the
+    // provenance column existed have no plugin at all, and this is the only
+    // way to reach them.
+    return [{ label: 'All sources', value: '' }, ...[...seen].sort().map((s) => ({ label: s, value: s }))]
+  })
+  // Event attributes carry a provenance hint — which subsystem wrote the key
+  // and how many distinct values it takes — because the key name alone doesn't
+  // say whether it's a real dimension or incidental payload (`treatment` and
+  // `width` look alike in a plain list). Facts get their discovered sample
+  // values as the hint. Tolerates attrKeys still being a bare string[] — a
+  // server running the pre-provenance schema, or a cached one.
+  const attrKeyOpts = computed(() => (props.schema?.attrKeys || [])
+    .filter((a: any) => !attrSourceRef.value
+      || (typeof a !== 'string' && (a.plugins || []).includes(attrSourceRef.value)))
+    .map((a: any) => {
+      if (typeof a === 'string') return { label: a, value: a, hint: '' }
+      const n = a.distinct
+      // lead with the collecting subsystem — `source` is only a content label
+      // the plugin chose ('text', 'booking'), which doesn't say who wrote it.
+      const who = (a.plugins || []).length ? a.plugins.join(', ') : (a.sources || []).join(', ')
+      return {
+        label: a.key,
+        value: a.key,
+        hint: [who, n == null ? '' : `${n} value${n === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+      }
+    }))
+  const factKeyOpts = computed(() => (props.schema?.factKeys || []).map((k: any) => ({
+    label: k.key,
+    value: k.key,
+    hint: (k.sample || []).slice(0, 3).join(', '),
+  })))
+  const breakdownKeyOpts = computed(() =>
+    sliceRef.value === 'fact' ? factKeyOpts.value
+      : sliceRef.value === 'attr' ? attrKeyOpts.value
+        : [])
+  const breakdownKey = computed({
+    get: () => {
+      const p = sliceRef.value + ':'
+      return breakdownDim.value.startsWith(p) ? breakdownDim.value.slice(p.length) : ''
+    },
+    set: (v: string) => { breakdownValues.value = []; breakdownDim.value = v ? sliceRef.value + ':' + v : '' },
+  })
+  // Defined after breakdownKey because narrowing the source has to drop a
+  // chosen attribute the new source doesn't actually write — otherwise the
+  // dimension stays set to a key that's no longer in the list below it, which
+  // reads as the picker lying about what's selected.
+  const attrSource = computed({
+    get: () => attrSourceRef.value,
+    set: (v: string) => {
+      attrSourceRef.value = v
+      if (breakdownKey.value && !attrKeyOpts.value.some((o) => o.value === breakdownKey.value)) breakdownKey.value = ''
+    },
+  })
+  const needsAttrSource = computed(() => sliceRef.value === 'attr')
   const isFactDim = computed(() => breakdownDim.value.startsWith('fact:'))
+  // the distinct values the server discovered for the chosen fact. `values` is
+  // the COMPLETE set for a categorical key and empty for a high-cardinality one
+  // (compose.js's discoverSchema); `sample` is the 8-value prompt illustration,
+  // used only as the fallback so a high-cardinality fact still offers a few
+  // choices rather than none. Either way, union in whatever the widget already
+  // holds so a saved value outside the list still shows as selected rather
+  // than silently disappearing when the widget is re-saved.
+  const breakdownValueOpts = computed(() => {
+    if (!isFactDim.value) return []
+    const key = breakdownDim.value.slice(5)
+    const k = (props.schema?.factKeys || []).find((f: any) => f.key === key)
+    const known = k?.values?.length ? k.values : (k?.sample || [])
+    const seen = [...known, ...breakdownValues.value].map((v: any) => String(v))
+    return [...new Set(seen)].filter((v) => v !== '').sort().map((v) => ({ label: v, value: v }))
+  })
   // donut + radar + pivot + heatmap share the breakdown builder (rows) — only the rendering differs.
   const isBreakdownLike = computed(() => ['breakdown', 'donut', 'radar', 'pivot', 'heatmap'].includes(kind.value))
-  // per-kind wording for the shared breakdown UI (icon / verb / the noun for one bucket)
-  const bdIcon = computed(() => ({ donut: 'pi pi-chart-pie ic', radar: 'pi pi-compass ic' }[kind.value] || 'pi pi-chart-bar ic'))
+  // per-kind wording for the shared breakdown UI (verb / the noun for one bucket)
   const bdVerb = computed(() => ({ donut: 'Slice by', radar: 'Axis by' }[kind.value] || 'Break down by'))
   const bdUnit = computed(() => ({ donut: 'slice', radar: 'axis' }[kind.value] || 'bar'))
   // distribution over a fact needs a NUMERIC fact; over an event it picks an event action.
@@ -75,7 +188,9 @@ export function useQueryModel(props: QueryBuilderProps) {
   const canStack = computed(() => compareOn.value && ['breakdown', 'timeseries'].includes(kind.value))
   const kindHint = computed(() => KIND_HINTS[kind.value] || '')
 
-  const newCondition = () => ({ not: false, type: 'fact', key: factKeys.value[0]?.value || '', op: 'eq', value: '', events: [], campaigns: [], measure: 'count', cmp: 'gte', mvalue: '1', window: '' })
+  // wraps the shared newCondition() so every existing zero-arg call site
+  // still gets a fresh row defaulted to the first known fact key
+  const newCondition = () => sharedNewCondition(factKeys.value[0]?.value || '')
 
   // ── dirtiness (regenerate the summary only when the query changed) ──────────────
   let originalQuery = ''
@@ -83,39 +198,13 @@ export function useQueryModel(props: QueryBuilderProps) {
     o === null || typeof o !== 'object' ? JSON.stringify(o)
       : Array.isArray(o) ? '[' + o.map(stableStr).join(',') + ']'
         : '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + stableStr(o[k])).join(',') + '}'
-  function captureOriginal() { originalQuery = stableStr(build()) }
-  function isDirty() { return stableStr(build()) !== originalQuery }
-
-  const coerceScalar = (v: string): any => {
-    if (v === 'true') return true
-    if (v === 'false') return false
-    if (v !== '' && !isNaN(Number(v))) return Number(v)
-    return v
-  }
-  const eventArr = (ev: any): string[] => ev == null ? [] : (ev.in ? ev.in : Array.isArray(ev) ? ev : [ev])
+  // title isn't part of build()'s own query shape, but it's still a field this
+  // editor can leave unsaved — dirtiness has to cover it too, not just the query.
+  const withTitle = () => ({ title: title.value, query: build() })
+  function captureOriginal() { originalQuery = stableStr(withTitle()) }
+  function isDirty() { return stableStr(withTitle()) !== originalQuery }
 
   // ── parse: query def → form ────────────────────────────────────────────────────
-  function parseClause(cl: any): any | null {
-    let not = false
-    if (cl?.not) { not = true; cl = cl.not }
-    if (cl?.fact) {
-      const key = Object.keys(cl.fact)[0]; const op = Object.keys(cl.fact[key])[0]
-      const v = cl.fact[key][op]
-      return { ...newCondition(), not, type: 'fact', key, op, value: Array.isArray(v) ? v.join(', ') : String(v) }
-    }
-    if (cl?.metric) {
-      const m = cl.metric
-      const measure = m.sum ? 'sum' : 'count'
-      const agg = m.sum || m.count || {}
-      const cmp = agg.lte !== undefined ? 'lte' : 'gte'
-      const mvalue = agg.gte ?? agg.lte ?? ''
-      const camp = m.session?.utm_campaign
-      return { ...newCondition(), not, type: 'metric', events: eventArr(m.attrs?.event),
-        campaigns: camp == null ? [] : (Array.isArray(camp) ? camp : [camp]), measure, cmp, mvalue: String(mvalue), window: m.last || '' }
-    }
-    return null
-  }
-
   function parse(w: any) {
     title.value = w.title || ''
     kind.value = w.kind || 'stat'
@@ -128,7 +217,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     judgeCriteria.value = bq.selector?.judge?.criteria || ''
     judgeConfidence.value = bq.selector?.judge?.confidence ?? 0.7
     tsEvents.value = []; tsAgg.value = 'count'; grain.value = 'week'
-    breakdownDim.value = ''; breakdownValues.value = ''; breakdownMeasure.value = 'people'
+    breakdownDim.value = ''; breakdownValues.value = []; breakdownMeasure.value = 'people'; sliceRef.value = ''; attrSourceRef.value = ''
     distSource.value = 'fact'; distKey.value = ''; distBins.value = ''
     scatterX.value = ''; scatterY.value = ''; scatterColor.value = ''
     compareOn.value = false; compareMode.value = 'split'; splitKey.value = ''; splitVals.value = ''; customSeries.value = []; stackMode.value = 'group'; target.value = null
@@ -156,15 +245,12 @@ export function useQueryModel(props: QueryBuilderProps) {
       const co = bq.cohort || {}
       cohortEvent.value = co.event || ''; cohortGrain.value = co.grain || 'month'; cohortPeriods.value = co.periods || 6
     } else if (isBreakdownLike.value) {
-      if (bq.breakdownFact) { breakdownDim.value = 'fact:' + bq.breakdownFact.key; breakdownValues.value = (bq.breakdownFact.values || []).join(', ') }
-      else if (bq.group?.by) { breakdownDim.value = bq.group.by; breakdownMeasure.value = bq.selector?.filter?.metric?.distinct_passports ? 'people' : 'events' }
+      if (bq.breakdownFact) { breakdownDim.value = 'fact:' + bq.breakdownFact.key; sliceRef.value = 'fact'; breakdownValues.value = (bq.breakdownFact.values || []).map((v: any) => String(v)) }
+      else if (bq.group?.by) { breakdownDim.value = bq.group.by; sliceRef.value = deriveSlice(bq.group.by); breakdownMeasure.value = bq.selector?.filter?.metric?.distinct_passports ? 'people' : 'events' }
     } else {
-      const f = bq.selector?.filter
-      let clauses: any[] = []
-      if (f?.all) { clauses = f.all; combinator.value = 'all' }
-      else if (f?.any) { clauses = f.any; combinator.value = 'any' }
-      else if (f) clauses = [f]
-      conditions.value = clauses.map(parseClause).filter(Boolean)
+      const parsed = parseFilter(bq.selector?.filter)
+      combinator.value = parsed.combinator
+      conditions.value = parsed.conditions
     }
 
     // compare config (splitBy sugar, or explicit named series)
@@ -184,7 +270,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     title.value = ''; kind.value = 'stat'; about.value = ''
     combinator.value = 'all'; conditions.value = []; judgeCriteria.value = ''; judgeConfidence.value = 0.7
     tsEvents.value = []; tsAgg.value = 'count'; grain.value = 'week'
-    breakdownDim.value = ''; breakdownValues.value = ''; breakdownMeasure.value = 'people'
+    breakdownDim.value = ''; breakdownValues.value = []; breakdownMeasure.value = 'people'; sliceRef.value = ''; attrSourceRef.value = ''
     distSource.value = 'fact'; distKey.value = ''; distBins.value = ''
     scatterX.value = ''; scatterY.value = ''; scatterColor.value = ''
     compareOn.value = false; compareMode.value = 'split'; splitKey.value = ''; splitVals.value = ''; customSeries.value = []; stackMode.value = 'group'; target.value = null
@@ -197,25 +283,6 @@ export function useQueryModel(props: QueryBuilderProps) {
 
   // ── build: form → query def ────────────────────────────────────────────────────
   function eventClause(events: string[]) { return events.length === 1 ? events[0] : { in: events } }
-
-  function buildClause(c: any): any {
-    let cl: any
-    if (c.type === 'metric') {
-      const m: any = {}
-      if (c.events?.length) m.attrs = { event: eventClause(c.events) }
-      if (c.campaigns?.length) m.session = { utm_campaign: c.campaigns.length === 1 ? c.campaigns[0] : c.campaigns }
-      const bound = { [c.cmp]: coerceScalar(c.mvalue) }
-      if (c.measure === 'sum') m.sum = { field: 'value', ...bound }; else m.count = bound
-      if (c.window) m.last = c.window
-      cl = { metric: m }
-    } else {
-      const val = c.op === 'present' ? true
-        : c.op === 'in' ? c.value.split(',').map((s: string) => coerceScalar(s.trim()))
-          : coerceScalar(c.value)
-      cl = { fact: { [c.key]: { [c.op]: val } } }
-    }
-    return c.not ? { not: cl } : cl
-  }
 
   function buildBase(): any {
     if (kind.value === 'answer') return { question: question.value }
@@ -233,7 +300,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     }
     if (isBreakdownLike.value) {   // breakdown + donut: identical query, different chart
       if (isFactDim.value) {
-        return { breakdownFact: { key: breakdownDim.value.slice(5), values: breakdownValues.value.split(',').map((s) => coerceScalar(s.trim())).filter((v: any) => v !== '') } }
+        return { breakdownFact: { key: breakdownDim.value.slice(5), values: breakdownValues.value.map((s: any) => coerceScalar(String(s).trim())).filter((v: any) => v !== '') } }
       }
       const metric: any = breakdownMeasure.value === 'events' ? { count: {} } : { distinct_passports: {} }
       // session dimensions: restrict to known values so a null bucket doesn't dominate
@@ -253,8 +320,7 @@ export function useQueryModel(props: QueryBuilderProps) {
       })) } }
     }
     // stat / table → people, full selector
-    const clauses = conditions.value.filter((c) => (c.type === 'metric' ? (c.events.length || c.campaigns.length) : c.key)).map(buildClause)
-    const filter = clauses.length === 0 ? undefined : clauses.length === 1 ? clauses[0] : { [combinator.value]: clauses }
+    const filter = buildFilter(combinator.value, conditions.value)
     const selector: any = {}
     if (about.value.trim()) selector.about = about.value.trim()
     if (filter) selector.filter = filter
@@ -290,7 +356,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     if (kind.value === 'cohort') return true   // a cohort over any activity is valid
     if (kind.value === 'distribution') return !!distKey.value
     if (kind.value === 'scatter') return !!scatterX.value && !!scatterY.value
-    if (isBreakdownLike.value) return !!breakdownDim.value && (!isFactDim.value || !!breakdownValues.value)
+    if (isBreakdownLike.value) return !!breakdownDim.value && (!isFactDim.value || !!breakdownValues.value.length)
     if (kind.value === 'timeseries') return tsEvents.value.length > 0
     if (kind.value === 'funnel' || kind.value === 'dropoff') return steps.value.some((s) => s.event)
     return !!about.value.trim() || !!judgeCriteria.value.trim() || conditions.value.some((c) => (c.type === 'metric' ? (c.events.length || c.campaigns.length) : c.key))
@@ -307,8 +373,6 @@ export function useQueryModel(props: QueryBuilderProps) {
     }
     return baseHasContent()
   }
-  function addCondition() { conditions.value.push(newCondition()) }
-  function removeCondition(i: number) { conditions.value.splice(i, 1) }
   function addStep() { steps.value.push(newStep()) }
   function removeStep(i: number) { steps.value.splice(i, 1) }
 
@@ -324,11 +388,13 @@ export function useQueryModel(props: QueryBuilderProps) {
     compareOn, compareMode, splitKey, splitVals, customSeries, stackMode, target,
     cohortEvent, cohortGrain, cohortPeriods, question, steps,
     // option lists / derived
-    factKeys, eventOpts, campaignOpts, breakdownDims, numericFactKeys, distKeyOpts,
-    isFactDim, isBreakdownLike, bdIcon, bdVerb, bdUnit, canCompare, canStack, kindHint,
+    factKeys, eventOpts, campaignOpts, breakdownValueOpts, numericFactKeys, distKeyOpts,
+    breakdownSlices, breakdownSlice, breakdownKey, breakdownKeyOpts, needsBreakdownKey,
+    attrSource, attrSources, needsAttrSource,
+    isFactDim, isBreakdownLike, bdVerb, bdUnit, canCompare, canStack, kindHint,
     // actions
     parse, reset, build, hasContent, isDirty, captureOriginal,
-    addCondition, removeCondition, addStep, removeStep, addSeries, removeSeries,
+    addStep, removeStep, addSeries, removeSeries,
   })
 }
 

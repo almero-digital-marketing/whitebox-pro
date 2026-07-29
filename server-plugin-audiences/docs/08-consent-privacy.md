@@ -67,7 +67,7 @@ definition (see [02 · Concepts](02-concepts.md)), not read from a stored record
 
 - Only the **hashed** identifiers + browser ad signals leave the system.
 - On erasure (a passport's right-to-be-forgotten), the core's `awareness.forget` removes content; also
-  delete that passport's `whitebox_audience_identities` / `whitebox_audience_suppression` rows as
+  delete that passport's `whitebox_audience_signals` / `whitebox_audience_suppression` rows as
   appropriate.
 
 ## Checklist before going live

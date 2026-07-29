@@ -11,11 +11,11 @@ defineEmits<{ select: [id: string]; logout: [] }>()
     </div>
     <button v-for="m in modules" :key="m.id" type="button" class="ab-item" :class="{ on: m.id === activeId }"
       v-tooltip.right="m.label" :aria-label="m.label" @click="$emit('select', m.id)">
-      <i :class="m.icon" />
+      <span class="material-symbols-outlined">{{ m.icon }}</span>
     </button>
     <div class="ab-spacer" />
     <button type="button" class="ab-item" v-tooltip.right="'Sign out'" aria-label="Sign out" @click="$emit('logout')">
-      <i class="pi pi-sign-out" />
+      <span class="material-symbols-outlined">logout</span>
     </button>
   </nav>
 </template>
@@ -30,5 +30,5 @@ defineEmits<{ select: [id: string]; logout: [] }>()
 .ab-item.on { color: var(--accent); background: var(--accent-soft); }
 /* VS Code-style active indicator on the far-left edge */
 .ab-item.on::before { content: ''; position: absolute; left: -6px; top: 9px; bottom: 9px; width: 2.5px; border-radius: 2px; background: var(--accent); }
-.ab-item i { font-size: 18px; }
+.ab-item .material-symbols-outlined { font-size: 18px; }
 </style>

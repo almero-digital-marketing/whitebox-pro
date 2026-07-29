@@ -1,0 +1,144 @@
+/* Chrome shared by this module's right-pane action panels (and by People.vue
+   itself, which imports this too). Plain/global rather than scoped because
+   Vue's scoped styles stop at the component boundary — a rule in People.vue
+   can't reach into <IdentitiesPanel>, and a copy in each panel is how four
+   identical-looking forms drift apart.
+
+   EVERY selector is prefixed with `.ppl-console`, this module's root element.
+   Without that prefix these rules are app-global, and the generic names here —
+   .b-actions, .badge, .pane-tip, .rail-empty, .save-note — are the SAME names
+   Journeys' panels/panel.css defines globally. Equal specificity, so whichever
+   stylesheet the bundler emits last wins: loading the People module silently
+   replaced Journeys' centre save bar (height 52px, padding 0 16px) with this
+   file's right-pane variant (padding-top 14px, margin-top 16px), which dropped
+   its buttons onto the bottom edge of the bar.
+
+   The `.scope-*` rules at the bottom are the one exception: that overlay is
+   teleported to <body>, outside .ppl-console, so it must stay unprefixed — and
+   is namespaced by its own overlayClass instead. */
+
+/* a labelled field: uppercase caption stacked over its control */
+.ppl-console .fld { display: flex; flex-direction: column; gap: 5px; flex: 1 1 0; min-width: 0; }
+.ppl-console .fld-l { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.ppl-console .fld .full, .ppl-console .full { width: 100%; }
+.ppl-console .fld-hint { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.ppl-console .fld-hint.warn { color: #d97706; }
+.ppl-console .fld-hint.danger { color: #dc2626; }
+/* A receipt — what a bulk action actually did. Only bulk needs one: acting on
+   one person shows its own result (the fact appears in the list, the list pill
+   gets a tick), and a line saying so would restate what's already on screen. */
+.ppl-console .fld-hint.ok { color: #16a34a; }
+
+/* a panel is a column of fields with a save/discard row at the bottom */
+.ppl-console .p-form { display: flex; flex-direction: column; gap: 12px; }
+
+/* The save/discard row — docs/adr/0001-editor-save-discard-pattern.md.
+   `.b-actions` (not `.save-bar`) because this is a right pane and the row is
+   the last thing in the panel, so it supplies its own divider: the border-top
+   / margin-top / padding-top / gap values below are copied verbatim from the
+   ADR (rule 7), matching Users.vue and Journeys.vue.
+   Rule 9: every button is flex-shrink:0 and `.save-note` is the one flexible
+   element, so a long contextual label ("Erase permanently") next to the note
+   wraps the NOTE rather than squeezing a button narrower than its own text. */
+/* Padding and height are declared in FULL, not just the sides we care about.
+   Journeys' panels/panel.css still defines a global `.b-actions` for its centre
+   bar (`height: 52px; padding: 0 16px`). `.ppl-console .b-actions` outranks it
+   per-property, so declaring only `padding-top` let that rule's shorthand keep
+   supplying 16px left/right — which pushed Save in from the pane edge
+   while every field above it sat flush. */
+.ppl-console .b-actions { display: flex; align-items: center; gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0; border-top: 1px solid var(--border); }
+.ppl-console .b-actions > .p-button { flex-shrink: 0; }
+/* ADR rule 6's other variant, values copied from Users.vue: no border of its
+   own, for a row that's FOLLOWED by a section which already draws one (here the
+   .sub-title under it) — stacking both would double the divider. */
+.ppl-console .save-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 14px; }
+.ppl-console .save-bar > .p-button { flex-shrink: 0; }
+/* Users.vue's .save-bar sits in a plain block, so it carries its own trailing
+   space. Inside .p-form that space is already provided twice over — the form's
+   12px gap, plus .sub-title's own margin/padding above its rule — which stacked
+   to 58px between Save and the next heading. The form and the heading own the
+   spacing here; the row just needs to not add a third. */
+.ppl-console .p-form > .save-bar { margin-bottom: 0; padding-bottom: 0; }
+.ppl-console .save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); flex: 1 1 auto; min-width: 0; }
+.ppl-console .save-note .material-symbols-outlined { font-size: 8px; color: #d97706; flex: none; }
+/* visibility, never display/v-if — the row must not change height when dirty
+   state flips, and the note still has to hold its space (rule 4) */
+.ppl-console .save-note--hidden { visibility: hidden; }
+
+.ppl-console .pane-tip { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.ppl-console .ppl-accordion .pane-tip,
+.ppl-console .b-scroll > .pane-tip:first-child { padding: 0; margin: 0 0 12px; }
+.ppl-console .rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+/* status pill — enrollment status and the suppressed marker */
+.ppl-console .badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+.ppl-console .badge.active { background: rgba(22,163,74,.12); color: #16a34a; }
+.ppl-console .badge.waiting { background: rgba(59,130,246,.12); color: #3b82f6; }
+.ppl-console .badge.completed { background: rgba(22,163,74,.12); color: #16a34a; }
+.ppl-console .badge.exited { background: var(--panel-2); color: var(--muted); }
+.ppl-console .badge.failed { background: rgba(220,38,38,.12); color: #dc2626; }
+.ppl-console .badge.sm { font-size: 9.5px; }
+
+/* Entity lists inside a right-pane panel — the identities and facts a person
+   has, sitting above the form that adds another. Two lines per row on purpose:
+   the pane is 400px, and a badge + a full email + a timestamp + a button on one
+   line ellipsizes the value, which is the only part being read. */
+.ppl-console .plain-list { list-style: none; margin: 0; padding: 0; }
+.ppl-console .ent-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+/* First and last rows drop the padding/border that only make sense BETWEEN
+   rows. The first row's 8px sat on top of the content's own 16px, so the gap
+   above the list was 24px against the 16px separating the rows themselves; the
+   last row's rule stacked with .sub-title's border-top into a double line. */
+.ppl-console .ent-row:first-child { padding-top: 0; }
+.ppl-console .ent-row:last-child { border-bottom: none; }
+/* …unless the list is what closes the section. Identities and Facts have no
+   .sub-title after them any more (their Link identity / Record fact buttons
+   name the action instead), so without a rule the last row would run straight
+   into the form's first field. */
+.ppl-console .plain-list.closed .ent-row:last-child { border-bottom: 1px solid var(--border); }
+.ppl-console .ent-top { display: flex; align-items: center; gap: 8px; }
+.ppl-console .ent-sub { font-size: 10.5px; color: var(--muted); }
+.ppl-console .id-badge { flex: none; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); background: var(--panel-2); border-radius: 999px; padding: 2px 8px; }
+.ppl-console .id-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 11.5px; }
+/* the × is the only thing that must never shrink — ADR rule 9's reasoning */
+.ppl-console .ent-top > .p-button { flex-shrink: 0; }
+.ppl-console .fact-key { font-weight: 600; color: var(--text-strong); }
+.ppl-console .fact-value { color: var(--muted); overflow-wrap: anywhere; }
+
+/* Separates the list from the add-form below it. It was byte-identical to
+   .fld-l — same size, weight, tracking, case and colour — so a section header
+   rendered exactly like the TYPE/VALUE labels it contains and the two tiers
+   read as one flat list. `--text-strong` is how this module already marks a
+   header as owning rather than passive (see the active accordion header), so
+   the heading goes strong and the field labels stay muted. */
+.ppl-console .sub-title { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-strong); }
+
+/* Centre-pane block chrome, copied from Campaigns.vue. Here rather than in
+   People.vue's scoped block because ActivityTimeline.vue renders one too, and a
+   scoped rule stops at the component boundary. */
+.ppl-console .ppl-block { margin-bottom: 18px; }
+/* between-blocks spacing only — on the last one it stacked with .b-scroll's own
+   22px padding-bottom and left a 40px gap above the Erase bar */
+.ppl-console .ppl-block:last-child { margin-bottom: 0; }
+/* A centre-pane block heading IS a widget title — same job as Analytics'
+   .title (WidgetCard.vue), which names a self-contained thing you read, not
+   a field. Copied from there verbatim; the small uppercase eyebrow is kept
+   for FIELD labels (.fld-l) and right-pane sections, which label a control. */
+.ppl-console .blk-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 8px; }
+
+/* the destructive panel reads differently on purpose — erase is the one
+   action here with no undo */
+.ppl-console .danger-box { border: 1px solid rgba(220,38,38,.35); background: rgba(220,38,38,.05); border-radius: 9px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.ppl-console .danger-box .fld-l { color: #dc2626; }
+
+/* The left rail's "where to search" dropdown. Unprefixed on purpose: PrimeVue
+   teleports the overlay to <body>, outside .ppl-console, so neither a scoped
+   rule in People.vue nor a .ppl-console prefix can reach it. Namespaced by
+   .scope-panel (the component's overlayClass) instead, so these can't leak
+   into the app's other MultiSelects. */
+.scope-panel .p-multiselect-option { align-items: flex-start; padding-block: 7px; }
+.scope-opt { display: flex; flex-direction: column; gap: 1px; }
+.scope-opt b { font-size: 12px; font-weight: 600; }
+/* the hint is what makes the choice meaningful — "Facts" alone doesn't say
+   that the search is key-agnostic, which is the surprising part */
+.scope-opt small { font-size: 10.5px; line-height: 1.35; color: var(--muted); }

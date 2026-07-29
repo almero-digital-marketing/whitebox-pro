@@ -4,7 +4,7 @@ defineProps<{ model: any }>()
 </script>
 
 <template>
-  <label class="lab"><i class="pi pi-chart-scatter ic" />X axis <span class="muted small">(numeric fact)</span></label>
+  <label class="lab">X axis <span class="muted small">(numeric fact)</span></label>
   <Select v-model="model.scatterX" :options="model.numericFactKeys" optionLabel="label" optionValue="value" filter class="w" placeholder="pick a numeric fact" />
   <label class="lab">Y axis <span class="muted small">(numeric fact)</span></label>
   <Select v-model="model.scatterY" :options="model.numericFactKeys" optionLabel="label" optionValue="value" filter class="w" placeholder="pick a numeric fact" />

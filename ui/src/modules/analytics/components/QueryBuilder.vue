@@ -42,6 +42,10 @@ const isNew = computed(() => !props.widget)
 // steps, etc.) — it just wasn't wired to the button before, so an empty/broken query could
 // be saved as a blank, unlabeled widget with no warning at all.
 const canSave = computed(() => m.hasContent() && !!m.title?.trim())
+// m.isDirty() is a plain function (called imperatively elsewhere, from
+// ComposePane's tab-switch guard) — wrapped reactively here so the shared
+// .save-note can reflect it live, same as every other right-pane editor.
+const dirty = computed(() => m.isDirty())
 const preview = ref('')
 const previewing = ref(false)
 async function run() {
@@ -80,6 +84,7 @@ defineExpose({ build: m.build, hasContent: m.hasContent, isDirty: m.isDirty })
 
     <div class="qb-actions">
       <Button label="Cancel" text severity="secondary" size="small" class="cancel" @click="cancel" />
+      <span class="save-note" :class="{ 'save-note--hidden': !dirty }"><span class="material-symbols-outlined fill">circle</span> Unsaved changes</span>
       <span v-if="preview" class="result" :class="{ err: preview.startsWith('Error') }">{{ preview }}</span>
       <Button label="Run" :loading="previewing" severity="secondary" outlined size="small" @click="run" />
       <Button :label="isNew ? 'Add to report' : 'Save'" size="small" :disabled="!canSave" @click="save" />

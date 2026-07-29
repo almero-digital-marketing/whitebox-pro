@@ -79,8 +79,27 @@ needed.
 
 ## Data & GDPR
 
-- **Forget a person:** `DELETE /analytics/passport/:passport_id` deletes all their
-  awareness exposures and garbage-collects now-orphaned chunks. Irreversible.
+There are **two different deletions**, and the difference matters for a
+right-to-be-forgotten request — pick deliberately:
+
+| | `DELETE /analytics/passport/:passport_id` | `DELETE /people/:id` |
+|---|---|---|
+| scope | awareness exposures only, plus GC of now-orphaned chunks | **every** table referencing the passport (17 of them), the merge aliases, and the passport row itself |
+| the person afterwards | still exists — identities, facts, sends, list membership all remain | gone |
+| use for | "forget what we know they read" | an actual erasure request |
+| needs | `analytics:write` | `people:erase` — its own permission, granted separately from `people:write` |
+
+Both are irreversible. The full erase returns **per-table row counts**, so an
+erasure can be *evidenced* rather than asserted; `POST /people/erase` does the
+same for a whole selection (capped per request, and it tells you when it stopped
+— see [the people plugin](../server-plugin-people/README.md)).
+
+Erase discovers what to delete from the **Postgres foreign-key catalog**, not a
+hardcoded list, so a new plugin's table is covered the day it declares its FK —
+which is also why declaring one matters. `whitebox_event_registry` is excluded on
+purpose: its `passport_id` is a denormalised string copied from an event payload,
+not a reference.
+
 - **PII redaction** is on by default before text is embedded (configurable under
   `awareness.pii`).
 - **Opt-out** is enforced at the channel: mail suppressions, SMS STOP/START,

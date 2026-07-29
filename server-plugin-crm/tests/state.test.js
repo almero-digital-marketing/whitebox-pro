@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as state from '../src/state.js'
 
 const logger = { debug: vi.fn(), error: vi.fn() }
-let facts
+let facts, notify
 
 beforeEach(() => {
   facts = { record: vi.fn(async () => ({})), current: vi.fn(async () => ({})) }
-  state.init({ facts, logger })
+  notify = vi.fn()
+  state.init({ facts, logger, notify })
 })
 
 const callsByKey = () => Object.fromEntries(facts.record.mock.calls.map(([a]) => [a.key, a]))
@@ -24,6 +25,10 @@ describe('crm state adapter (records → core facts)', () => {
     expect(by.seats).toMatchObject({ key: 'seats', value: 9 })
     // starts_at → observed_at on every fact
     for (const c of facts.record.mock.calls) expect(c[0].observed_at).toEqual(new Date('2026-01-01T00:00:00Z'))
+    expect(notify).toHaveBeenCalledWith('crm.subscription', {
+      type: 'crm.subscription',
+      data: { passport_id: 'p-1', status: 'active', source: 'stripe', external_id: 'sub_1', plan_tier: 'pro', seats: 9 },
+    })
   })
 
   it('skips non-scalar data fields (not value-queryable)', async () => {
@@ -39,6 +44,7 @@ describe('crm state adapter (records → core facts)', () => {
     await state.record({ source: 'x', kind: 'reservation', external_id: 'r1', passport_id: 'p-1', status: null, data: {} })
     expect(facts.record).toHaveBeenCalledTimes(1)
     expect(facts.record.mock.calls[0][0]).toMatchObject({ key: 'reservation', value: true })
+    expect(notify).not.toHaveBeenCalled()   // bare presence isn't a transition — nothing to notify
   })
 
   it('defaults observed_at to now when starts_at is absent', async () => {

@@ -7,7 +7,9 @@ const insightCount = (r: any) => r.widget_count ?? (r.layout?.length ?? 0)
 </script>
 
 <template>
-  <div class="pane-head">Reports <Button icon="pi pi-plus" text rounded size="small" aria-label="New report" @click="emit('new')" /></div>
+  <div class="pane-head">Reports <Button text rounded size="small" aria-label="New report" @click="emit('new')">
+    <template #icon><span class="material-symbols-outlined">add</span></template>
+  </Button></div>
   <ul class="list">
     <li v-if="!reports.length" class="empty muted">No reports yet — ask something →</li>
     <li v-for="r in reports" :key="r.id" class="item" :class="{ on: r.id === currentId }" @click="emit('open', r.id)">
@@ -15,7 +17,7 @@ const insightCount = (r: any) => r.widget_count ?? (r.layout?.length ?? 0)
         <span class="it-name" :title="r.name">{{ r.name }}</span>
         <span class="it-sub">{{ insightCount(r) }} insight{{ insightCount(r) === 1 ? '' : 's' }}</span>
       </div>
-      <button class="it-x" title="Remove" aria-label="Remove" @click.stop="emit('remove', r)"><i class="pi pi-times" /></button>
+      <button class="it-x" title="Remove" aria-label="Remove" @click.stop="emit('remove', r)"><span class="material-symbols-outlined">close</span></button>
     </li>
   </ul>
 </template>

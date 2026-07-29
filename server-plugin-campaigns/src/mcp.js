@@ -31,9 +31,11 @@ export function register(mcp, { service, logger }) {
 
   // --- act (guarded) ---
   write('campaigns_schedule', 'Commit the campaign for delivery at its scheduled_at and LOCK it for further edits. If scheduled_at has already passed, delivery fires IMMEDIATELY. Actual sending obeys the server\'s configured dryRun switch (default ON, records the projected reach without sending) — there is no per-call override.', { id: z.string() }, ({ id }) => service.schedule(id))
+  write('campaigns_send_manual', 'Deliver the campaign to its attached audiences RIGHT NOW, WITHOUT locking it — unlike campaigns_schedule, this is repeatable (edit the message, send again). Fails if the campaign is already locked (scheduled or sent).', { id: z.string() }, ({ id }) => service.sendManual(id))
   write('campaigns_unlock', 'Unlock a SCHEDULED (not yet sent) campaign back to an editable draft. A delivered (sent) campaign is final and cannot be unlocked.', { id: z.string() }, ({ id }) => service.unlockCampaign(id))
   write('campaigns_set_report', 'Link an Analytics report to a campaign (typically the performance report built after it sends).', { id: z.string(), report_id: z.string() }, ({ id, report_id }) => service.setReport(id, report_id))
   write('campaigns_delete', 'Delete a campaign.', { id: z.string() }, ({ id }) => service.deleteCampaign(id).then(deleted => ({ deleted })))
+  write('campaigns_activate_for_passport', 'Trigger this campaign\'s send for one specific passport, independent of its bulk schedule/status (works for a draft, scheduled, or already-sent campaign). Consent/suppression still applies; audience membership does not.', { id: z.string(), passport_id: z.string(), idempotency_key: z.string().optional() }, ({ id, passport_id, idempotency_key }) => service.activateForPassport(id, passport_id, { idempotencyKey: idempotency_key }))
 
   logger?.info?.('Campaigns: MCP tools registered')
 }

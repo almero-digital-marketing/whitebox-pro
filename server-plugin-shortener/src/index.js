@@ -13,6 +13,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import { resolveAuth } from 'whitebox-pro-server/auth'
+import createNotify from 'whitebox-pro-server/notify'
 import * as store from './store.js'
 import * as service from './service.js'
 import { mountRoutes } from './routes.js'
@@ -32,7 +33,7 @@ export function shortener(options = {}) {
     },
 
     async register(app, ctx) {
-      const { db, passports, awareness, logger: rootLogger } = ctx
+      const { db, passports, awareness, events, webhooks, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'shortener' })
 
       // The short host is just baseUrl's hostname (one source of truth: it both
@@ -56,8 +57,10 @@ export function shortener(options = {}) {
         ? authVerifier.middleware
         : (req, res) => res.status(401).json({ error: 'shortener: set auth to manage links' })
 
+      const { notify } = createNotify({ webhooksConfig: options.webhooks, events, webhooks, eventRegistry })
+
       store.init({ db })
-      service.init({ passports, awareness, logger, config })
+      service.init({ passports, awareness, logger, config, notify })
 
       mountRoutes(app, { requireAuth, host, logger })
       registerMcp(ctx, { service })

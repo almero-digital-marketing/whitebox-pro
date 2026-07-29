@@ -50,7 +50,7 @@ Provided by the WhiteBox host via `ctx` — you don't configure them here, but t
 
 - **Postgres + pgvector** — awareness embeddings (the selector engine's semantic stage) and this
   plugin's own tables (`whitebox_audience_segments`, `whitebox_audiences`, `whitebox_audience_suppression`,
-  `whitebox_audience_identities`).
+  `whitebox_audience_signals`).
 - **OpenAI (or your AI SDK provider)** — the selector engine's judge, and this plugin's segment/audience
   naming (`ai.object`).
 

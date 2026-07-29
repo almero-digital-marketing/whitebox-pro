@@ -45,6 +45,11 @@ export function register(mcp, { service, logger }) {
   write('audiences_delete_segment', 'Delete a saved segment.', { id: z.string() }, ({ id }) => service.deleteSegment(id).then(deleted => ({ deleted })))
   write('audiences_delete_audience', 'Delete a saved audience.', { id: z.string() }, ({ id }) => service.deleteAudience(id).then(deleted => ({ deleted })))
   write('audiences_set_delivery', 'Turn an audience\'s delivery to one ad network on/off. Firing (when enabled) is a real send unless no adapter is configured for that network, in which case it dry-runs automatically.', { id: z.string(), network: z.string(), enabled: z.boolean() }, ({ id, network, enabled }) => service.setDelivery(id, { network, enabled }))
+  read('audiences_lists', 'Static-list segments — the ones whose membership is assigned by hand rather than computed from a query. Returns each list with its current member count.', {}, () => service.listLists())
+  write('audiences_create_list', 'Create a static-list segment. It composes into audiences exactly like a query segment, but its members are the people explicitly added to it.', { name: z.string() }, ({ name }) => service.createList({ name }))
+  write('audiences_add_to_list', 'Put a person on a static list.', { id: z.string(), passport_id: z.string() }, ({ id, passport_id }) => service.addToList(id, passport_id))
+  write('audiences_remove_from_list', 'Take a person off a static list.', { id: z.string(), passport_id: z.string() }, ({ id, passport_id }) => service.removeFromList(id, passport_id))
+
   write('audiences_set_client_side', 'Expose/hide an audience on the client side (on-site membership lookup). Immediate, first-party only — never sent to a third party.', { id: z.string(), enabled: z.boolean() }, ({ id, enabled }) => service.setClientSide(id, enabled))
   write('audiences_set_campaigns', 'Make an audience available to the Campaigns module (email & SMS) or not.', { id: z.string(), enabled: z.boolean() }, ({ id, enabled }) => service.setCampaigns(id, enabled))
   write('audiences_suppress', 'Add a passport to the do-not-target list.', { passport_id: z.string(), reason: z.string().optional() }, ({ passport_id, reason }) => service.suppress(passport_id, reason).then(() => ({ ok: true })))

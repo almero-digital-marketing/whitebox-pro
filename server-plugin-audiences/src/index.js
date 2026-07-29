@@ -71,7 +71,7 @@ export function audiences(options = {}) {
         logger,
       })
 
-      service.init({ store, evaluator, adapters, identity, consent, logger })
+      service.init({ store, evaluator, adapters, identity, consent, passports: ctx.passports, logger })
 
       // seed the built-in "Everyone" segment (idempotent) — the universal building block
       service.ensureDefaultSegments().catch(err => logger.warn({ err }, 'audiences: ensureDefaultSegments failed'))

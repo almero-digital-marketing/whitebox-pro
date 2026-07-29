@@ -20,6 +20,12 @@ import { voip } from 'whitebox-pro-server-plugin-voip'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
 import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
+// The surface plugins — what the operator console is built on. Registered last,
+// in dependency order; see the block at the bottom of `plugins`.
+import { audiences } from 'whitebox-pro-server-plugin-audiences'
+import { campaigns } from 'whitebox-pro-server-plugin-campaigns'
+import { journeys } from 'whitebox-pro-server-plugin-journeys'
+import { people } from 'whitebox-pro-server-plugin-people'
 // Built-in OAuth 2.1 authorization server — the default auth for the WhiteBox
 // UI (login, invite-only registration, admin user management). Auth0 is still
 // a drop-in alternative (see the mcp.auth comment below); to use it instead,
@@ -265,5 +271,63 @@ export default async (runtime) => ({
     // scripts (see its README); remove this block entirely to fall back to
     // Auth0 or a static token.
     oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, appUrl: OAUTH_APP_URL }),
+
+    // ── The surface plugins the console is built on ───────────────────────
+    //
+    // ORDER MATTERS for these four, and only these four. The plugin loader
+    // registers in array order and each of them reads a SERVICE off an
+    // earlier one via ctx.plugins.<name>.service:
+    //
+    //   audiences  →  (none)
+    //   campaigns  →  audiences        (resolution + consent/suppression)
+    //   journeys   →  campaigns, mail, sms
+    //   people     →  journeys, audiences   — both OPTIONAL
+    //
+    // Get it wrong and the dependent plugin either throws at register (the
+    // required ones) or silently omits a section (people's two). See
+    // scripts/serve-analytics.mjs for the same sequence written out by hand.
+
+    audiences({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'audiences:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'audiences:write' }),
+      },
+      // The ad networks a live audience is pushed to. Empty ⇒ segments and
+      // static lists still work; there is just nowhere to fan out to.
+      networks: [],
+    }),
+
+    campaigns({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'campaigns:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'campaigns:write' }),
+      },
+      // The safety switch, and it defaults ON. With dryRun a send resolves the
+      // audience and writes the outbox rows but never hands anything to the
+      // provider — so you can rehearse the whole path before real mail leaves.
+      dryRun: process.env.WB_CAMPAIGNS_DRYRUN !== 'false',
+    }),
+
+    journeys({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'journeys:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'journeys:write' }),
+      },
+      // HMAC secret for the `notify` step's outbound webhooks, so a receiver
+      // can verify a call really came from here.
+      webhookSecret: process.env.WB_JOURNEYS_WEBHOOK_SECRET,
+    }),
+
+    people({
+      // Three verifiers, not two. Erasure is deliberately its own authority: a
+      // support role that fixes a wrong email is not automatically a role that
+      // may delete someone forever. Omit `erase` and it falls back to `write`
+      // — the stricter of the pair, never to `read`.
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:write' }),
+        erase: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:erase' }),
+      },
+    }),
   ].filter(Boolean),
 })

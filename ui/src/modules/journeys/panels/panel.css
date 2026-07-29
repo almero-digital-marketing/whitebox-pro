@@ -1,0 +1,59 @@
+/* The chrome shared by this module's right-pane accordion panels (and by
+   Journeys.vue's own shell, which imports this file too). Plain/global rather
+   than scoped for the usual reason: Vue's scoped styles stop at the component
+   boundary, so a rule living in Journeys.vue cannot reach into <TriggerPanel>,
+   and a copy inside each panel is how two identical-looking rows drift apart.
+
+   Scope note: these names (.pane-tip, .rail-empty, .sw, .badge, .b-actions)
+   are ALSO used by Campaigns/Audiences/Users, each with their own scoped copy.
+   Those copies are deliberately left alone — unifying the app's right-pane
+   vocabulary is a separate, app-wide change. Everything here is either
+   .jrn-*-prefixed or matches what Journeys already rendered, so nothing new
+   reaches another module: a scoped rule elsewhere (0,2,0 with its data-v
+   attribute) still outranks these single-class globals. */
+
+/* ── section captions and empty states ── */
+.event-group-label { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.pane-tip { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+/* inside a panel the tip is the leading line, so it loses the top offset and
+   gains the gap to the content below instead */
+.jrn-accordion .pane-tip { padding: 0; margin: 0 0 12px; }
+.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+/* ── toggle switch ── */
+.sw { width: 30px; height: 18px; border-radius: 999px; background: var(--border-2); position: relative; flex: none; border: none; padding: 0; cursor: pointer; }
+.sw i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .14s, right .14s; }
+.sw.on { background: var(--accent); } .sw.on i { left: auto; right: 2px; }
+.sw:disabled { opacity: .5; cursor: default; }
+
+/* ── status pill (journey status, enrollment status) ── */
+.badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+.badge.active { background: rgba(22,163,74,.12); color: #16a34a; }
+.badge.paused { background: rgba(217,119,6,.12); color: #d97706; }
+.badge.archived { background: var(--panel-2); color: var(--muted); }
+.badge.completed { background: rgba(22,163,74,.12); color: #16a34a; }
+.badge.exited { background: var(--panel-2); color: var(--muted); }
+.badge.failed { background: rgba(220,38,38,.12); color: #dc2626; }
+.badge.waiting { background: rgba(59,130,246,.12); color: #3b82f6; }
+.badge.lg { font-size: 11px; padding: 3px 10px; }
+.badge.sm { font-size: 9.5px; }
+
+/* ── Discard/Save action row (docs/adr/0001-editor-save-discard-pattern.md) ──
+   The base rule is the center pane's pinned 52px bar; inside the accordion the
+   same row scrolls with its panel, so it drops the fixed height and side
+   padding. Buttons are flex-shrink:0 (a "Discard"/"Save" label must never
+   wrap) and .save-note is the flexible element rather than using the base
+   rule's margin-right:auto — flex lets it shrink and wrap its own text if this
+   narrower pane runs out of room, instead of only ever growing (ADR rule 9). */
+/* 16px, not the 26px every other module's centre bar uses — because the rule
+   those modules actually follow is "the bar lines up with the content above
+   it", and theirs is a .b-scroll padded 26px. This pane's content is a canvas:
+   its chrome (.jrn-palette) sits at 16px, so 26 here left the buttons inset
+   10px further than everything above them. */
+.b-actions { flex: none; height: 52px; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-top: 1px solid var(--border); }
+.save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin-right: auto; }
+.save-note .material-symbols-outlined { font-size: 8px; color: #d97706; }
+.save-note--hidden { visibility: hidden; }
+.jrn-accordion .b-actions { height: auto; padding: 14px 0 0; margin-top: 16px; }
+.jrn-accordion .b-actions > .p-button { flex-shrink: 0; }
+.jrn-accordion .save-note { flex: 1 1 auto; min-width: 0; margin-right: 0; }

@@ -333,7 +333,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
     expect(sentEmails).toHaveLength(1)
     expect(sentEmails[0].to).toBe('newbie@example.com')
 
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     expect(list.map(u => u.email)).toEqual(expect.arrayContaining(['jane@example.com', 'admin@example.com', 'newbie@example.com']))
     expect(list.find(u => u.email === 'newbie@example.com').active).toBe(false)
     expect(list.every(u => !('password_hash' in u))).toBe(true)
@@ -351,7 +351,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
 
   it('an admin cannot remove their own account', async () => {
     const admin = await adminToken()
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
     const self = list.find(u => u.email === 'admin@example.com')
     const res = await fetch(`${base}${ISSUER_PATH}/users/${self.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${admin}` } })
     expect(res.status).toBe(400)
@@ -360,7 +360,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('resend-invite 409s for a user who already has a password', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const active = list.find(u => u.email === 'jane@example.com')
     const res = await fetch(`${base}${ISSUER_PATH}/users/${active.id}/resend-invite`, { method: 'POST', headers: authHeader })
     expect(res.status).toBe(409)
@@ -376,7 +376,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('PUT /users/:id/permissions replaces a user\'s grants wholesale', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     const res = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}/permissions`, {
@@ -390,7 +390,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('PUT /users/:id/permissions rejects unknown keys, including the "*" bootstrap sentinel itself', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     const bogus = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}/permissions`, {
@@ -411,7 +411,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('cannot strip users:manage from the only active user who holds it, but can once someone else has it', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const adminRow = list.find(u => u.email === 'admin@example.com')
     const jane = list.find(u => u.email === 'jane@example.com')
 
@@ -447,7 +447,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('PATCH /users/:id updates profile fields (any subset)', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     const res = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}`, {
@@ -469,7 +469,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('PATCH /users/:id rejects a duplicate email with 409, not a raw 500', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     const res = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}`, {
@@ -545,7 +545,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
 
     it('403s an attempt to change a DIFFERENT user\'s password, even with users:manage', async () => {
       const admin = await adminToken()
-      const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
+      const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: { authorization: `Bearer ${admin}` } })).json()
       const jane = list.find(u => u.email === 'jane@example.com')
 
       const res = await fetch(`${base}${ISSUER_PATH}/users/${jane.id}/password`, {
@@ -576,7 +576,7 @@ describe('/users — gated by the users:manage permission (per-module grants, no
   it('GET /users/:id/logins records a real login (authorization_code grant) but never a silent refresh', async () => {
     const admin = await adminToken()
     const authHeader = { authorization: `Bearer ${admin}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: authHeader })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     // one login so far, from memberToken() in the beforeEach of earlier tests in this
@@ -649,7 +649,7 @@ describe('token scope is always server-computed, never client-requested (the man
   it('a granted permission takes effect on the NEXT token issuance, not retroactively on an already-issued one', async () => {
     const adminTok = await tokenFor({ email: 'admin@example.com', password: 'correct horse battery staple', scope: 'irrelevant' })
     const adminAuth = { authorization: `Bearer ${adminTok}` }
-    const list = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: adminAuth })).json()
+    const { rows: list } = await (await fetch(`${base}${ISSUER_PATH}/users`, { headers: adminAuth })).json()
     const jane = list.find(u => u.email === 'jane@example.com')
 
     // Get jane a token BEFORE the grant — this is the one she'll keep using.

@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { pagedList } from 'whitebox-pro-server/pagination'
+
 import { parseUserAgent } from './userAgent.js'
 
 let db
@@ -130,8 +132,17 @@ const normalizeUser = (row) => row && { ...row, permissions: readPermissions(row
 
 // Expands the reserved "*" sentinel into every key the current catalog
 // declares; a concrete grant list passes through unchanged.
+// `allKeys` is the catalog every REGISTERED plugin declared at boot, so it is
+// also the list of what this deployment can actually do. Both branches are
+// filtered through it, which makes a grant for an absent plugin unholdable:
+// drop the audiences plugin and nobody — wildcard or explicitly granted —
+// still carries `audiences:read`, so the UI's permission-gated module icons
+// disappear on their own and no second "which plugins exist?" channel is
+// needed. It also self-heals grants left behind by a removed or renamed
+// plugin, instead of handing out a scope no route will honour.
 export function expandPermissions(permissions, allKeys) {
-  return permissions.includes('*') ? allKeys : permissions
+  if (permissions.includes('*')) return allKeys
+  return permissions.filter(p => allKeys.includes(p))
 }
 
 export async function createInvite({ email }) {
@@ -158,8 +169,28 @@ export async function hasAnyUser() {
 
 export async function listUsers() {
   const rows = await db('whitebox_oauth_users').select([...USER_COLUMNS, 'password_hash']).orderBy('created_at', 'asc')
-  return rows.map(({ password_hash, ...rest }) => ({ ...normalizeUser(rest), active: password_hash != null }))
+  return rows.map(hideHash)
 }
+
+// One page for the Users rail, with the real total. Ordered created_at ASC like
+// listUsers() — a team list reads oldest-first, unlike the campaigns and
+// journeys rails where the newest thing is the one you just made.
+//
+// `password_hash` is selected and then dropped, exactly as above: `active` is
+// derived from whether one exists, and there is no other way to know. Losing
+// that mapping here would leak the hash into a route that never showed it.
+export async function searchUsers(opts = {}) {
+  const { total, rows } = await pagedList(
+    db('whitebox_oauth_users').select([...USER_COLUMNS, 'password_hash']),
+    // The real column names — there is no `name` column, it's split in two.
+    // The fake db reads any key off a plain object and shrugs at a missing one,
+    // so a wrong column name here is only ever caught against real Postgres.
+    { ...opts, fields: ['email', 'first_name', 'last_name'], orderBy: 'created_at', direction: 'asc' },
+  )
+  return { total, rows: rows.map(hideHash) }
+}
+
+const hideHash = ({ password_hash, ...rest }) => ({ ...normalizeUser(rest), active: password_hash != null })
 
 // Shape-consistent with one row of listUsers() (active + never the hash) —
 // so any route echoing getUser()'s result back to the client (permissions,

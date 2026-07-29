@@ -135,4 +135,72 @@ describe('store — expandPermissions (the "*" bootstrap sentinel)', () => {
     const allKeys = ['analytics:use', 'audiences:use', 'campaigns:use', 'users:manage']
     expect(store.expandPermissions(['*'], allKeys)).toEqual(allKeys)
   })
+
+  // The catalog only contains what REGISTERED plugins declared, so filtering
+  // through it is what makes "this deployment doesn't have that plugin" and
+  // "you may not use it" the same answer — which is what the UI's module gate
+  // reads. Without this a stale grant survives and the module's icon shows
+  // while every one of its calls 404s.
+  it('drops a grant whose plugin is not in the catalog', () => {
+    const allKeys = ['analytics:read', 'users:manage']   // audiences plugin not registered
+    expect(store.expandPermissions(['analytics:read', 'audiences:read'], allKeys)).toEqual(['analytics:read'])
+  })
+
+  it('drops it for a wildcard holder too, not just an explicit one', () => {
+    const allKeys = ['analytics:read', 'users:manage']
+    expect(store.expandPermissions(['*'], allKeys)).not.toContain('audiences:read')
+  })
+
+  it('leaves nothing when the catalog is empty', () => {
+    expect(store.expandPermissions(['analytics:read'], [])).toEqual([])
+    expect(store.expandPermissions(['*'], [])).toEqual([])
+  })
+})
+
+describe('store — searchUsers (the paged rail read)', () => {
+  // createInvite is how a user row comes into existence — an invite with no
+  // password yet, which is also the `active: false` case worth covering.
+  const seed = async (n) => {
+    for (let i = 0; i < n; i++) await store.createInvite({ email: `u${String(i).padStart(2, '0')}@example.com` })
+  }
+
+  it('returns one page plus the REAL total, not the page length', async () => {
+    await seed(7)
+    const { total, rows } = await store.searchUsers({ limit: 3 })
+    expect(total).toBe(7)          // what the pager needs to say "1 of 3"
+    expect(rows).toHaveLength(3)
+  })
+
+  it('offset walks the pages without repeating or skipping a row', async () => {
+    await seed(7)
+    const seen = []
+    for (let off = 0; off < 7; off += 3) {
+      seen.push(...(await store.searchUsers({ limit: 3, offset: off })).rows.map(u => u.email))
+    }
+    expect(seen).toHaveLength(7)
+    expect(new Set(seen).size).toBe(7)
+  })
+
+  it('narrows on email, case-insensitively, and the total narrows with it', async () => {
+    await store.createInvite({ email: 'Ada@Example.com' })
+    await store.createInvite({ email: 'grace@example.com' })
+    const { total, rows } = await store.searchUsers({ q: 'ADA' })
+    expect(total).toBe(1)
+    expect(rows[0].email).toBe('ada@example.com')
+  })
+
+  // the whole reason listUsers() selects the hash and then drops it
+  it('never leaks password_hash, and still derives active from it', async () => {
+    const invited = await store.createInvite({ email: 'pending@example.com' })
+    const { rows } = await store.searchUsers({})
+    expect(rows.every(u => !('password_hash' in u))).toBe(true)
+    // no password yet → pending, which is only knowable from the hash the
+    // projection selects and then drops
+    expect(rows.find(u => u.email === 'pending@example.com').active).toBe(false)
+    // setting a password lives in users.js; at the STORE layer "has a password"
+    // is just the column being non-null, which is exactly what active reads
+    await db('whitebox_oauth_users').where({ id: invited.id }).update({ password_hash: 'hashed' })
+    const after = await store.searchUsers({ q: 'pending' })
+    expect(after.rows[0].active).toBe(true)
+  })
 })

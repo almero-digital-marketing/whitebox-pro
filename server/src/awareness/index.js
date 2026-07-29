@@ -41,7 +41,7 @@ export function init(deps) {
   enabled = cfg.enabled !== false
   redactPii = cfg.pii?.redact !== false
 
-  ;({ notify } = createNotify({ webhooksConfig: cfg.webhooks, events: deps.events, webhooks: deps.webhooks }))
+  ;({ notify } = createNotify({ webhooksConfig: cfg.webhooks, events: deps.events, webhooks: deps.webhooks, eventRegistry: deps.eventRegistry }))
 
   store.init({ db })
   if (enabled) memory.init({ store, ai: deps.ai, queue: deps.queue, config: deps.config, logger })
@@ -75,6 +75,10 @@ export async function record(event) {
     channel: event.channel,
     direction: event.direction,
     source: event.source || null,
+    // stamped by the plugin loader's scoped ctx (server/src/plugins.js), not
+    // by the caller — `source` is a content label the plugin chooses, this is
+    // which subsystem actually collected the row.
+    plugin: event.plugin || null,
     content_id: event.content_id || null,
     content_url: event.content_url || null,
     text,
@@ -154,6 +158,14 @@ export async function sampleContent(args) {
 export async function timeline(args) {
   if (!enabled) return []
   return store.timeline({ ...args, passport_id: await resolveId(args.passport_id) })
+}
+
+// Exposure counts for a page of people — { passport_id: n }, missing when the
+// person has none. Returns {} when awareness is off, so a caller can spread it
+// unconditionally and simply get no counts.
+export async function exposureCounts(passportIds) {
+  if (!enabled) return {}
+  return store.countsByPassport(passportIds)
 }
 
 export async function ask(args) {

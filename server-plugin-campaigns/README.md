@@ -135,7 +135,7 @@ pattern as other plugins. The split is by **mutation, not HTTP verb**: `/deliver
 | method | path | tier | what it does |
 |---|---|---|---|
 | `PUT` | `/campaigns/upsert` | write | **Mikser only** — create-or-update by `external_id`, idempotent. Owns content, never audiences. |
-| `GET` | `/campaigns` | read | list all campaigns |
+| `GET` | `/campaigns` | read | `?q` `?limit` (default 25, max 200) `?offset` → `{total, rows}` — **paged**. `q` is a case-insensitive contains on the name; `total` is the real count of matches, not of `rows` |
 | `POST` | `/campaigns` | write | UI: create a draft campaign |
 | `GET` | `/campaigns/:id` | read | one campaign, + attached audiences (live size) + resolved `analytics_prompt` |
 | `PATCH` | `/campaigns/:id` | write | UI: update a draft's fields — `409` if locked |

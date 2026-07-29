@@ -7,6 +7,7 @@ import WidgetChart from './WidgetChart.vue'
 import { renderMarkdown } from '../markdown'
 import { api } from '../api'
 import { useAudiencesStore } from '../stores/audiences'
+import { useAuthStore } from '../../../shell/stores/auth'
 
 const props = defineProps<{ widget: any; state: any; selected?: boolean }>()
 const emit = defineEmits(['remove', 'select', 'deselect'])
@@ -14,6 +15,7 @@ const emit = defineEmits(['remove', 'select', 'deselect'])
 // segments are created here but live in the shared audiences store (consumed by the
 // Audiences/Campaigns modules), so preview + save go through it, not a bare client.
 const audiencesStore = useAudiencesStore()
+const authStore = useAuthStore()
 
 const PAGE_ROWS = 10   // table rows per page — pages instead of an inner scrollbar
 
@@ -48,6 +50,11 @@ const selectable = computed(() => SELECTABLE_KINDS.includes(props.widget.kind))
 // a whole list/stat IS a people cohort → its selector is the segment source (no element
 // to pick). Only when the selector actually narrows — an "everyone" list isn't an audience.
 const selectorNarrows = computed(() => { const s = props.widget.query?.selector; return !!(s && (s.filter || s.about || s.judge)) })
+// Saving a chart selection as a segment writes to the audiences plugin. With
+// it absent no audiences:* key reaches the permission catalog (oauth's
+// expandPermissions), so this one check covers both "not deployed" and "not
+// yours to write" — the chart itself is unaffected either way.
+const canSaveSegment = computed(() => authStore.hasPermission('audiences:write'))
 const wholeCohort = computed(() => !isMulti.value && ['table', 'stat'].includes(props.widget.kind) && selectorNarrows.value)
 // pivot: normalise the result (multi or single) into a rows × cols grid of values
 const matrix = computed(() => {
@@ -236,14 +243,20 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
            edit never depends on hovering back over the card you're already looking away from. -->
       <div class="actions" :class="{ persistent: selected }" @click.stop>
         <template v-if="selected">
-          <Button label="Cancel" icon="pi pi-times" text size="small" severity="secondary"
-            aria-label="Cancel edit" title="Cancel edit" @click="emit('deselect')" />
+          <Button label="Cancel" text size="small" severity="secondary"
+            aria-label="Cancel edit" title="Cancel edit" @click="emit('deselect')">
+            <template #icon><span class="material-symbols-outlined">close</span></template>
+          </Button>
         </template>
         <template v-else>
-          <Button label="Edit" icon="pi pi-pencil" text size="small" severity="secondary"
-            aria-label="Edit query" title="Edit query" @click="emit('select', widget.id)" />
-          <Button label="Remove" icon="pi pi-trash" text size="small" severity="secondary"
-            aria-label="Remove widget" title="Remove widget" @click="emit('remove', widget.id)" />
+          <Button label="Edit" text size="small" severity="secondary"
+            aria-label="Edit query" title="Edit query" @click="emit('select', widget.id)">
+            <template #icon><span class="material-symbols-outlined">edit</span></template>
+          </Button>
+          <Button label="Remove" text size="small" severity="secondary"
+            aria-label="Remove widget" title="Remove widget" @click="emit('remove', widget.id)">
+            <template #icon><span class="material-symbols-outlined">delete</span></template>
+          </Button>
         </template>
       </div>
     </div>
@@ -253,7 +266,7 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
       <aside v-if="widget.kind !== 'answer'" class="explain-col" @click.stop>
         <div class="insight-main">
           <div class="explain-head">
-            <i :class="selectedPerson ? 'pi pi-user' : 'pi pi-sparkles'" />{{ selectedPerson ? 'Client' : 'Insight' }}
+            {{ selectedPerson ? 'Client' : 'Insight' }}
             <button v-if="selectedPerson" type="button" class="clear-sel" @click="selectedPerson = null">show all</button>
           </div>
           <template v-if="selectedPerson">
@@ -275,19 +288,25 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
              is hovered or a selection is pending. Hidden while a single person is selected. -->
         <div v-if="!selectedPerson && (pendingSegment || (selectable && (points.length || isMulti)))"
              class="seg" :class="{ pinned: pendingSegment && pendingSegment.kind }">
-          <div class="explain-head"><i class="pi pi-bookmark" />Segment</div>
+          <div class="explain-head">Segment</div>
           <template v-if="pendingSegment">
             <template v-if="wholeCohort">
-              <div v-if="pendingSegment.saved" class="seg-done"><i class="pi pi-check" /> Saved to segments</div>
-              <Button v-else label="Save segment" icon="pi pi-check" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
+              <div v-if="pendingSegment.saved" class="seg-done"><span class="material-symbols-outlined">check</span> Saved to segments</div>
+              <Button v-else label="Save segment" size="small" :loading="pendingSegment.saving"
+                :disabled="!canSaveSegment"
+                :title="canSaveSegment ? undefined : 'The audiences module is not available'" @click="saveSegment">
+                <template #icon><span class="material-symbols-outlined">check</span></template>
+              </Button>
               <p v-if="pendingSegment.error" class="seg-err">{{ pendingSegment.error }}</p>
             </template>
             <template v-else>
               <div class="seg-name">{{ pendingSegment.name }}</div>
               <div class="seg-size">{{ pendingSegment.size != null ? `~${pendingSegment.size.toLocaleString()} people` : (pendingSegment.sizing ? 'sizing…' : 'size unavailable') }}</div>
-              <div v-if="pendingSegment.saved" class="seg-done"><i class="pi pi-check" /> Saved to segments</div>
+              <div v-if="pendingSegment.saved" class="seg-done"><span class="material-symbols-outlined">check</span> Saved to segments</div>
               <div v-else class="seg-actions">
-                <Button label="Save segment" icon="pi pi-check" size="small" :loading="pendingSegment.saving" @click="saveSegment" />
+                <Button label="Save segment" size="small" :loading="pendingSegment.saving" @click="saveSegment">
+                  <template #icon><span class="material-symbols-outlined">check</span></template>
+                </Button>
                 <button type="button" class="seg-dismiss" @click="dismissSegment">Dismiss</button>
               </div>
               <p v-if="pendingSegment.error" class="seg-err">{{ pendingSegment.error }}</p>
@@ -349,7 +368,9 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
             <div class="count muted">{{ (d?.count ?? passports.length).toLocaleString() }} people<span class="hint-sel"> · click a row for a profile</span></div>
             <DataTable v-if="passports.length" :value="passports" size="small"
               v-model:selection="selectedPerson" selectionMode="single" dataKey="id"
-              :paginator="passports.length > PAGE_ROWS" :rows="PAGE_ROWS" :alwaysShowPaginator="false">
+              :paginator="passports.length > PAGE_ROWS" :rows="PAGE_ROWS" :alwaysShowPaginator="false"
+              paginatorTemplate="PrevPageLink CurrentPageReport NextPageLink"
+              currentPageReportTemplate="{currentPage} of {totalPages}">
               <Column header="Person">
                 <template #body="{ data }">
                   <div class="person" :title="data.label || data.id">
@@ -389,7 +410,11 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
    selection just toggle a background: the breathing room already exists either way, so
    nothing about the card's box (and therefore its content) ever moves when you select it. */
 .card { position: relative; background: transparent; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; cursor: pointer; container-type: inline-size; }
-.card.selected { background: var(--accent-soft); }
+/* --panel-2, the same neutral wash a rail row takes on hover in every other
+   module — not --accent-soft. A widget's charts already carry the accent; a
+   tinted card behind them competes with the data, where the rail's grey just
+   says "this is the one you're on". */
+.card.selected { background: var(--panel-2); }
 /* header row: title/subtitle + actions, vertically centred */
 .card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
 /* the title is a standard heading; it doubles as the drag handle and wraps in full */
@@ -432,10 +457,15 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
   .explain-col .insight-main { flex: 1 1 0; min-width: 0; }
   .explain-col .seg { flex: 1 1 0; min-width: 0; margin: 0; }
 }
-.explain-head { display: flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
-.explain-head .pi { font-size: 11px; color: var(--accent); }
+/* 11px/.04em — the app's one uppercase-eyebrow treatment (Users' FIRST NAME,
+   People's TYPE, the permissions pane's group labels). It sat at 10px/.06em
+   as a third size between those and the widget .title above it. */
+.explain-head { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
 /* "show all" — clears the row selection, back to the whole-list insight */
-.clear-sel { margin-left: auto; border: none; background: none; cursor: pointer; font: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); padding: 0; }
+/* rides on the .explain-head line, so it takes that line's size — at 9.5px it
+   was a fourth size sitting next to the eyebrow it belongs to. The accent
+   colour is what marks it as the action. */
+.clear-sel { margin-left: auto; border: none; background: none; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); padding: 0; }
 .clear-sel:hover { text-decoration: underline; }
 .explain-text { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text); }
 .explain-text.dim { color: var(--muted); }
@@ -515,14 +545,4 @@ watch([wholeCohort, () => JSON.stringify(props.widget.query?.selector ?? null), 
 .table-body :deep(.p-datatable-table) { width: 100%; table-layout: fixed; }
 .table-body :deep(td), .table-body :deep(th) { overflow: hidden; padding: 6px 8px; }
 .table-body :deep(th) { font-size: 11px; font-weight: 600; color: var(--muted); }
-/* paginator — PrimeVue doesn't shrink it with the table's small size, so size its
-   controls down to match the "Add widget" button (37px tall, 13px) */
-.table-body :deep(.p-paginator) { padding: 2px 0; font-size: 13px; }
-.table-body :deep(.p-paginator-page),
-.table-body :deep(.p-paginator-first),
-.table-body :deep(.p-paginator-prev),
-.table-body :deep(.p-paginator-next),
-.table-body :deep(.p-paginator-last) { min-width: 33px; width: 33px; height: 33px; font-size: 13px; }
-.table-body :deep(.p-paginator-page) { margin: 0 1px; }
-.table-body :deep(.p-paginator .p-select) { height: 33px; }
 </style>
