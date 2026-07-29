@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-voip",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "VoIP channel for whitebox — Asterisk ARI observer, recording, Whisper transcription, trackable-number pool.",
   "type": "module",
   "main": "src/index.js",
@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "whitebox-pro-server": "^2.0.0"
+    "whitebox-pro-server": "^2.1.0"
   },
   "dependencies": {
     "express": "^4.18.2",

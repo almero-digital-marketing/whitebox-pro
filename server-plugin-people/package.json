@@ -19,7 +19,7 @@
     "zod": "^4.4.0"
   },
   "peerDependencies": {
-    "whitebox-pro-server": "^2.0.0"
+    "whitebox-pro-server": "^2.1.0"
   },
   "devDependencies": {
     "vitest": "^2.1.0"
