@@ -147,6 +147,43 @@ surface is optional (conversions' audit endpoint, the shortener's link
 management) instead 401 that one route until `auth` is set, since their main
 ingress (event collection, redirects) is meant to stay public either way.
 
+### Split verifiers, and the permission catalog
+
+The **surface** plugins take `auth` as an object of independently-resolved
+verifiers, one per permission key, rather than a single one:
+
+```js
+analytics({
+  auth: {
+    read:  jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' }),
+    write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:write' }),
+  },
+})
+```
+
+Each plugin also **declares its keys** in a `permissions` catalog, and core
+aggregates the catalogs of every *registered* plugin (`server/src/plugins.js`).
+That aggregate is what the console reads to decide which modules to show — so a
+plugin you didn't register and a permission the user wasn't granted collapse into
+the same answer, with no separate feature-flag list to keep in step.
+
+| plugin | keys | granted to a new user by default |
+|---|---|---|
+| `analytics` | `analytics:read` · `analytics:write` | both |
+| `audiences` | `audiences:read` · `audiences:write` | — |
+| `campaigns` | `campaigns:read` · `campaigns:write` | — |
+| `journeys` | `journeys:read` · `journeys:write` | — |
+| `people` | `people:read` · `people:write` · `people:erase` | — |
+| `oauth` | `users:manage` | — |
+
+`people` is the one with a third verifier: `auth.erase`, because deleting someone
+forever is a different authority from correcting their email. Omit it and it
+falls back to `write` — the stricter of the two, never to `read`.
+
+A user's granted scopes are computed **server-side at login** from their actual
+grants; the scope in a presented token is never trusted on its own. See
+[server-plugin-oauth's README](../server-plugin-oauth/README.md).
+
 ## Environment reference
 
 All secrets and connection details come from `process.env` (loaded from

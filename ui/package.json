@@ -15,6 +15,7 @@
     "@codemirror/view": "^6.43.4",
     "@primevue/themes": "^4.5.4",
     "@tinymce/tinymce-vue": "^5.1.1",
+    "@vue-flow/core": "^1.48.2",
     "codemirror": "^6.0.2",
     "echarts": "^5.5.0",
     "pinia": "^3.0.4",

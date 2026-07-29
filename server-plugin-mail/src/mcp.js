@@ -5,10 +5,17 @@
 // and manage the suppression list (opt-outs). Bulk and tracking are
 // intentionally NOT exposed via MCP — bulk is admin-only by design and
 // tracking is webhook-driven.
+//
+// Every tool/resource carries scope: 'mail:use' — mail has no read/write
+// split (a single resolveAuth() secret gates its REST surface too), so this
+// is the one permission that gates all of it, on top of the endpoint-level
+// mcp:use gate.
 
 import { z } from 'zod'
 import * as suppressions from './suppressions.js'
 import * as outbox from './outbox.js'
+
+const SCOPE = 'mail:use'
 
 export function registerMcp(ctx, { db }) {
   if (!ctx.mcp) return
@@ -26,6 +33,7 @@ export function registerMcp(ctx, { db }) {
       text:     z.string().optional(),
       idempotency_key: z.string().optional(),
     },
+    scope: SCOPE,
     handler: async (args) => {
       const row = await outbox.create({
         to: args.to,
@@ -51,6 +59,7 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.outbox_get',
     description: 'Fetch a single outbox row by id: status, recipient, subject, timestamps, provider message id.',
     inputSchema: { id: z.number().int().positive() },
+    scope: SCOPE,
     handler: async ({ id }) => {
       const row = await db('whitebox_mail_outbox').where({ id }).first()
       if (!row) {
@@ -69,6 +78,7 @@ export function registerMcp(ctx, { db }) {
       since:       z.string().datetime().optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
+    scope: SCOPE,
     handler: async ({ passport_id, source, since, limit = 50 }) => {
       const q = db('whitebox_mail_inbox').orderBy('received_at', 'desc').limit(limit)
       if (passport_id) q.where({ passport_id })
@@ -91,6 +101,7 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.inbox_get',
     description: 'Fetch a single inbound message by id, including body and attachment URLs.',
     inputSchema: { id: z.number().int().positive() },
+    scope: SCOPE,
     handler: async ({ id }) => {
       const row = await db('whitebox_mail_inbox').where({ id }).first()
       if (!row) {
@@ -108,6 +119,7 @@ export function registerMcp(ctx, { db }) {
       reason: z.string().max(128).optional(),
       notes:  z.string().optional(),
     },
+    scope: SCOPE,
     handler: async ({ email, reason = 'manual', notes = null }) => {
       await suppressions.add({ email, reason, source: 'manual', notes })
       return { content: [{ type: 'text', text: `Suppressed ${email}` }] }
@@ -118,6 +130,7 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.unsuppress',
     description: 'Remove an email address from the suppression list. Use when a user re-opts-in.',
     inputSchema: { email: z.string().email() },
+    scope: SCOPE,
     handler: async ({ email }) => {
       const removed = await suppressions.remove(email)
       return {
@@ -133,6 +146,7 @@ export function registerMcp(ctx, { db }) {
     uri: 'whitebox://mail/inbox',
     description: 'Most recent 100 inbound messages. Use the `mail.inbox_get` tool to fetch one by id.',
     mimeType: 'application/json',
+    scope: SCOPE,
     handler: async (uri) => {
       const rows = await db('whitebox_mail_inbox')
         .orderBy('received_at', 'desc')

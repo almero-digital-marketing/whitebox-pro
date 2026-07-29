@@ -31,18 +31,73 @@ export function init(deps) {
   db = deps.db
 }
 
-export async function createUser({ email, password }) {
+// `permissions` defaults to no grants at all — scripts/create-admin.mjs is
+// the one caller that passes ['*'] (the reserved "everything" sentinel), to
+// bootstrap the very first user with enough access to grant everyone else's.
+export async function createUser({ email, password, permissions = [] }) {
   if (!email || !password) throw new Error('createUser: email and password are required')
   const { hash, salt } = await hashPassword(password)
   const [row] = await db('whitebox_oauth_users')
-    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt })
-    .returning(['id', 'email'])
-  return row
+    .insert({ id: randomUUID(), email: email.toLowerCase().trim(), password_hash: hash, password_salt: salt, permissions: JSON.stringify(permissions) })
+    .returning(['id', 'email', 'permissions'])
+  return { ...row, permissions }
 }
 
 export async function verifyCredentials(email, password) {
   const user = await db('whitebox_oauth_users').where({ email: email.toLowerCase().trim() }).first()
-  if (!user) return null
+  if (!user || !user.password_hash) return null   // pending invite — no password set yet
   const ok = await verifyPassword(password, user.password_hash, user.password_salt)
   return ok ? { id: user.id, email: user.email } : null
+}
+
+export async function getByInviteToken(token) {
+  const user = await db('whitebox_oauth_users')
+    .where({ invite_token: token })
+    .andWhere('invite_expires_at', '>', new Date())
+    .first()
+  return user ? { email: user.email } : null
+}
+
+// Single-use, same atomic-guard pattern as store.redeemCode/revokeRefreshToken:
+// only succeeds while the token is still live and the account is still
+// pending, so a replayed accept-invite request (or a token reused after
+// someone already completed it) can't win a race or set the password twice.
+// firstName/lastName/phone are self-reported here — this is the one point in
+// the flow where the account materializes with real user-supplied info.
+// defaultPermissions is a SNAPSHOT of each plugin's declared defaults at this
+// exact moment — materialized onto the row, not recomputed later, so a
+// plugin changing its defaults afterward doesn't retroactively change
+// already-onboarded users.
+// Self-service password change — the ONLY password mutation available to an
+// already-authenticated user, and only ever for their OWN account (routes.js
+// enforces id === req.auth.sub before this is ever called; there is no
+// admin-resets-someone-else's-password path — that's a different, more
+// sensitive capability this doesn't build). Requires the CURRENT password,
+// unlike every other action an admin can take on a teammate's row (profile
+// edits, permission grants) — a hijacked session shouldn't be able to lock
+// the real owner out by rotating their password with no proof of ownership.
+export async function changePassword({ id, currentPassword, newPassword }) {
+  if (!currentPassword || !newPassword) throw new Error('currentPassword and newPassword are required')
+  if (newPassword.length < 12) throw new Error('newPassword must be at least 12 characters')
+  const user = await db('whitebox_oauth_users').where({ id }).first()
+  if (!user || !user.password_hash) throw new Error('account not found or not yet active')
+  const ok = await verifyPassword(currentPassword, user.password_hash, user.password_salt)
+  if (!ok) throw new Error('current password is incorrect')
+  const { hash, salt } = await hashPassword(newPassword)
+  await db('whitebox_oauth_users').where({ id }).update({ password_hash: hash, password_salt: salt })
+}
+
+export async function completeInvite({ token, password, firstName, lastName, phone, defaultPermissions = [] }) {
+  if (!token || !password) throw new Error('completeInvite: token and password are required')
+  if (password.length < 12) throw new Error('completeInvite: password must be at least 12 characters')
+  const { hash, salt } = await hashPassword(password)
+  const n = await db('whitebox_oauth_users')
+    .where({ invite_token: token, password_hash: null })
+    .andWhere('invite_expires_at', '>', new Date())
+    .update({
+      password_hash: hash, password_salt: salt, invite_token: null, invite_expires_at: null,
+      first_name: firstName?.trim() || null, last_name: lastName?.trim() || null, phone: phone?.trim() || null,
+      permissions: JSON.stringify(defaultPermissions),
+    })
+  return n === 1
 }

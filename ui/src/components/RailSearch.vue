@@ -8,16 +8,21 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 
 <template>
   <div class="rail-search">
-    <i class="pi pi-search rs-icon" />
+    <span class="material-symbols-outlined rs-icon">search</span>
     <input :value="modelValue" :placeholder="placeholder || 'Search'" spellcheck="false"
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
     <button v-if="modelValue" type="button" class="rs-clear" aria-label="Clear search"
-      @click="$emit('update:modelValue', '')"><i class="pi pi-times" /></button>
+      @click="$emit('update:modelValue', '')"><span class="material-symbols-outlined">close</span></button>
+    <!-- For a control that belongs TO the search rather than beside it
+         (People's filter). Inside the bar so it shares the divider and
+         baseline; renders nothing when unused, so the six other rails are
+         untouched. -->
+    <slot name="trailing" />
   </div>
 </template>
 
 <style scoped>
-.rail-search { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-top: 1px solid var(--border); background: var(--panel); }
+.rail-search { flex: none; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--border); background: var(--panel); }
 .rs-icon { font-size: 12px; color: var(--muted); }
 .rail-search input { flex: 1 1 auto; min-width: 0; border: none; background: transparent; outline: none; font: inherit; font-size: 13px; color: var(--text); }
 .rail-search input::placeholder { color: var(--muted); }

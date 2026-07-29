@@ -18,8 +18,9 @@ function setup({ consent = true } = {}) {
   const awareness = { record: vi.fn(async () => {}) }
   const reporter = { report: vi.fn(async () => ({ meta: 'skipped', google: 'skipped', tiktok: 'skipped' })) }
   const consentOk = vi.fn(async () => consent)
-  ingest.init({ awareness, reporter, consentOk, logger: { warn: vi.fn() } })
-  return { awareness, reporter, consentOk }
+  const notify = vi.fn()
+  ingest.init({ awareness, reporter, consentOk, logger: { warn: vi.fn() }, notify })
+  return { awareness, reporter, consentOk, notify }
 }
 
 beforeEach(() => {
@@ -89,6 +90,24 @@ describe('ingestEvent', () => {
   it('throws on an event with no name', async () => {
     setup()
     await expect(ingest.ingestEvent(PID, { value: 1 })).rejects.toThrow(/standard.*or.*event/)
+  })
+
+  it('notifies conversion.<name> — a distinctly-named event, not just generic awareness.recorded', async () => {
+    const { notify } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'purchase', event_id: 'e1', url: 'https://shop/checkout', value: 49.99, currency: 'USD',
+    })
+    expect(notify).toHaveBeenCalledWith('conversion.purchase', {
+      type: 'conversion.purchase',
+      data: { event_id: 'e1', passport_id: PID, kind: 'standard', value: 49.99, currency: 'USD', url: 'https://shop/checkout', networks: { meta: 'skipped', google: 'skipped', tiktok: 'skipped' } },
+    })
+  })
+
+  it('does not notify on a duplicate (idempotent) event', async () => {
+    const { notify } = setup()
+    store.seen.mockResolvedValue({ event_id: 'e1', networks: { meta: 'accepted' } })
+    await ingest.ingestEvent(PID, { standard: 'lead', event_id: 'e1' })
+    expect(notify).not.toHaveBeenCalled()
   })
 })
 

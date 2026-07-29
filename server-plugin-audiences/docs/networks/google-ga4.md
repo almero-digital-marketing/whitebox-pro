@@ -1,6 +1,6 @@
 # Google (via GA4)
 
-Adapter: [`src/adapters/google.js`](../../../adnetworks/src/adapters/google.js) — **Mode A** via the GA4
+Adapter: `whitebox-pro-adnetworks-google` — **Mode A** via the GA4
 **Measurement Protocol**. GA4 is the common denominator: to do almost anything in Google Ads/DV360 you
 route through GA4 audiences.
 
@@ -47,7 +47,7 @@ Success is **HTTP 204 with no body**. Use the **validation endpoint**
 GA4 ties a server event to the user's real browsing via the `_ga` cookie's `client_id`. **Without the
 real `client_id`, MP creates a phantom user that won't populate audiences tied to actual sessions.** So
 the client capture shim **must** read `_ga` → `client_id` (via the `ga_cid` transform). Optionally set
-`user_id` for cross-device. See [06 · Identity](06-identity.md).
+`user_id` for cross-device. See [06 · Identity](../06-identity.md).
 
 ## Event vs user property
 

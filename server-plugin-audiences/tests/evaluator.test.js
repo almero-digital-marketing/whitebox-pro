@@ -27,14 +27,6 @@ describe('audiences evaluator — select source', () => {
     expect(cohort).toEqual([{ id: 'a', qualified: true, score: 0.9, reason: 'cancelling', evidence: { matched_at: '2026-05-01' } }])
   })
 
-  it('evaluate(passport) is a scoped resolve — membership in/out', async () => {
-    captured.resolveResult = { passports: [{ id: 'p1', why: 'w', score: 0.8 }] }
-    expect(await evaluator.evaluate(selectRule, 'p1')).toMatchObject({ qualified: true, score: 0.8, reason: 'w' })
-    expect(captured.resolve.opts).toEqual({ projection: 'people', scope: ['p1'] })
-    captured.resolveResult = { passports: [] }
-    expect(await evaluator.evaluate(selectRule, 'p1')).toMatchObject({ qualified: false, score: 0 })
-  })
-
   it('preview maps the engine preview', async () => {
     captured.previewResult = { filter: { survivors: 120 }, fullScan: false, confirmRequired: false, judge: { sample: 20, projectedMatches: 84, reasons: ['r'] } }
     expect(await evaluator.preview(selectRule)).toEqual({ candidate_pool: 120, est_matches: 84, sampled: 20, full_scan: false, confirm_required: false, sample_reasons: ['r'] })
@@ -53,12 +45,6 @@ describe('audiences evaluator — funnel source', () => {
     ])
   })
 
-  it('evaluate(passport) is population-only for a funnel — not a per-passport match', async () => {
-    const v = await evaluator.evaluate(funnelRule, 'p1')
-    expect(v.qualified).toBe(false)
-    expect(selector.resolve).not.toHaveBeenCalled()
-  })
-
   it('preview reports the slot cohort size', async () => {
     captured.slotIds = ['p2', 'p7', 'p9']
     expect(await evaluator.preview(funnelRule)).toMatchObject({ candidate_pool: 3, est_matches: 3, source: 'gap:2→3' })
@@ -75,9 +61,5 @@ describe('audiences evaluator — discovery + authoring', () => {
     const facts = { label: vi.fn((key) => ({ plan_tier: 'Plan' }[key] || key)) }
     evaluator.init({ selector, ai, db, facts, logger })
     expect(await evaluator.availableFacts()).toEqual([{ key: 'plan_tier', label: 'Plan' }])
-  })
-  it('draftRule asks the LLM for a selector-shaped rule', async () => {
-    expect(await evaluator.draftRule('about to churn')).toEqual({ name: 'X', select: { about: 'x' } })
-    expect(captured.draft).toBe('about to churn')
   })
 })

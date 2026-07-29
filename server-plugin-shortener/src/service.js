@@ -5,13 +5,14 @@
 import * as store from './store.js'
 import { newCode, newClaimToken } from './codes.js'
 
-let passports, awareness, logger, config
+let passports, awareness, logger, config, notify
 
 export function init(deps) {
   passports = deps.passports
   awareness = deps.awareness
   logger    = deps.logger
   config    = deps.config            // { baseUrl, host, codeLength, defaultTtlSec, identityTtlSec, claimTtlSec, param }
+  notify    = deps.notify
 }
 
 class BadRequest extends Error { constructor(m) { super(m); this.status = 400 } }
@@ -138,6 +139,10 @@ export async function claim(token, visitorPassportId) {
     { code: link.code, passportId: bound, merged: !!(target && visitor && visitor !== target) },
     'Shortlink claimed: %s → passport %s', link.code, bound,
   )
+  notify?.('shortener.claimed', {
+    type: 'shortener.claimed',
+    data: { code: link.code, passport_id: bound, merged: !!(target && visitor && visitor !== target) },
+  })
   return { bound: true, passport_id: bound, data: link.data || {} }
 }
 

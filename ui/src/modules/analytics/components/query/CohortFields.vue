@@ -6,7 +6,7 @@ defineProps<{ model: any }>()
 </script>
 
 <template>
-  <label class="lab"><i class="pi pi-bolt ic" />Cohort activity <span class="muted small">(optional)</span></label>
+  <label class="lab">Cohort activity <span class="muted small">(optional)</span></label>
   <Select v-model="model.cohortEvent" :options="model.eventOpts" optionLabel="label" optionValue="value" filter showClear class="w" placeholder="any activity" />
   <p class="hint">People are grouped by the period of their first <code>{{ model.cohortEvent || 'activity' }}</code>; cells show how many stay active.</p>
   <label class="lab">Period</label>

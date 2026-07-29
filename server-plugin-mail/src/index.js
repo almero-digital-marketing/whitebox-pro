@@ -37,7 +37,7 @@ export function mail(options = {}) {
     },
 
     async register(app, ctx) {
-      const { db, queue: q, events, webhooks, passports, sessions, templates, awareness, logger: rootLogger } = ctx
+      const { db, queue: q, events, webhooks, passports, sessions, templates, awareness, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'mail' })
       const mailConfig = options
 
@@ -60,7 +60,7 @@ export function mail(options = {}) {
       const attachmentsFolder = path.resolve(process.cwd(), mailConfig.attachmentsFolder || 'mail-attachments')
       await mkdir(attachmentsFolder, { recursive: true })
 
-      const { notify }  = createNotify({ webhooksConfig: mailConfig.webhooks, events, webhooks })
+      const { notify }  = createNotify({ webhooksConfig: mailConfig.webhooks, events, webhooks, eventRegistry })
       const authVerifier = resolveAuth(mailConfig.auth, { logger })
       if (!authVerifier) throw new Error('mail: auth (a secret or a composed verifier) is required')
       const requireAuth = authVerifier.middleware
@@ -87,6 +87,16 @@ export function mail(options = {}) {
       startStuckReaper(mailConfig, logger)
 
       logger.info('Mail plugin ready')
+
+      // Exposed on ctx.plugins.mail for other plugins to send mail directly.
+      // `send` (mailer.send) is provider-agnostic and UNGATED — no suppression/
+      // invalid check, no outbox row — for transactional mail that
+      // deliberately bypasses consent gating (server-plugin-oauth's invite
+      // emails). `queueSend` (outbox.queueSend) is the gated, customer-facing
+      // path — same create()+enqueue()+preflight-check pipeline the HTTP
+      // /mail/outbox route uses. Callers sending to an actual customer
+      // (e.g. journeys) must use queueSend, never send.
+      return { service: { send: mailer.send, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel } }
     },
   }
 }

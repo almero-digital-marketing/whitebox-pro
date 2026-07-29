@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import Textarea from 'primevue/textarea'
-import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import SelectButton from 'primevue/selectbutton'
 import QueryBuilder from './QueryBuilder.vue'
 import { api } from '../api'
 
 const props = defineProps<{ composing: boolean; report: any; selectedWidget: any; schema: any }>()
-const emit = defineEmits(['compose', 'rename', 'save', 'cancel'])
+const emit = defineEmits(['compose', 'save', 'cancel'])
 
 // mode is owned by the parent (v-model) so board actions — select a widget, add a
 // widget — can drive it regardless of which mode you're in.
@@ -89,36 +88,11 @@ watch(mode, async (now, prev) => {
   finally { summarizing.value = false }
 })
 
-// rename the open report by clicking its name in the header
-const editing = ref(false)
-const nameEdit = ref('')
-const nameInput = ref<any>(null)
-function startEdit() {
-  if (!props.report) return
-  nameEdit.value = props.report.name
-  editing.value = true
-  nextTickFocus()
-}
-async function nextTickFocus() {
-  await Promise.resolve()
-  const el = nameInput.value?.$el || nameInput.value
-  el?.focus?.(); el?.select?.()
-}
-function commitName() { if (editing.value) { editing.value = false; emit('rename', nameEdit.value) } }
-function cancelEdit() { nameEdit.value = props.report?.name || ''; editing.value = false }
 </script>
 
 <template>
   <div class="pane-head">
-    <InputText v-if="editing" ref="nameInput" v-model="nameEdit" class="name-edit"
-      @blur="commitName" @keyup.enter="commitName" @keyup.esc="cancelEdit" />
-    <div v-else class="name-row">
-      <span class="ph-name" :class="{ editable: report }" :title="report ? 'Click to rename' : ''" @click="startEdit">
-        {{ report ? report.name : 'Compose' }}
-      </span>
-      <Button v-if="report" icon="pi pi-pencil" text rounded size="small" severity="secondary"
-        class="edit-name" aria-label="Rename report" @click="startEdit" />
-    </div>
+    <span>Compose</span>
   </div>
 
   <div class="mode-bar">
@@ -135,7 +109,7 @@ function cancelEdit() { nameEdit.value = props.report?.name || ''; editing.value
     <!-- footer action bar — mirrors the Query tab's Cancel / … / action layout -->
     <div class="agent-actions">
       <Button label="Cancel" text severity="secondary" size="small" class="ag-cancel" @click="cancelAgent" />
-      <Button :label="composing ? 'Composing…' : 'Ask'" :loading="composing" size="small" :disabled="summarizing" @click="send" />
+      <Button :label="composing ? 'Composing…' : 'Ask'" :loading="composing" size="small" :disabled="summarizing || !q.trim()" @click="send" />
     </div>
     <p v-if="report" class="muted hint">Ask a follow-up to add more widgets — or click a widget and switch to Query to edit it.</p>
     <div class="suggest" :class="{ dim: loadingSug }">
@@ -153,12 +127,6 @@ function cancelEdit() { nameEdit.value = props.report?.name || ''; editing.value
 </template>
 
 <style scoped>
-.name-row { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
-.ph-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.ph-name.editable { cursor: text; }
-.edit-name { flex: none; opacity: .55; }
-.edit-name:hover { opacity: 1; }
-.name-edit { flex: 1; min-width: 0; }
 .mode-bar { padding: 14px 16px 0; }
 .mode-bar :deep(.p-selectbutton) { width: 100%; }
 .mode-bar :deep(.p-togglebutton) { flex: 1; }
@@ -173,7 +141,7 @@ function cancelEdit() { nameEdit.value = props.report?.name || ''; editing.value
 .suggest > p { margin: 4px 0; font-size: 13px; }
 .sug { justify-content: flex-start; }
 .sug :deep(.p-button-label) { flex: 1; text-align: left; font-weight: 400; }
-.hint { font-size: 13px; padding: 0 2px; }
+.hint { font-size: 11.5px; padding: 0 2px; }
 .query-pane { padding: 16px; }
 .qhead { margin: 0 0 10px; }
 .small { font-size: 11px; }

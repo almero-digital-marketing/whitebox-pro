@@ -6,6 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '../api'
+import { notifyError } from '../../../shell/toast'
 
 export const useAnalyticsStore = defineStore('analytics', () => {
   const reports = ref<any[]>([])                    // the rail list
@@ -16,7 +17,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
   const error = ref('')
 
   async function loadReports() {
-    try { reports.value = (await api.listReports()).data } catch (e: any) { error.value = e.message }
+    try { reports.value = (await api.listReports()).data } catch (e: any) { error.value = e.message; notifyError(`Couldn't load reports: ${e.message}`) }
   }
 
   async function loadSchema() {
@@ -75,7 +76,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       if (switching && !keepData) widgetData.value = {}
       report.widgets.forEach((w: any) => { if (!widgetData.value[w.id]) resolveWidget(w) })
       report.widgets.forEach((w: any) => ensureSummary(w))
-    } catch (e: any) { error.value = e.message }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't open that report: ${e.message}`) }
   }
 
   // Ask → fill the open report (creating one first if none). Returns the report id so
@@ -96,7 +97,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       await openReport(res.report.id, { keepData: true })          // refresh list, resolve only missing
       await loadReports()
       return current.value?.id ?? null
-    } catch (e: any) { error.value = e.message; return current.value?.id ?? null }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't compose that: ${e.message}`); return current.value?.id ?? null }
     finally { composing.value = false }
   }
 
@@ -107,7 +108,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       widgetData.value = {}; error.value = ''
       await loadReports()
       return r
-    } catch (e: any) { error.value = e.message; return null }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't create a new report: ${e.message}`); return null }
   }
 
   async function renameReport(name: string) {
@@ -116,13 +117,14 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       const r = await api.updateReport(current.value.id, { name: name.trim() })
       current.value = { ...current.value, name: r.name }
       await loadReports()
-    } catch (e: any) { error.value = e.message }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't rename the report: ${e.message}`) }
   }
 
   // Delete a report. Returns true if it was the open one, so the view can navigate away.
   async function deleteReport(id: string): Promise<boolean> {
     const wasCurrent = current.value?.id === id
-    try { await api.deleteReport(id); await loadReports() } catch (e: any) { error.value = e.message }
+    try { await api.deleteReport(id); await loadReports() }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't delete the report: ${e.message}`) }
     return wasCurrent
   }
 
@@ -132,7 +134,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       invalidateWidgets([id])                                       // force re-resolve
       await openReport(current.value.id, { keepData: true })
       await loadReports()
-    } catch (e: any) { error.value = e.message }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't update the widget: ${e.message}`) }
   }
 
   // Add a widget to a report; returns the created row so the view can select it.
@@ -142,7 +144,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       await openReport(reportId, { keepData: true })
       await loadReports()
       return row
-    } catch (e: any) { error.value = e.message; return null }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't add the widget: ${e.message}`); return null }
   }
 
   async function deleteWidget(id: string) {
@@ -151,7 +153,7 @@ export const useAnalyticsStore = defineStore('analytics', () => {
       if (current.value) current.value = { ...current.value, widgets: current.value.widgets.filter((w: any) => w.id !== id) }
       invalidateWidgets([id])
       await loadReports()
-    } catch (e: any) { error.value = e.message }
+    } catch (e: any) { error.value = e.message; notifyError(`Couldn't remove the widget: ${e.message}`) }
   }
 
   // Optimistic reorder to the new id order (so the echo of our own broadcast is idempotent), then persist.
@@ -159,7 +161,8 @@ export const useAnalyticsStore = defineStore('analytics', () => {
     if (!current.value) return
     const byId = new Map(current.value.widgets.map((w: any) => [w.id, w]))
     current.value = { ...current.value, widgets: order.map((id) => byId.get(id)).filter(Boolean) }
-    try { await api.reorderWidgets(current.value.id, order) } catch (e: any) { error.value = e.message }
+    try { await api.reorderWidgets(current.value.id, order) }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't save the new widget order: ${e.message}`) }
   }
 
   // Drop cached data for these widgets so the next openReport re-resolves them (live edits).

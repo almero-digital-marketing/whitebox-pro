@@ -3,20 +3,30 @@
 // Cross-plugin: campaigns reuse the AUDIENCES plugin's service (injected as deps.audiences) for
 // audience resolution + consent gating — we never re-implement set algebra or consent. The UI
 // owns the audience binding (many-to-many) + scheduling; Mikser upserts the content (by external_id).
-// Executing LOCKS the campaign and stamps real stats. Delivery is dry-run by default (the
+// Executing LOCKS the campaign and stamps real stats. Bulk delivery is dry-run by default (the
 // `dryRun` config switch) and goes live through the host-wired `deliver` hook (→ mail/sms plugins).
+//
+// activateForPassport() is a SEPARATE delivery mode — one campaign's content, ONE passport,
+// independent of the bulk schedule/lock lifecycle (any status works, not just draft/scheduled).
+// It calls mail/sms's queueSend directly (never `.send` — that bypasses consent) rather than the
+// `deliver` hook, and honors the same `dryRun` switch. Used by Journeys' `trigger_campaign` step,
+// and exposed as its own REST/MCP action for direct per-customer sends.
 
 import { randomUUID } from 'node:crypto'
 import { validateInput, validateUpsert, fromRow, isLocked } from './campaigns.js'
 
-let store, audiences, deliver, dryRun, logger
+let store, audiences, deliver, dryRun, logger, mail, sms, passports, notify
 
 export function init(deps) {
-  ({ store, audiences, deliver, dryRun, logger } = deps)
+  ({ store, audiences, deliver, dryRun, logger, mail, sms, passports, notify } = deps)
 }
 
 // --- read ---
 export const listCampaigns = async () => (await store.listCampaigns()).map(fromRow)
+export async function searchCampaigns(opts = {}) {
+  const { total, rows } = await store.searchCampaigns(opts)
+  return { total, rows: rows.map(fromRow) }
+}
 
 // Full campaign: + its attached audiences (id, name, size) + a resolved analytics_prompt.
 export async function getCampaign(id) {
@@ -145,6 +155,29 @@ export async function schedule(id, { counts } = {}) {
   return fromRow(await store.updateCampaign(id, { status: 'sent', sent_at: new Date().toISOString(), stats: JSON.stringify(stats) }))
 }
 
+// --- manual send: deliver to the attached audiences' union RIGHT NOW, WITHOUT locking or
+// stamping status/sent_at. Deliberately a SEPARATE action from schedule(), not a "scheduled_at set
+// to now" special case of it — schedule()'s lock exists because committing to a bulk send is
+// meant to be a one-time, protect-from-accidental-edits event. A manual send has no such
+// intent: it's repeatable (tweak the message, send again), matching how a Journey's
+// `trigger_campaign` step can also activate this campaign at any time, any number of times,
+// independent of its bulk lifecycle. `stats` still gets stamped (so a preview number reflects the
+// last run), but the campaign stays in whatever status it already was — always 'draft' in
+// practice, since a locked campaign never reaches this function at all.
+export async function sendManual(id, { counts } = {}) {
+  const c = fromRow(await getOr404(id))
+  if (isLocked(c)) { const e = new Error('campaign is locked (scheduled or sent)'); e.status = 409; throw e }
+  const ready = c.channel === 'sms' ? !!c.message?.text : !!c.message?.html
+  if (!ready) { const e = new Error('the message is not ready yet'); e.status = 400; throw e }
+  const audIds = await store.audienceIds(id)
+  if (!audIds.length) { const e = new Error('attach at least one audience first'); e.status = 400; throw e }
+
+  let n = counts
+  if (!n || n.deliverable == null) n = await audiences.previewCohort(await unionPassports(id))
+  const stats = await runDelivery(c, n)
+  return fromRow(await store.updateCampaign(id, { stats: JSON.stringify(stats) }))
+}
+
 // Deliver a DUE campaign and return the stats to stamp. `dryRun` (config; default ON) is the
 // safety switch: it records the projected reach as "sent" WITHOUT sending. Live mode resolves the
 // consent-gated deliverable cohort and hands it to the host `deliver` hook (→ mail/sms plugins).
@@ -156,8 +189,74 @@ async function runDelivery(c, n) {
     e.status = 500; throw e
   }
   const passportIds = await audiences.deliverableCohort(await unionPassports(c.id))
+  // The hook receives the whole campaign because it MUST stamp campaign_id on
+  // the rows it creates (mail/sms migration 015/005) — that column is the only
+  // thing getResults() reads. A hook that ignores it delivers fine and reports
+  // nothing.
   const res = await deliver({ campaign: c, channel: c.channel, subject: c.subject, message: c.message, passportIds })
-  return { ...base, sent: passportIds.length, batch_id: res?.batch_id ?? res?.id ?? null, dry_run: false }
+  const stats = { ...base, sent: passportIds.length, batch_id: res?.batch_id ?? res?.id ?? null, dry_run: false }
+  notify?.('campaigns.sent', { type: 'campaigns.sent', data: { campaign_id: c.id, channel: c.channel, ...stats } })
+  return stats
+}
+
+// --- results ---
+// What actually happened, as opposed to previewDelivery()'s "what would".
+//
+// Campaigns never reads mail's or sms's tables: it asks each plugin for its own
+// funnel, the same way it asks them to queueSend. That boundary is what lets a
+// deployment run without one of them — a missing channel plugin yields an
+// `unavailable` note rather than a crash, matching every other optional
+// dependency here.
+//
+// Dry runs are excluded outright. They stamp a send row for the audit trail but
+// nothing left the building, so counting them would report reach that never
+// existed.
+export async function getResults(id) {
+  const c = await getOr404(id)
+  const runs = (await store.listSends(id)).filter(s => !s.dry_run)
+
+  // pre-flight reach, summed across runs: who resolved, and why the rest fell
+  // out. Already recorded per run — this is the only place it's ever surfaced.
+  const reach = runs.reduce((a, r) => ({
+    resolved: a.resolved + (r.resolved || 0),
+    deliverable: a.deliverable + (r.deliverable || 0),
+    suppressed: a.suppressed + (r.suppressed || 0),
+    no_consent: a.no_consent + (r.no_consent || 0),
+  }), { resolved: 0, deliverable: 0, suppressed: 0, no_consent: 0 })
+
+  // Both channels are asked about this campaign, not just the one the campaign
+  // currently says it uses: its channel is editable after a send, and a journey
+  // can activate it per-passport with no send run at all. Each plugin answers
+  // for its own table by campaign_id; a channel with no rows is dropped below,
+  // so asking costs one cheap indexed count.
+  const delivery = {}
+  for (const [channel, svc] of [['email', mail], ['sms', sms]]) {
+    if (typeof svc?.funnel !== 'function') {
+      // only worth saying when this channel plausibly sent something
+      if (c.channel === channel) {
+        delivery[channel] = { unavailable: `the ${channel} plugin is not wired on this deployment` }
+      }
+      continue
+    }
+    try {
+      const f = await svc.funnel({ campaignId: id })
+      if (f.total > 0) delivery[channel] = f
+    } catch (err) {
+      logger?.warn({ err }, 'campaigns: %s funnel failed for campaign %s', channel, id)
+      delivery[channel] = { unavailable: err.message }
+    }
+  }
+
+  return {
+    campaign_id: id,
+    channel: c.channel,
+    runs: runs.map(r => ({
+      id: r.id, channel: r.channel, batch_id: r.batch_id, status: r.status, sent_at: r.sent_at,
+      resolved: r.resolved, deliverable: r.deliverable, suppressed: r.suppressed, no_consent: r.no_consent,
+    })),
+    reach,
+    delivery,
+  }
 }
 
 // link the Analytics report built from this campaign (allowed post-send)
@@ -173,6 +272,50 @@ export async function unlockCampaign(id) {
   const c = fromRow(await getOr404(id))
   if (c.status === 'sent') { const e = new Error('a delivered campaign is final and can’t be unlocked'); e.status = 409; throw e }
   return fromRow(await store.updateCampaign(id, { status: 'draft', sent_at: null, stats: null }))   // light
+}
+
+// --- per-customer activation: trigger this campaign's content for ONE passport, independent of
+// the bulk schedule/lock lifecycle (a campaign already sent in bulk once can still be triggered
+// per-customer indefinitely after — e.g. a "Welcome Email" campaign a journey re-triggers for
+// every new signup). Consent/suppression is still a hard gate; audience MEMBERSHIP is not — the
+// caller (a journey enrollment, or a direct API call) already decided this passport should get it.
+export async function activateForPassport(id, passportId, opts = {}) {
+  if (!passportId) { const e = new Error('passport_id required'); e.status = 400; throw e }
+  const c = fromRow(await getOr404(id))
+  const ready = c.channel === 'sms' ? !!c.message?.text : !!c.message?.html
+  if (!ready) { const e = new Error('the message is not ready yet'); e.status = 400; throw e }
+
+  const [deliverableId] = await audiences.deliverableCohort([passportId])
+  if (!deliverableId) return { sent: false, reason: 'suppressed_or_no_consent' }
+
+  if (dryRun) {
+    notify?.('campaigns.activated', { type: 'campaigns.activated', data: { campaign_id: id, passport_id: passportId, channel: c.channel, dry_run: true } })
+    return { sent: true, dry_run: true }
+  }
+
+  const to = await resolveIdentity(passportId, c.channel === 'sms' ? 'phone' : 'email')
+  if (!to) return { sent: false, reason: 'no_contact' }
+
+  // Attribution (migration 015 / 005): this path stamps no batch — it's one
+  // passport, not a run — so without these the send would be invisible to both
+  // this campaign's results and the journey's. `journeyId` comes from the
+  // caller because campaigns doesn't know who invoked it.
+  const idempotencyKey = opts.idempotencyKey
+  const attribution = { campaignId: id, journeyId: opts.journeyId || null }
+  if (c.channel === 'sms') {
+    if (!sms) { const e = new Error('sms service not wired'); e.status = 500; throw e }
+    await sms.queueSend({ to, body: c.message.text, passportId, idempotencyKey, ...attribution })
+  } else {
+    if (!mail) { const e = new Error('mail service not wired'); e.status = 500; throw e }
+    await mail.queueSend({ to, subject: c.subject, html: c.message.html, passportId, idempotencyKey, ...attribution })
+  }
+  notify?.('campaigns.activated', { type: 'campaigns.activated', data: { campaign_id: id, passport_id: passportId, channel: c.channel, dry_run: false } })
+  return { sent: true, dry_run: false }
+}
+
+async function resolveIdentity(passportId, type) {
+  const rows = await passports.identities(passportId)
+  return rows.find(r => r.type === type)?.value || null
 }
 
 // --- helpers ---

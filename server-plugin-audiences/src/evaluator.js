@@ -6,18 +6,6 @@
 
 import { z } from 'zod'
 
-// A drafted rule (audiences_draft_rule): the LLM proposes a selector-shaped rule.
-const DRAFT = z.object({
-  name: z.string(),
-  select: z.object({
-    about: z.string().optional(),
-    judge: z.object({
-      criteria: z.string(),
-      confidence: z.number().min(0).max(1).optional(),
-    }).optional(),
-  }),
-})
-
 let selector, ai, db, facts, logger
 
 export function init(deps) {
@@ -27,8 +15,6 @@ export function init(deps) {
   facts = deps.facts
   logger = deps.logger
 }
-
-const verdict = (qualified, score, reason, evidence) => ({ qualified, score, reason, evidence })
 
 // The rule's QUALIFIED cohort, with per-member metadata — for population eval +
 // keep-warm. The engine resolves the whole cohort (judge included) in ONE call,
@@ -46,17 +32,6 @@ export async function resolveCohort(rule) {
     id: p.id, qualified: true, score: p.score ?? 1, reason: p.why ?? 'matched the selector',
     evidence: p.matched_at ? { matched_at: p.matched_at } : {},
   }))
-}
-
-// Membership of ONE passport (the dirty/incremental path) — SELECT sources only.
-// A funnel is inherently a population computation, so funnel audiences keep warm
-// by population re-resolve (resolveCohort), never per-passport.
-export async function evaluate(rule, passportId) {
-  if (rule.funnel) return verdict(false, 0, 'funnel audiences evaluate by population (keep-warm), not per-passport', { funnel: true })
-  const res = await selector.resolve(rule.select, { projection: 'people', scope: [passportId] })
-  const hit = res.passports.find(p => p.id === passportId)
-  if (!hit) return verdict(false, 0, 'did not match the selector', {})
-  return verdict(true, hit.score ?? 1, hit.why ?? 'matched the selector', { matched_at: hit.matched_at })
 }
 
 // Cost preview — never fires. select → the engine's preview (cohort, judge-call
@@ -160,15 +135,4 @@ human (e.g. "Lapsed High-Value", "Everyone Except Reached"). Do NOT use the word
 function fallbackAudienceName(included, excluded) {
   const base = included.join(' + ') || 'Audience'
   return (excluded.length ? `${base} except ${excluded.join(', ')}` : base).slice(0, 60)
-}
-
-// Draft a selector-shaped rule from a natural-language description.
-export async function draftRule(description) {
-  const system = `Turn a marketer's audience description into a draft audience rule.
-- "name": a short human label.
-- "select.about": a few comma-separated topics for a semantic search (omit if purely structural).
-- "select.judge.criteria": one precise sentence the AI judges membership against (omit if purely structural).
-- "select.judge.confidence": 0..1 (default 0.7).
-Return only the fields you're confident about; structural fact/metric filters are added by hand after.`
-  return ai.object(system, description, DRAFT)
 }

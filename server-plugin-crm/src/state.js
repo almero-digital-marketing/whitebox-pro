@@ -18,10 +18,12 @@
 
 let facts
 let logger
+let notify
 
 export function init(deps) {
   facts = deps.facts
   logger = deps.logger
+  notify = deps.notify
 }
 
 const isScalar = v => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
@@ -45,6 +47,16 @@ export async function record({ source, kind, external_id, passport_id, status, s
     try { await facts.record({ ...common, ...w }); written++ }
     catch (err) { logger?.error?.({ err, source, kind, key: w.key }, 'CRM: facts.record failed') }
   }
+
+  // The primary signal (see header comment) — a distinctly-named event per
+  // record kind, so a Journey can trigger on e.g. `crm.subscription` and
+  // branch on data.status, rather than everything folding into one generic
+  // "a CRM record landed" event. Not fired for the bare-presence case (no
+  // status, no scalar data) — that's not really a transition.
+  if (status != null) {
+    notify?.(`crm.${kind}`, { type: `crm.${kind}`, data: { passport_id, status, source, external_id, ...data } })
+  }
+
   return { source, kind, external_id, passport_id, written }
 }
 

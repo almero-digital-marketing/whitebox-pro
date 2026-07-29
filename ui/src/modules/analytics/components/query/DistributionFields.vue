@@ -6,7 +6,7 @@ defineProps<{ model: any }>()
 </script>
 
 <template>
-  <label class="lab"><i class="pi pi-objects-column ic" />Distribution of</label>
+  <label class="lab">Distribution of</label>
   <Select v-model="model.distSource" :options="DIST_SOURCES" optionLabel="label" optionValue="value" class="w" @change="model.distKey = ''" />
   <label class="lab">{{ model.distSource === 'event' ? 'Event' : 'Numeric fact' }}</label>
   <Select v-model="model.distKey" :options="model.distKeyOpts" optionLabel="label" optionValue="value" filter class="w"

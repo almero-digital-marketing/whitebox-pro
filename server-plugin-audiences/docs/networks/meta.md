@@ -1,6 +1,6 @@
 # Meta (Facebook / Instagram)
 
-Adapter: [`src/adapters/meta.js`](../../../adnetworks/src/adapters/meta.js) — **Mode A** via the Conversions API.
+Adapter: `whitebox-pro-adnetworks-meta` — **Mode A** via the Conversions API.
 
 ## Flow
 
@@ -40,7 +40,7 @@ Eligible when `pixelId` + `accessToken` are set.
 
 ## Identity it needs
 
-- **Browser-collected** (manifest → [06](06-identity.md)): `_fbp` cookie, `_fbc` cookie (or built from
+- **Browser-collected** (manifest → [06](../06-identity.md)): `_fbp` cookie, `_fbc` cookie (or built from
   the `fbclid` URL param via the `build_fbc` transform).
 - **Server-resolved:** SHA-256 email/phone, client IP + user agent (best from the forwarded request).
 
@@ -49,8 +49,9 @@ Match rate rises with more keys — email + `fbp`/`fbc` together is much better 
 ## Create the audience (one-time)
 
 Ads Manager → Audiences → Create Custom Audience → **Website** → *Events* → choose your custom event
-(`wb_enterprise_ready`) → set retention (1–180 days; use ≥ your `keepWarmDays`). Server (CAPI) events
-populate Website Custom Audiences as long as they're matched to a user.
+(`wb_enterprise_ready`) → set retention (1–180 days; generous enough to cover your re-sync cadence — see
+[05 · Networks](../05-networks.md)). Server (CAPI) events populate Website Custom Audiences as long as
+they're matched to a user.
 
 ## Gotchas
 
@@ -58,4 +59,4 @@ populate Website Custom Audiences as long as they're matched to a user.
 - Use **Test Events** (`test_event_code`) while developing — confirm events arrive before creating the
   audience.
 - Custom **parameter** filtering on audiences is limited; rely on the **event name** per segment.
-- Honor consent — see [08](08-consent-privacy.md). Meta also has its own data-use / consent terms.
+- Honor consent — see [08](../08-consent-privacy.md). Meta also has its own data-use / consent terms.

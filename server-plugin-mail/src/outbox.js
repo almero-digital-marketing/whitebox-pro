@@ -308,7 +308,7 @@ async function preflightBlock(email) {
   return null
 }
 
-export async function create({ passportId, sessionId, from, to, subject, html, text, template, idempotencyKey, attachments, batchId, data, shorten }) {
+export async function create({ passportId, sessionId, from, to, subject, html, text, template, idempotencyKey, attachments, batchId, campaignId, journeyId, data, shorten }) {
   if (idempotencyKey) {
     const existing = await db(TABLE).where({ idempotency_key: idempotencyKey }).first()
     if (existing) return existing
@@ -327,6 +327,9 @@ export async function create({ passportId, sessionId, from, to, subject, html, t
       idempotency_key: idempotencyKey || null,
       attachments: attachments?.length ? attachments : null,
       batch_id: batchId || null,
+      // who asked for it — see migration 015. Set on every path, bulk or not.
+      campaign_id: campaignId || null,
+      journey_id: journeyId || null,
       data: data || null,
       shorten: shorten || null,
     }).returning('*')
@@ -353,6 +356,8 @@ export async function createMany(items) {
     template: item.template || null,
     attachments: item.attachments?.length ? item.attachments : null,
     batch_id: item.batchId || null,
+    campaign_id: item.campaignId || null,
+    journey_id: item.journeyId || null,
     data: item.data || null,
     shorten: item.shorten || null,
   }))).returning('*')
@@ -408,6 +413,41 @@ export async function batchStats(batchId) {
   const totals = {}
   for (const r of rows) totals[r.status] = parseInt(r.count, 10)
   return { batch_id: batchId, totals }
+}
+
+// The delivery FUNNEL for a scope — what a campaign's (and, next, a journey's)
+// results block reads. Deliberately not batchStats() above: that groups by
+// `status`, which holds only the row's LATEST state, so a message that was
+// delivered and then opened counts once, as 'opened', and "delivered"
+// undercounts every engaged recipient. Counting the nullable timestamps instead
+// makes each stage cumulative — count(col) counts non-nulls — which is what a
+// funnel means.
+//
+// Scoped by attribution only (migration 015), never by batch: batch_id says
+// which RUN a row belonged to, which is a queue concern (see cancelBatch and
+// the bulk progress endpoint), not an answer to "who asked for this message".
+// Anything that sends on a campaign's behalf — bulk or per-passport — stamps
+// campaign_id, so one column covers every route.
+export async function funnel({ campaignId, journeyId } = {}) {
+  if (!campaignId && !journeyId) {
+    return { total: 0, sent: 0, delivered: 0, opened: 0, clicked: 0, failed: 0, bounced: 0, complained: 0, cancelled: 0 }
+  }
+  const [row] = await db(TABLE).where(b => {
+    if (campaignId) b.orWhere({ campaign_id: campaignId })
+    if (journeyId) b.orWhere({ journey_id: journeyId })
+  }).select(
+    db.raw(`count(*)::int                                          AS total`),
+    db.raw(`count(sent_at)::int                                    AS sent`),
+    db.raw(`count(delivered_at)::int                               AS delivered`),
+    db.raw(`count(opened_at)::int                                  AS opened`),
+    db.raw(`count(engaged_at)::int                                 AS clicked`),
+    db.raw(`count(failed_at)::int                                  AS failed`),
+    db.raw(`count(cancelled_at)::int                               AS cancelled`),
+    // no timestamp of their own — a bounce/complaint is a terminal STATUS
+    db.raw(`count(*) FILTER (WHERE status = 'bounced')::int        AS bounced`),
+    db.raw(`count(*) FILTER (WHERE status = 'complained')::int     AS complained`),
+  )
+  return row
 }
 
 export async function sent(id, providerMessageId) {
@@ -565,4 +605,23 @@ export async function outboxMail(req, res) {
     logger.error({ err }, 'Failed to queue outbox email')
     res.status(500).json({ error: 'Failed to queue email' })
   }
+}
+
+// Programmatic, gated send — the same create()+enqueue()+notify() pipeline as
+// the HTTP /mail/outbox route above, for callers (e.g. journeys) that already
+// have a resolved recipient and no live HTTP request to parse multipart/UTM
+// data from. Distinct from mailer.send (exposed as service.send): that path
+// calls the provider directly with no suppression/invalid check or outbox
+// row — fine for transactional mail that bypasses consent gating on purpose
+// (oauth's invite emails), wrong for anything customer-facing.
+export async function queueSend({ passportId, sessionId, from, to, subject, html, text, template, data, attachments, shorten, idempotencyKey, campaignId, journeyId }) {
+  const row = await create({
+    passportId, sessionId, from, to, subject, html, text, template,
+    idempotencyKey, attachments, data, shorten, campaignId, journeyId,
+  })
+  if (row.status === 'queued' && !row.sent_at) {
+    await outboxQueue.add('send', { id: row.id }, { jobId: idempotencyKey || undefined })
+    await notify('mail.queued', { type: 'mail.queued', data: row })
+  }
+  return row
 }

@@ -14,16 +14,74 @@ export function init(deps) {
 // Discover the queryable vocabulary so the model only references real keys/tags.
 export async function discoverSchema({ refresh = false } = {}) {
   if (schemaCache && !refresh) return schemaCache
-  const keyRows = await db('whitebox_facts').select('key').count('* as n').groupBy('key').orderBy('n', 'desc')
-  const factKeys = []
-  for (const { key } of keyRows.slice(0, 20)) {
-    const vals = await db('whitebox_facts').where({ key }).distinct('value').limit(8)
-    const sample = vals.map(v => v.value).filter(v => v != null && typeof v !== 'object').slice(0, 8)
+  // One aggregate over whitebox_facts rather than a key list + a per-key value
+  // query (N+1). Same shape as the attrKeys aggregate below.
+  //
+  // Two DIFFERENT value fields, because two consumers want different things:
+  //   `sample`  — up to 8 examples, for the AI prompt. Illustrative; truncation
+  //               is fine and even wanted (it only needs to see the flavour).
+  //   `values`  — the COMPLETE distinct set, but only for a categorical key.
+  //               This is what a picker binds to, and a picker must never show
+  //               a silently-truncated list: either every choice is there or
+  //               none are, and `distinct` lets the caller tell which case it
+  //               is and fall back to free text. The cutoff doubles as a
+  //               privacy guard — a high-cardinality key (full_name,
+  //               lifetime_value) is exactly the personal kind, and it never
+  //               ships its value list at all.
+  //
+  // `type`/`min`/`max`/`people` are here so a caller can describe a key without
+  // a second round trip — a range operator needs the bounds, a presence
+  // operator needs the population.
+  //
+  // Bounds are computed TWICE and picked in JS, because one comparison can't
+  // serve both storage shapes. There is no min(jsonb) aggregate, so the value
+  // has to be extracted first, and extracted as text a number sorts wrong
+  // ("9" > "10", "955" > "1023"). So: numeric bounds over the rows jsonb
+  // itself calls numbers, text bounds over everything. Text is the right
+  // answer for the remaining types — dates are stored as ISO strings, which
+  // sort chronologically — and it's the fallback when a key has no numbers.
+  //
+  // jsonb_typeof rather than the `type` column or a regex: it's the storage
+  // truth (so the ::numeric cast can never fail on a row that lied), and it
+  // avoids putting a `?` quantifier in the SQL, which knex would parse as a
+  // bind placeholder.
+  const CATEGORICAL_MAX = 25
+  const factRes = await db.raw(`
+    select key,
+           count(*)::int as rows,
+           count(distinct passport_id)::int as people,
+           count(distinct value)::int as distinct_values,
+           mode() within group (order by type) as type,
+           min(case when jsonb_typeof(value) = 'number' then (value #>> '{}')::numeric end) as min_num,
+           max(case when jsonb_typeof(value) = 'number' then (value #>> '{}')::numeric end) as max_num,
+           min(value #>> '{}') as min_text,
+           max(value #>> '{}') as max_text,
+           (array_agg(distinct value))[1:8] as sample,
+           case when count(distinct value) <= ? then array_agg(distinct value) end as values
+    from whitebox_facts
+    group by key
+    order by count(*) desc
+  `, [CATEGORICAL_MAX])
+  // objects aren't renderable as a choice or a prompt example — a fact whose
+  // value is a JSON blob is filtered out of both lists, not stringified
+  const scalars = (arr) => (arr || []).filter(v => v != null && typeof v !== 'object')
+  const factKeys = (factRes.rows || []).map(r => ({
+    key: r.key,
     // The human label a plugin registered (or an operator set in whitebox.config.js's
     // facts.labels) — falls back to the raw key when nothing is registered, so an
     // unlabeled fact degrades to the prior (prompt-guessed) behavior, not a crash.
-    factKeys.push({ key, label: facts?.label ? facts.label(key) : key, sample })
-  }
+    label: facts?.label ? facts.label(r.key) : r.key,
+    rows: r.rows,
+    people: r.people,
+    distinct: r.distinct_values,
+    type: r.type || null,
+    // numeric bounds win when the key holds numbers at all; node-pg returns
+    // ::numeric as a string, so coerce back to a real number for the caller
+    min: r.min_num != null ? Number(r.min_num) : r.min_text,
+    max: r.max_num != null ? Number(r.max_num) : r.max_text,
+    sample: scalars(r.sample),
+    values: scalars(r.values),
+  }))
   // Event dimensions reach their typed homes (docs/event-attributes.md): the action
   // is meta.event; campaign/source are session UTM columns; channel is on the event.
   // content_id is untrusted/opaque and is never surfaced as a queryable vocabulary.
@@ -31,15 +89,45 @@ export async function discoverSchema({ refresh = false } = {}) {
   const campaigns = (await db('whitebox_sessions').distinct('utm_campaign').whereNotNull('utm_campaign').limit(40)).map(r => r.utm_campaign)
   const sources = (await db('whitebox_sessions').distinct('utm_source').whereNotNull('utm_source').limit(40)).map(r => r.utm_source)
   const channels = (await db('whitebox_awareness_exposures').distinct('channel').whereNotNull('channel')).map(r => r.channel)
-  // the meta.* keys (besides `event`) usable as filter/group dimensions — attr:<key>
-  const attrRes = await db.raw('select distinct jsonb_object_keys(meta) as k from whitebox_awareness_exposures where meta is not null')
-  const attrKeys = (attrRes.rows || []).map(r => r.k).filter(k => k && k !== 'event')
+  // The meta.* keys (besides `event`) usable as filter/group dimensions —
+  // attr:<key>. These aren't a designed vocabulary: they're whatever payload
+  // each plugin happened to attach to awareness.record(), so the same list
+  // holds genuinely useful dimensions (treatment, outcome) next to incidental
+  // ones (image width, a constant flag). Carry the provenance the exposure row
+  // already has — which source/channel wrote the key, how often, and how many
+  // distinct values it takes — so a caller can tell those apart instead of
+  // guessing from the name. Ordered most-written first.
+  const attrRes = await db.raw(`
+    select k as key,
+           count(*)::int as rows,
+           count(distinct meta->>k)::int as distinct_values,
+           array_agg(distinct plugin) as plugins,
+           array_agg(distinct source) as sources,
+           array_agg(distinct channel) as channels
+    from whitebox_awareness_exposures,
+         lateral jsonb_object_keys(meta) as k
+    where meta is not null and k <> 'event'
+    group by k
+    order by count(*) desc
+  `)
+  const attrKeys = (attrRes.rows || []).filter(r => r.key).map(r => ({
+    key: r.key,
+    rows: r.rows,
+    distinct: r.distinct_values,
+    plugins: (r.plugins || []).filter(Boolean),
+    sources: (r.sources || []).filter(Boolean),
+    channels: (r.channels || []).filter(Boolean),
+  }))
   schemaCache = { factKeys, events, attrKeys, campaigns, sources, channels }
   return schemaCache
 }
 
 function systemPrompt({ factKeys, events, attrKeys, campaigns, sources, channels }) {
-  const keyList = factKeys.map(k => {
+  // The 20-key cap lives here, not in discoverSchema() — it's a prompt-budget
+  // limit, and the schema's other consumers (the /schema endpoint's pickers)
+  // need the full vocabulary. Keys are ordered most-recorded first, so the
+  // slice keeps the ones the model is most likely to need.
+  const keyList = factKeys.slice(0, 20).map(k => {
     const sample = k.sample.length ? ` (e.g. ${k.sample.map(JSON.stringify).join(', ')})` : ''
     const named = k.label !== k.key ? ` — call it "${k.label}" in titles` : ''
     return `  - ${k.key}${named}${sample}`
@@ -110,7 +198,7 @@ FACT keys — a key marked "call it ... in titles" has a human label: use that l
 writing a widget's "title", but ALWAYS use the raw key (before the —) inside "query":
 ${keyList}
 Event actions (attr:event): ${events.join(', ')}
-Other event attributes (attr:<key>): ${attrKeys.join(', ')}
+Other event attributes (attr:<key>): ${attrKeys.map(a => a.key).join(', ')}
 Campaigns (session:utm_campaign): ${campaigns.join(', ')}
 Sources (session:utm_source): ${sources.join(', ')}
 Channels: ${channels.join(', ')}
@@ -228,7 +316,7 @@ function suggestPrompt(schema, { name, widgets }) {
   const vocab = [
     `Facts: ${factKeys.map((k) => k.label).join(', ')}`,
     `Events: ${events.join(', ')}`,
-    attrKeys.length ? `Event attributes: ${attrKeys.join(', ')}` : '',
+    attrKeys.length ? `Event attributes: ${attrKeys.map(a => a.key).join(', ')}` : '',
     campaigns.length ? `Campaigns: ${campaigns.join(', ')}` : '',
     sources.length ? `Sources: ${sources.join(', ')}` : '',
     channels.length ? `Channels: ${channels.join(', ')}` : '',

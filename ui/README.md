@@ -1,34 +1,89 @@
-# WhiteBox Analytics console
+# whitebox-pro-ui — the operator console
 
-The three-pane composition UI (docs/analytics-concept.md §12) over the analytics
-plugin: **left** reports · **center** compose box · **right** the board of charts /
-answers. v1 keeps the dependency surface tight — Vue 3 + Vite + vue-echarts +
-socket.io-client (PrimeVue / Pinia / vue-query are the documented target to layer in
-during polish).
+A VS Code-style activity bar over the **surface plugins**. Six modules, all
+sharing one three-pane grammar: **left** a searchable, paged rail · **centre**
+the thing you're looking at · **right** what you can do to it.
+
+| module | over | needs |
+|---|---|---|
+| **Analytics** | `analytics` | `analytics:read` / `analytics:write` |
+| **Audiences** | `audiences` | `audiences:read` / `audiences:write` |
+| **Campaigns** | `campaigns` | `campaigns:read` / `campaigns:write` |
+| **Journeys** | `journeys` | `journeys:read` / `journeys:write` |
+| **People** | `people` | `people:read` / `people:write` (+ `people:erase`) |
+| **Users** | `oauth` | `users:manage` |
+
+A module's icon only appears when the logged-in user holds one of its
+permissions — which also means it disappears when the plugin isn't registered at
+all, since the permission catalog is aggregated from *registered* plugins. One
+gate covers both cases.
 
 ## Run
 
-```bash
-# 1) Server running with the analytics plugin (from the repo's server/ dir)
-cd ../server && npm run seed:analytics      # populate demo data (once)
-npm start                                    # serve on :3000
+It is **not** an npm workspace (the root `workspaces` globs don't match `ui/`),
+so it installs on its own.
 
-# 2) This SPA
-cd ../analytics-ui
-cp .env.example .env.local                   # set VITE_ANALYTICS_TOKEN = server's WB_ANALYTICS_TOKEN
-npm install
-npm run dev                                   # http://localhost:5173
+```bash
+# 1) the API, from the repo root
+cd server && node --env-file-if-exists=.env scripts/serve-analytics.mjs   # :3000
 ```
 
-Vite proxies `/analytics` and `/socket.io` to `http://localhost:3000`, so the SPA
-talks same-origin and live updates (`analytics.report.changed`) flow through.
+```bash
+# 2) this SPA
+cd ui && cp .env.example .env.local && npm install && npm run dev         # :5173
+```
 
-## What it does
+Vite proxies `/api` → the server (stripping the prefix) and `/socket.io` with
+websockets, so the SPA is same-origin and live updates flow through.
 
-- **Ask** a plain-language question → `POST /analytics/compose` → the AI assembles
-  widgets (stat · timeseries · breakdown · table · answer) and they render on the board.
-- **Reports** persist (left rail); open one to re-resolve its widgets live.
-- Charts via ECharts; the board re-fetches the open report on the live socket event.
+### The one env var
 
-Deferred to polish: drag-grid arrange, draft/published badges, share links, the
-inline widget editor — see docs/analytics-concept.md.
+`VITE_OAUTH_CLIENT_ID` — the public OAuth client registered for this SPA. It's a
+**PKCE public client** with no secret, because a browser app can't hold one
+safely. Create it once against a running server:
+
+```bash
+cd server-plugin-oauth && node scripts/create-client.mjs --name="WhiteBox UI" --redirect-uri=http://localhost:5173/callback
+```
+
+There is no static API token. Every module calls its plugin with the **logged-in
+user's own session token**, and each plugin independently requires its own
+scopes — which the server computes from that user's real grants at login rather
+than trusting anything the client sends.
+
+## Conventions
+
+Three that are load-bearing, and worth reading before adding a module:
+
+- **Save/discard** — [ADR 0001](docs/adr/0001-editor-save-discard-pattern.md).
+  Every editor follows one fixed interaction: Discard + Save always rendered and
+  *disabled* rather than hidden when clean, a fading "Unsaved changes" note,
+  Discard reverting to the last-saved state. Don't invent a second one.
+- **The rail is a component** — [`components/RailPane.vue`](src/components/RailPane.vue).
+  Search at the top with the module's add button *inside* it, the list, then a
+  foot with the match count and pager. Two paging modes: pass `items` and it
+  pages them client-side, or pass `total` + `page` and handle `update:page` for a
+  real server query. [`useRailPage.ts`](src/components/useRailPage.ts) owns the
+  server-side half — debounce, reset-on-new-term, step-back-past-the-end.
+- **Success is shown, not toasted.** The app confirms an action by rendering its
+  result; only `notifyError` exists. A receipt line (what actually changed) beats
+  a toast that says "Saved".
+
+## Stack
+
+Vue 3 + Vite · PrimeVue (styled mode) + PrimeIcons · Pinia · Vue Router ·
+ECharts (`vue-echarts`) · Vue Flow (the journey canvas) · TinyMCE + CodeMirror
+(campaign content) · socket.io-client (live report updates).
+
+> **PrimeVue injects its theme CSS at runtime**, after the bundled stylesheets
+> and at equal specificity. App CSS that has to win therefore doubles its class
+> name — `.p-paginator.p-paginator { … }`. Applying that to only some of a
+> block's selectors is worse than not at all, because the ones you missed lose.
+
+## Demo data
+
+The server's seed populates enough to exercise every module:
+
+```bash
+cd server && npm run seed:analytics
+```

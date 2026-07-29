@@ -25,10 +25,10 @@ const populationSchema = z.object({
   offset:         z.number().int().nonnegative().optional(),
 })
 
-export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
+export function mountRoutes(app, { requireRead, requireWrite, awareness, context, logger }) {
   const router = express.Router()
 
-  router.post('/recall', requireAuth, async (req, res) => {
+  router.post('/recall', requireRead, async (req, res) => {
     const parsed = recallSchema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
     try {
@@ -45,7 +45,7 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     }
   })
 
-  router.post('/population', requireAuth, async (req, res) => {
+  router.post('/population', requireRead, async (req, res) => {
     const parsed = populationSchema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
     try {
@@ -61,7 +61,7 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     }
   })
 
-  router.get('/timeline/:passport_id', requireAuth, async (req, res) => {
+  router.get('/timeline/:passport_id', requireRead, async (req, res) => {
     try {
       const { limit, offset } = parsePage(req.query, { defaultLimit: 50, maxLimit: 200 })
       const rows = await awareness.timeline({
@@ -90,7 +90,7 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
   // NOTE: context is the one structural exception to the uniform { data } envelope
   // — it returns a MAP of providers (crm, billing, …), not a single list — so it
   // carries the same limit/offset params but keeps a per-provider `has_more`.
-  router.get('/context/:passport_id', requireAuth, async (req, res) => {
+  router.get('/context/:passport_id', requireRead, async (req, res) => {
     try {
       const allProviders = context?.names?.() ?? []
       const requested = req.query.provider
@@ -132,7 +132,8 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
     }
   })
 
-  router.delete('/passport/:passport_id', requireAuth, async (req, res) => {
+  // destructive — forgets a passport's awareness data
+  router.delete('/passport/:passport_id', requireWrite, async (req, res) => {
     try {
       const deleted = await awareness.forget({ passport_id: req.params.passport_id })
       res.json({ deleted })
@@ -145,8 +146,8 @@ export function mountRoutes(app, { requireAuth, awareness, context, logger }) {
   // /ask lives in ask.js because the system prompt + formatting helpers are
   // a substantial concern on their own. /ask-population is its cohort sibling —
   // a grounded answer about the whole customer base (no passport_id).
-  router.post('/ask', requireAuth, createAskHandler({ awareness, logger }))
-  router.post('/ask-population', requireAuth, createAskPopulationHandler({ awareness, logger }))
+  router.post('/ask', requireRead, createAskHandler({ awareness, logger }))
+  router.post('/ask-population', requireRead, createAskPopulationHandler({ awareness, logger }))
 
   app.use('/analytics', router)
 }

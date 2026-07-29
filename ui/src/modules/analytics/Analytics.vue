@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
@@ -20,7 +20,7 @@ const paramStr = (p: any): string => (Array.isArray(p) ? p[0] : p) || ''
 // Data lives in the store; selection lives in the URL; view/layout stays local here.
 // storeToRefs keeps the template's `reports`/`current`/… names unchanged.
 const store = useAnalyticsStore()
-const { reports, current, widgetData, schema, composing, error } = storeToRefs(store)
+const { reports, current, widgetData, schema, composing } = storeToRefs(store)
 // client-side rail search
 const q = ref('')
 const filteredReports = computed(() => {
@@ -30,18 +30,6 @@ const filteredReports = computed(() => {
 
 const selectedWidget = ref<any>(null)             // the widget the Query editor is editing (derived from the route)
 const mode = ref<'agent' | 'query'>('agent')      // Agent | Query (v-model into ComposePane)
-// collapse the center (compose) pane → the board goes two-column. Persisted.
-const centerCollapsed = ref(localStorage.getItem('wb-center-collapsed') === '1')
-// the seam handle is centered ON the border between panes — its left is the board's
-// measured left edge minus half the handle width (24/2). Measured, not hardcoded.
-const rightEl = ref<HTMLElement | null>(null)
-const HANDLE_W = 24
-const handleLeft = ref(788)
-function updateHandle() { if (rightEl.value) handleLeft.value = Math.round(rightEl.value.getBoundingClientRect().left) - HANDLE_W / 2 }
-watch(centerCollapsed, async (v) => {
-  localStorage.setItem('wb-center-collapsed', v ? '1' : '0')
-  await nextTick(); updateHandle()
-})
 
 // ── routing: the open report (reportId) and the edited widget (widgetId) live in the
 // URL. Clicks push routes; the watchers below turn the route back into store calls +
@@ -63,7 +51,7 @@ function applyWidgetMode() {
   // /<rid>/new whose report 404'd must NOT force the editor open (Save would then
   // create a detached "Untitled report").
   const reportLoaded = current.value?.id === paramStr(route.params.reportId)
-  if (reportLoaded && (wid === 'new' || (wid && selectedWidget.value))) { mode.value = 'query'; centerCollapsed.value = false }
+  if (reportLoaded && (wid === 'new' || (wid && selectedWidget.value))) { mode.value = 'query' }
   else if (!wid && mode.value === 'query') mode.value = 'agent'
 }
 // reportId → which report is open. Guarded to this module's route so navigating to
@@ -84,12 +72,6 @@ watch(() => route.params.widgetId, () => {
 // navigation — clicks/handlers push the route; the watchers above apply it
 function goReport(id: string) { router.push({ name: 'analytics', params: { reportId: id } }) }
 function goWidget(id: string) { router.push({ name: 'analytics', params: { reportId: current.value?.id, widgetId: id } }) }
-// board "+ Add widget" → blank builder. With no report yet, there's no reportId to route
-// under, so fall back to local builder state (saving creates the report, then routes).
-function addWidget() {
-  if (!current.value) { selectedWidget.value = null; mode.value = 'query'; centerCollapsed.value = false; return }
-  goWidget('new')
-}
 // click on empty board space / Query "Cancel" → drop the widget selection, keep the report.
 function deselectWidget() {
   if (!paramStr(route.params.widgetId)) return
@@ -122,7 +104,6 @@ async function saveWidget(patch: any) {
   }
 }
 
-function renameReport(name: string) { store.renameReport(name) }
 function reorderWidgets(order: string[]) { store.reorderWidgets(order) }
 
 // Explicit report creation — the "+" button. Store creates + opens; we route to it.
@@ -188,49 +169,33 @@ function onAnalyticsEvent({ report_id, action, widget_id }: { report_id: string;
     touchedCurrent = false; currentDeleted = false; staleWidgets.clear()
   }, 300)
 }
-let ro: ResizeObserver | undefined
 onMounted(async () => {
   await store.loadReports()
   store.loadSchema()
   off = onAnalyticsChanged(onAnalyticsEvent)
-  updateHandle()
-  // the board's width/position changes on collapse — re-measure the handle whenever it does
-  ro = new ResizeObserver(() => updateHandle())
-  if (rightEl.value) ro.observe(rightEl.value)
-  window.addEventListener('resize', updateHandle)
 })
-onUnmounted(() => { off?.(); clearTimeout(refreshTimer); ro?.disconnect(); window.removeEventListener('resize', updateHandle) })
-// kept-alive across module switches: onMounted doesn't re-run on return, so re-measure the
-// seam handle (a window resize while away leaves it at a stale offset) and refresh the reports
-// rail — a missed first load (or a report created elsewhere) shouldn't need a full refresh.
-onActivated(() => { store.loadReports(); nextTick(updateHandle) })
+onUnmounted(() => { off?.(); clearTimeout(refreshTimer) })
+// kept-alive across module switches: onMounted doesn't re-run on return, so refresh the
+// reports rail — a missed first load (or a report created elsewhere) shouldn't need a
+// full refresh.
+onActivated(() => { store.loadReports() })
 </script>
 
 <template>
-  <div class="console" :class="{ 'center-collapsed': centerCollapsed }">
+  <div class="console">
     <aside class="left">
       <ReportsList :reports="filteredReports" :current-id="current?.id"
         @open="goReport" @new="createReport" @remove="removeReport" />
       <RailSearch v-model="q" placeholder="Search reports" />
     </aside>
     <main class="center">
-      <!-- v-show lives on a wrapper element, not on ComposePane directly: ComposePane has
-           a multi-root (fragment) template, and v-show can't toggle display on a fragment. -->
-      <div v-show="!centerCollapsed" class="compose-host">
-        <ComposePane v-model:mode="mode" :composing="composing" :report="current" :selected-widget="selectedWidget" :schema="schema"
-          @compose="compose" @rename="renameReport" @save="saveWidget" @cancel="cancelEdit" />
-      </div>
-      <p v-if="error && !centerCollapsed" class="err">{{ error }}</p>
+      <Board :report="current" :data="widgetData" :selected-id="selectedWidget?.id"
+        @remove="removeWidget" @select="goWidget" @reorder="reorderWidgets" @deselect="deselectWidget" />
     </main>
-    <section class="right" ref="rightEl">
-      <Board :report="current" :data="widgetData" :selected-id="selectedWidget?.id" :columns="centerCollapsed ? 2 : 1"
-        @remove="removeWidget" @select="goWidget" @add="addWidget" @reorder="reorderWidgets" @deselect="deselectWidget" />
+    <section class="right">
+      <ComposePane v-model:mode="mode" :composing="composing" :report="current" :selected-widget="selectedWidget" :schema="schema"
+        @compose="compose" @save="saveWidget" @cancel="cancelEdit" />
     </section>
-    <!-- seam handle: collapse the compose pane → board goes two-column. Sits just inside
-         the board's measured left edge so it never overlaps an adjacent scrollbar. -->
-    <button class="seam-toggle" :style="{ left: handleLeft + 'px' }" :title="centerCollapsed ? 'Show compose pane' : 'Hide compose pane'" @click="centerCollapsed = !centerCollapsed">
-      <i :class="centerCollapsed ? 'pi pi-angle-right' : 'pi pi-angle-left'" />
-    </button>
   </div>
   <ConfirmDialog />
 </template>

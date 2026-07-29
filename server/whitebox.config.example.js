@@ -20,13 +20,21 @@ import { voip } from 'whitebox-pro-server-plugin-voip'
 import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
 import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
-// Built-in OAuth 2.1 authorization server — a self-hosted alternative to Auth0,
-// optional like the other auth choices (see the mcp.auth and analytics({ auth })
-// comments below for how it's used).
-// import { oauth } from 'whitebox-pro-server-plugin-oauth'
-// import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
-// const OAUTH_ISSUER = 'https://wb.example.com/oauth'   // this server's own URL + oauth path
-// const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
+// The surface plugins — what the operator console is built on. Registered last,
+// in dependency order; see the block at the bottom of `plugins`.
+import { audiences } from 'whitebox-pro-server-plugin-audiences'
+import { campaigns } from 'whitebox-pro-server-plugin-campaigns'
+import { journeys } from 'whitebox-pro-server-plugin-journeys'
+import { people } from 'whitebox-pro-server-plugin-people'
+// Built-in OAuth 2.1 authorization server — the default auth for the WhiteBox
+// UI (login, invite-only registration, admin user management). Auth0 is still
+// a drop-in alternative (see the mcp.auth comment below); to use it instead,
+// just delete this block and swap analytics({ auth }) for auth0({ … }).
+import { oauth } from 'whitebox-pro-server-plugin-oauth'
+import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
+const OAUTH_ISSUER = process.env.WB_OAUTH_ISSUER || 'http://localhost:3000/oauth'
+const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
+const OAUTH_APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'   // where the UI lives — invite links point here
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos
@@ -101,30 +109,16 @@ export default async (runtime) => ({
     },
   },
 
-  // MCP endpoint + auth. `auth` is a pluggable verifier: a static Bearer secret
-  // by default (string or { secret }), or a composed one from an external
-  // package. Two OAuth options — pick ONE:
-  //
-  //   1. Auth0 (external IdP) — add at the top:
-  //        import { auth0 } from 'whitebox-pro-auth-auth0'
-  //      and set: auth: auth0({ domain: process.env.AUTH0_DOMAIN,
-  //                             audience: 'https://whitebox/mcp', scope: 'mcp:use' })
-  //
-  //   2. Built-in (self-hosted, no external account) — add at the top:
-  //        import { oauth } from 'whitebox-pro-server-plugin-oauth'
-  //        import { jwt } from 'whitebox-pro-auth-auth0'   // generic verifier, reused
-  //      register the plugin (below, in `plugins`):
-  //        oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
-  //      and set: auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' })
-  //      Bootstrap the first user/client with the package's CLI scripts
-  //      (create-admin.mjs / create-client.mjs) — see its README.
-  //
-  // Both also serve their own discovery metadata so an MCP client can find the
-  // authorization server and run the OAuth flow with no pre-shared secrets.
-  // Omit `auth` entirely for no auth (dev only).
+  // MCP endpoint + auth. `auth` is a pluggable verifier — here the same
+  // built-in OAuth server the UI logs into (see the oauth() plugin entry
+  // below and its README). Swap for auth0({ domain, audience, scope }) to
+  // use Auth0 instead, or a bare string/{ secret } for a static Bearer token.
+  // Both OAuth options also serve their own discovery metadata so a client
+  // can find the authorization server with no pre-shared secrets. Omit
+  // `auth` entirely for no auth (dev only).
   mcp: {
     path: '/mcp',
-    auth: process.env.WB_MCP_TOKEN,   // string → Bearer; swap for auth0({…}) or jwt({…})
+    auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'mcp:use' }),
   },
 
   // Each entry is a built plugin object. Options passed to the factory are the
@@ -140,16 +134,21 @@ export default async (runtime) => ({
     }),
 
     analytics({
-      auth: { secret: process.env.WB_ANALYTICS_TOKEN },
-      // `auth` accepts anything MCP's auth does — swap the line above for a
-      // composed verifier to gate analytics with the same OAuth/OIDC provider:
-      //   auth: auth0({ domain: process.env.AUTH0_DOMAIN,
-      //                 audience: 'https://whitebox/analytics', scope: 'analytics:read' })
-      // (import { auth0 } from 'whitebox-pro-auth-auth0' at the top) — or, with
-      // the built-in authorization server instead of Auth0 (see the oauth()
-      // plugin entry below):
-      //   auth: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' })
-      // Every plugin's `auth` option works the same way — see docs/04-configuration.md.
+      // The UI logs in through the built-in OAuth server (below) and calls every
+      // module with that same session token, but each module requires its OWN
+      // scope(s) — the user's actual granted permissions, computed server-side
+      // at login (see server-plugin-oauth's README on why the token's scope is
+      // never trusted from the client). `analytics:read`/`analytics:write` are
+      // this plugin's own catalog entries (both granted to every new user by
+      // default — see its index.js). `auth` splits independently-resolved
+      // verifiers per catalog key: `{ read, write }`, each accepting a static
+      // Bearer secret ({ secret: ... }), auth0({ domain, audience, scope }), or
+      // a bare jwt() like below — every plugin's `auth` option works the same
+      // way, see docs/04-configuration.md.
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'analytics:write' }),
+      },
     }),
 
     // Receives /conversions/events from the browser, records them, and (when a
@@ -260,11 +259,75 @@ export default async (runtime) => ({
       // geo_lon become core facts, queryable via the selector for segmentation.
     }),
 
-    // Built-in OAuth 2.1 authorization server — mounts /authorize, /token,
-    // /.well-known/jwks.json and /.well-known/oauth-authorization-server at
-    // OAUTH_ISSUER's own path. Only needed if you use jwt({…}) above instead of
-    // a static token or Auth0. Bootstrap with the package's create-admin.mjs /
-    // create-client.mjs CLI scripts — see whitebox-pro-server-plugin-oauth's README.
-    // oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE }),
+    // Built-in OAuth 2.1 authorization server — the UI's login, invite-only
+    // registration, and per-module permission management. Mounts /authorize,
+    // /token, /.well-known/jwks.json and /.well-known/oauth-authorization-server
+    // at OAUTH_ISSUER's own path. Declares its own `users:manage` permission
+    // (gating the Users module's invite/list/remove/permissions routes) into
+    // the same catalog every other plugin contributes to — see the package's
+    // README. `appUrl` is where invite emails link to. Bootstrap the first
+    // user (granted every permission via the '*' sentinel) + the UI's OAuth
+    // client with the package's create-admin.mjs / create-client.mjs CLI
+    // scripts (see its README); remove this block entirely to fall back to
+    // Auth0 or a static token.
+    oauth({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, appUrl: OAUTH_APP_URL }),
+
+    // ── The surface plugins the console is built on ───────────────────────
+    //
+    // ORDER MATTERS for these four, and only these four. The plugin loader
+    // registers in array order and each of them reads a SERVICE off an
+    // earlier one via ctx.plugins.<name>.service:
+    //
+    //   audiences  →  (none)
+    //   campaigns  →  audiences        (resolution + consent/suppression)
+    //   journeys   →  campaigns, mail, sms
+    //   people     →  journeys, audiences   — both OPTIONAL
+    //
+    // Get it wrong and the dependent plugin either throws at register (the
+    // required ones) or silently omits a section (people's two). See
+    // scripts/serve-analytics.mjs for the same sequence written out by hand.
+
+    audiences({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'audiences:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'audiences:write' }),
+      },
+      // The ad networks a live audience is pushed to. Empty ⇒ segments and
+      // static lists still work; there is just nowhere to fan out to.
+      networks: [],
+    }),
+
+    campaigns({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'campaigns:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'campaigns:write' }),
+      },
+      // The safety switch, and it defaults ON. With dryRun a send resolves the
+      // audience and writes the outbox rows but never hands anything to the
+      // provider — so you can rehearse the whole path before real mail leaves.
+      dryRun: process.env.WB_CAMPAIGNS_DRYRUN !== 'false',
+    }),
+
+    journeys({
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'journeys:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'journeys:write' }),
+      },
+      // HMAC secret for the `notify` step's outbound webhooks, so a receiver
+      // can verify a call really came from here.
+      webhookSecret: process.env.WB_JOURNEYS_WEBHOOK_SECRET,
+    }),
+
+    people({
+      // Three verifiers, not two. Erasure is deliberately its own authority: a
+      // support role that fixes a wrong email is not automatically a role that
+      // may delete someone forever. Omit `erase` and it falls back to `write`
+      // — the stricter of the pair, never to `read`.
+      auth: {
+        read: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:read' }),
+        write: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:write' }),
+        erase: jwt({ issuer: OAUTH_ISSUER, audience: OAUTH_AUDIENCE, scope: 'people:erase' }),
+      },
+    }),
   ].filter(Boolean),
 })

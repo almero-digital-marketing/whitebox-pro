@@ -282,6 +282,30 @@ and binds the visitor to the passport. MCP: `shortener.create_link`, `list_links
 
 ---
 
+## Geolocation
+
+Not a touch channel either, and not a tracker — a **passive enrichment** that
+piggybacks on the `POST /sessions/resolve` call every client SDK already makes,
+via core's `sessions.onResolve` hook. No permission prompt, no extra request, and
+the visitor's coarse location is known from the first page view.
+
+```js
+geolocation({ provider: maxmind({ /* … */ }) })
+```
+
+It adds **no endpoints of its own**. What it produces is core **facts** —
+`geo_country`, `geo_region`, `geo_city`, `geo_lat`, `geo_lon` — which means the
+location is queryable through the ordinary selector and gets `asOf` /
+history for free:
+
+```jsonc
+{ "filter": { "fact": { "geo_city": { "eq": "Sofia" } } } }
+```
+
+→ [`whitebox-pro-server-plugin-geolocation`](../server-plugin-geolocation).
+
+---
+
 ## Analytics
 
 Not a touch channel — the **read** surface over everything above (`ask`, `recall`,
@@ -291,5 +315,22 @@ Not a touch channel — the **read** surface over everything above (`ask`, `reca
 ```js
 analytics({ auth: { secret: process.env.WB_ANALYTICS_TOKEN } })
 ```
+
+---
+
+## The rest: acting on the memory
+
+Four more plugins read the memory and *act*, rather than feeding it. They aren't
+channels, so they're documented in their own packages rather than here:
+
+| plugin | what it adds |
+|---|---|
+| [**campaigns**](../server-plugin-campaigns/README.md) | One email/SMS send to one or more audiences, with delivery results attributed back per campaign |
+| [**journeys**](../server-plugin-journeys/README.md) | Multi-step, trigger-driven automation — wait, branch, add to a list, trigger a campaign |
+| [**people**](../server-plugin-people/README.md) | Look one customer up: every identity and fact, merge duplicates, GDPR erase |
+| [**oauth**](../server-plugin-oauth/README.md) | The built-in authorization server the console and MCP log in against |
+
+Together with `analytics` and `audiences`, these are what the
+[operator console](../ui/README.md) is built on.
 
 Next: **[08 · Integrations](08-integrations.md)**.

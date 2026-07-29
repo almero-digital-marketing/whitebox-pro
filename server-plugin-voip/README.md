@@ -122,10 +122,19 @@ Recordings stream from `${config.voip.url}/voip/records/<uuid>.mp3` (UUID-named,
 
 ## Role
 
-The PBX is the source of truth for telephony. Whitebox is a **passive observer + recorder**:
+The PBX (or an external dialer) is the source of truth for telephony — it decides who to call and when. Whitebox is a **passive observer + recorder**, for both directions of a call:
 - We log every ring, pickup, and hangup
 - We download the call recording, transcode to MP3, transcribe via Whisper
 - We assign trackable phone numbers to web visitors so a website session can be correlated with the inbound call
+
+### `POST /voip/calls` — ingestion without a live PBX/ARI connection
+
+A telephony provider webhook (or the demo's "simulate call") POSTs a completed call here; with a live PBX, ARI does the equivalent automatically. Body: `{ number, caller?, transcription?, duration?, ts?, direction? }`. `direction` (default `'inbound'`) picks how the passport is resolved — Whitebox never originates either leg itself, it just records what already happened:
+
+- **`inbound`** — the customer called *us*. `number` is one of our own tracked lines, looked up in the DNI pool (`pool.findByNumber`) to find which web visitor was holding it.
+- **`outbound`** — *we* called the customer (an operator, or an external dialer/campaign — whatever placed the call is outside this plugin's concern). `number` is the customer's own phone, so the pool lookup doesn't apply; their passport is resolved/created by phone identity instead (`passports.identify` + `passports.link`), the same strong-identity match `ari.js`'s live inbound path already falls back to for an anonymous caller with no live web session. An existing passport with that phone (from a prior call, SMS, or CRM import) is reused, never duplicated.
+
+Either way the call lands in the same per-passport memory (channel `voip`, direction `conversation`), tagged with `meta.call_direction` so a customer's timeline shows which way each call went.
 
 ## File layout
 

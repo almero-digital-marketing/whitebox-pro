@@ -341,6 +341,25 @@ templates.renderText({ layout: row.template, ...row, ...(row.data || {}) })
 - `requireAuth` — generic bearer token middleware from `core/auth.js`. Required on `/outbox`, `/bulk*`, `/suppressions*`, `/invalid*`.
 - `/inbox` (form) is **public** — anyone can submit a contact form. Webhooks are public but provider-verified.
 
+## MCP tools
+
+Mounted on the shared `/mcp` endpoint (`server/src/mcp.js`) only if the host wires one — `registerMcp(ctx, { db })` in `index.js` checks `ctx.mcp` and returns immediately, registering nothing, when the host hasn't set one up. Auth is the host's single bearer token gating `/mcp` as a whole, **not** this plugin's own `mail({ auth: { secret } })` — a caller can hold an MCP token without holding a mail bearer token, or vice versa.
+
+Tool names are dot-prefixed (`mail.*`), matching the plugin's notify topics (`mail.queued`, `mail.sent`, …).
+
+| tool | purpose |
+|---|---|
+| `mail.send` | Send a transactional email — `template` or `html`/`text` required; returns the outbox row id and initial status |
+| `mail.outbox_get` | Fetch a single outbox row by id: status, recipient, subject, timestamps, provider message id |
+| `mail.inbox_list` | List inbound messages (contact-form submissions + email replies), most-recent-first; filter by `passport_id`, `source`, or `since` |
+| `mail.inbox_get` | Fetch a single inbound message by id, including body and attachment URLs |
+| `mail.suppress` | Add an address to the suppression list (user opt-out) |
+| `mail.unsuppress` | Remove an address from the suppression list |
+
+Plus one resource: **`mail-inbox`** (`whitebox://mail/inbox`) — the most recent 100 inbound messages as JSON, meant to be paired with `mail.inbox_get` for the full record.
+
+**Bulk sends and delivery/tracking webhooks are deliberately not exposed via MCP.** Per `src/mcp.js`'s header comment, the tool set covers the three things an LLM operator most often wants from a mail channel — send a message, look up a previously-sent or received message, and manage the suppression list — while bulk is admin-only by design and tracking status only ever changes in response to a provider webhook, not something an agent should poll or trigger directly.
+
 ## Notify topics
 
 `mail.queued`, `mail.sent`, `mail.delivered`, `mail.opened`, `mail.engaged`, `mail.bounced`, `mail.complained`, `mail.failed`, `mail.received`, `mail.bulk.queued`, `mail.bulk.cancelled` — wired through `core/notify.js` which fans out to events bus + configured webhooks.

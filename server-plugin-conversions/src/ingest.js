@@ -11,7 +11,7 @@ import { validateEvent, validateCustom } from 'whitebox-pro-adnetworks/schemas'
 
 import * as store from './store.js'
 
-let awareness, reporter, consentOk, logger, resolvePassport
+let awareness, reporter, consentOk, logger, resolvePassport, notify
 
 export function init(deps) {
   awareness = deps.awareness
@@ -19,6 +19,7 @@ export function init(deps) {
   consentOk = deps.consentOk            // async (passportId) => boolean
   logger    = deps.logger
   resolvePassport = deps.resolvePassport // async (id) => survivor id (merge chain)
+  notify = deps.notify
 }
 
 // A readable, embeddable one-liner so the conversion is queryable via recall
@@ -107,6 +108,13 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
     networks,
     payload:  clean,
   }).catch(err => logger?.warn?.({ err }, 'conversions: audit insert failed'))
+
+  // Distinctly-named event — otherwise a conversion is only ever visible as
+  // the generic awareness.recorded (no name/value in that payload).
+  notify?.(`conversion.${name}`, {
+    type: `conversion.${name}`,
+    data: { event_id: eventId, passport_id: passportId, kind, value: clean.value ?? null, currency: clean.currency ?? null, url: url || null, networks },
+  })
 
   logger?.info?.(
     { eventId, name, kind, passportId, value: clean.value ?? null, currency: clean.currency ?? null, networks },

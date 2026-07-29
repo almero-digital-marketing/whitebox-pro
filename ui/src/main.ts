@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import ConfirmationService from 'primevue/confirmationservice'
+import ToastService from 'primevue/toastservice'
 import Tooltip from 'primevue/tooltip'
 import { definePreset } from '@primevue/themes'
 import Aura from '@primevue/themes/aura'
@@ -38,5 +39,6 @@ createApp(App)
   .use(router)
   .use(PrimeVue, { theme: { preset: Noir, options: { darkModeSelector: '.app-dark' } } })
   .use(ConfirmationService)
+  .use(ToastService)
   .directive('tooltip', Tooltip)
   .mount('#app')

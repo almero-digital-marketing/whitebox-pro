@@ -6,6 +6,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { audiences as client } from '../audiences'
+import { useRailPage } from '../../../components/useRailPage'
+import { notifyError } from '../../../shell/toast'
 
 export const useAudiencesStore = defineStore('audiences', () => {
   const segments = ref<any[]>([])    // saved segments, shared across modules
@@ -18,7 +20,7 @@ export const useAudiencesStore = defineStore('audiences', () => {
   async function loadSegments() {
     loading.value = true; error.value = ''
     try { segments.value = await client.listSegments() }
-    catch (e: any) { error.value = e.message }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load segments: ${e.message}`) }
     finally { loading.value = false }
   }
 
@@ -43,18 +45,24 @@ export const useAudiencesStore = defineStore('audiences', () => {
   }
 
   // ── audiences — boolean compositions of segments (AND/OR/NOT) ──
+  // The CATALOGUE — every audience, because Campaigns and Journeys both render
+  // pickers from this ref and a page would silently truncate their options.
+  // Capped; a picker over thousands wants a typeahead, not a bigger number.
+  const CATALOGUE_MAX = 500
   const audiences = ref<any[]>([])    // saved audiences
+  // …and the Audiences rail, which is a real server query with its own page.
+  const rail = useRailPage<any>(o => client.listAudiences(o), { subject: 'audiences' })
   const networks = ref<any[]>([])     // CAPI adapters the server has configured (name + eligible)
 
   async function loadAudiences() {
-    try { audiences.value = await client.listAudiences() }
-    catch (e: any) { error.value = e.message }
+    try { audiences.value = (await client.listAudiences({ limit: CATALOGUE_MAX })).rows }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load audiences: ${e.message}`) }
   }
 
   // which ad networks the server can actually deliver to (drives Connect vs live toggle)
   async function loadNetworks() {
     try { networks.value = await client.listNetworks() }
-    catch (e: any) { error.value = e.message }
+    catch (e: any) { error.value = e.message; notifyError(`Couldn't load ad networks: ${e.message}`) }
   }
 
   // size of an UNSAVED rule (the builder's live "~N people") — pure passthrough.
@@ -100,6 +108,8 @@ export const useAudiencesStore = defineStore('audiences', () => {
   }
 
   return {
+    rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
+    pageSize: rail.pageSize, searchAudiences: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
     segments, audiences, networks, loading, error,
     previewSegment, loadSegments, saveSegment, removeSegment, renameSegment,
     loadAudiences, loadNetworks, previewAudience, nameAudience, saveAudience, removeAudience,

@@ -14,18 +14,21 @@ export function init(deps) { passports = deps.passports }
 export const manifest = adapters => composeManifest(adapters)
 
 // Save browser-collected signals for a passport (posted by the client shim).
-export const saveSignals = (passportId, signals) => store.saveIdentities(passportId, signals)
+export const saveSignals = (passportId, signals) => store.saveSignals(passportId, signals)
 
 // Resolve everything an adapter might need to match a passport. Hashed PII comes
 // from passport identities (NOT from awareness text, which is redacted).
 export async function resolve(passportId) {
   const ids = await passports.identities(passportId).catch(() => [])
-  const row = await store.getIdentities(passportId)
+  // getSignals() returns a flat { name: value } object — the same shape the
+  // old jsonb `signals` column held, so adapters see no difference across the
+  // rows migration.
+  const signals = await store.getSignals(passportId)
   return {
     email_sha256: hashEmail(pickIdentity(ids, 'email')),
     phone_sha256: hashPhone(pickIdentity(ids, 'phone')),
     external_id: pickIdentity(ids, 'external_id') || passportId,
-    signals: row?.signals || {},
+    signals,
     // ip / user_agent are request-scoped; attach at the client-capture step if needed.
   }
 }

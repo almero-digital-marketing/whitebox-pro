@@ -7,15 +7,25 @@ import { z } from 'zod'
 import crypto from 'node:crypto'
 import { Selector, Funnel, SLOT_RE } from './rules.js'
 
-// A segment's source is EITHER a `select` selector OR a `funnel` + `slot` cohort —
-// exactly one, mirroring a rule's source (rules.js) but without delivery/lifecycle.
+// A segment's source is EXACTLY ONE of: a `select` selector, a `funnel` + `slot`
+// cohort, or a `list`. The first two are predicates — membership is recomputed
+// on every resolve. A `list` is the opposite: it holds the segment's own id, and
+// its membership is the rows in whitebox_audience_segment_members.
+//
+// The id-as-source looks redundant but earns its place: `predicate_key` is a
+// hash of the source and is UNIQUE, the mechanism that dedups "the same slice
+// saved twice" into one segment. Two lists are never the same thing even when
+// both are empty, so the source has to carry something distinct — its own id is
+// the one value guaranteed to be exactly that.
 export const SegmentSource = z.object({
   select: Selector.optional(),
   funnel: Funnel.optional(),
   slot:   z.string().regex(SLOT_RE, 'slot must be "step:N" or "gap:N→M"').optional(),
   status: z.enum(['pending', 'dropped']).optional(),
+  list:   z.string().uuid().optional(),
 }).strict()
-  .refine(s => (s.select != null) !== (s.funnel != null), 'a segment needs exactly one source: `select` or `funnel`')
+  .refine(s => [s.select, s.funnel, s.list].filter(v => v != null).length === 1,
+    'a segment needs exactly one source: `select`, `funnel` or `list`')
   .refine(s => s.funnel == null || s.slot != null, 'a `funnel` source needs a `slot` (e.g. "step:2" or "gap:2→3")')
   .refine(s => s.status == null || (s.slot != null && s.slot.startsWith('gap:')), '`status` only applies to a gap slot')
 
@@ -35,6 +45,10 @@ export function validateSource(input) {
 const stable = o => o === null || typeof o !== 'object' ? JSON.stringify(o)
   : Array.isArray(o) ? '[' + o.map(stable).join(',') + ']'
     : '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + stable(o[k])).join(',') + '}'
+// A list segment is the only kind whose membership is stored rather than
+// computed — every other code path branches on this rather than on origin.
+export const isList = source => source?.list != null
+
 export const predicateKey = source => crypto.createHash('sha256').update(stable(source)).digest('hex')
 
 const p = v => (typeof v === 'string' ? JSON.parse(v) : v) ?? undefined

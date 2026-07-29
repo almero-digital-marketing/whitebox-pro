@@ -94,12 +94,9 @@ GET /audiences/facts
   current value is the latest write; use `asOf` to read a past state, and `last` / `before` windows
   to gate on recency. Stale state is a real risk for ad targeting — prefer recent facts.
 
-## The one gap to wire
+## Freshness — nothing to wire
 
-`awareness.recorded` fires on content exposures (web / mail / voip) but **not** on a CRM-state-only
-update. So a passport whose only new signal is a fresh CRM fact won't be re-evaluated by the dirty
-trigger. Options:
-
-- have the CRM ingestion **also** publish a dirty signal the audiences plugin subscribes to, or
-- rely on the **keep-warm / scheduled sweep** to re-evaluate periodically (good enough for
-  slow-moving CRM state like plan tier).
+Segments and audiences resolve **live** on every call (see [02 · Concepts](02-concepts.md)) — there's no
+cache or dirty-tracking step sitting between a CRM write and a `filter.fact` read. A `POST /crm/records`
+that changes `plan_tier` is visible to the very next `resolveSegment` / `resolveAudience` / delivery
+sync that touches it. There's nothing to re-evaluate ahead of time and nothing that goes stale.

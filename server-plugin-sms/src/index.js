@@ -32,14 +32,14 @@ export function sms(options = {}) {
     },
 
     async register(app, ctx) {
-      const { db, queue: q, events, webhooks, passports, sessions, templates, awareness, logger: rootLogger } = ctx
+      const { db, queue: q, events, webhooks, passports, sessions, templates, awareness, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'sms' })
       const smsConfig = options
 
       const router = createRouter({ provider: smsConfig.provider, routes: smsConfig.routes })
       const config = { ...ctx.config, sms: smsConfig }
 
-      const { notify } = createNotify({ webhooksConfig: smsConfig.webhooks, events, webhooks })
+      const { notify } = createNotify({ webhooksConfig: smsConfig.webhooks, events, webhooks, eventRegistry })
       const authVerifier = resolveAuth(smsConfig.auth, { logger })
       if (!authVerifier) throw new Error('sms: auth (a secret or a composed verifier) is required')
       const requireAuth = authVerifier.middleware
@@ -63,6 +63,13 @@ export function sms(options = {}) {
       interval.unref?.()
 
       logger.info('SMS plugin ready (providers: %s)', router.names().join(', ') || 'none')
+
+      // Exposed on ctx.plugins.sms for other plugins (e.g. journeys) to send SMS
+      // internally — outbox.queueSend already does create()+enqueue(), so the
+      // worker's preflightBlock (suppression/invalid) gate runs same as any
+      // other queued send. `send` is an alias of the same function; there is
+      // no separate raw/ungated path in this plugin (unlike mail's mailer.send).
+      return { service: { send: outbox.queueSend, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel } }
     },
   }
 }

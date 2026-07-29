@@ -27,3 +27,30 @@ export function page(rows, { limit, offset }) {
 export function pageSlice(all, { limit, offset, total = all.length }) {
   return { data: all.slice(offset, offset + limit), limit, offset, total, has_more: offset + limit < total }
 }
+
+// A searchable page of one table — what every module's left rail asks for.
+//
+// Returns `{ total, rows }` rather than the `has_more` envelope above, and the
+// extra COUNT is the point: a rail draws a POSITION ("2 of 7"), not a "more"
+// arrow, so it needs the real size of the result set. page() exists for the
+// endpoints where limit+1 is genuinely cheaper.
+//
+// The search is a case-insensitive contains over `fields`, ORed. That's the
+// whole vocabulary on purpose: these rails search a name, and anything richer
+// belongs in a real query builder rather than smuggled into a rail filter.
+//
+// `query` must be a fresh knex builder — it's cloned for the count and again
+// for the rows, so the caller keeps theirs intact.
+export async function pagedList(query, { q, fields = [], limit = 25, offset = 0, orderBy = 'created_at', direction = 'desc' } = {}) {
+  const term = String(q ?? '').trim()
+  const base = term && fields.length
+    ? query.where(b => { for (const f of fields) b.orWhere(f, 'ilike', `%${term}%`) })
+    : query
+  // clearOrder before counting: an ORDER BY on a bare count is wasted work and
+  // Postgres rejects it outright when the column isn't in the projection.
+  const [{ count }] = await base.clone().clearSelect().clearOrder().count('* as count')
+  const rows = await base.clone().orderBy(orderBy, direction)
+    .limit(Math.min(Number(limit) || 25, 200))
+    .offset(Math.max(0, Number(offset) || 0))
+  return { total: Number(count), rows }
+}

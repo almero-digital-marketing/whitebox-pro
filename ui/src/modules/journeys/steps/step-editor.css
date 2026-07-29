@@ -1,0 +1,54 @@
+/* Field + control styling shared by every per-kind step editor in this folder
+   AND by Journeys.vue's own step-inspector chrome (the Name field, the trigger
+   panel's section labels). It lives in a plain .css file, imported for its side
+   effect, because Vue's scoped styles do not cross a component boundary — a
+   rule scoped to Journeys.vue cannot reach into <SetFactEditor>, and a copy in
+   each editor is exactly how two supposedly-identical fields drift apart.
+   One definition, imported by everyone who renders these classes.
+
+   Only classes unique to this module are here. Names the other modules also use
+   for their own scoped rules (.pane-tip, .rail-list, .rail-empty, .seg-pill)
+   are deliberately NOT globalised — this file uses its own (.step-tip, and
+   PickList.vue's .pick-*) so nothing leaks sideways into Audiences/Campaigns. */
+
+/* .event-group-label, .pane-tip, .sw, .badge and the Discard/Save row are the
+   whole right pane's chrome, not just the step editors' — they live one level
+   up so the accordion panels and these editors share one definition. */
+@import '../panels/panel.css';
+
+/* a labelled field: uppercase caption stacked over its control */
+.fld { display: flex; flex-direction: column; gap: 5px; flex: 1 1 0; min-width: 0; }
+.fld-l { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.fld .full, .full { width: 100%; }
+/* what the field's chosen fact already holds — the write-side twin of the
+   condition row's .f-hint (shared/query/conditions.css). Same values on
+   purpose: the two lines describe the same fact and must read identically.
+   A <p> inside .fld's flex column, so its UA margin has to go or it stacks on
+   top of the column gap. */
+.fld-hint { margin: 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
+
+/* explanatory line under a control — the same look as .pane-tip inside the
+   accordion, under a name a step editor can use without depending on being
+   rendered inside .jrn-accordion. */
+.step-tip { margin: 0 0 12px; padding: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+
+/* amount + unit pair (Wait's duration, and the same shape as the shared
+   condition builder's Lookback row): the number is a fixed short box and the
+   unit select absorbs the rest of the width. */
+.unit-row { display: flex; align-items: center; gap: 6px 8px; }
+.unit-row .fld-l { flex: none; }
+.unit-num { width: 64px; flex: none; }
+/* PrimeVue's InputNumber/AutoComplete are wrapper <span>s around their own
+   <input>, and the input does NOT inherit the wrapper's width — size both. */
+.unit-num input { width: 100%; }
+.unit-sel { flex: 1 1 auto; min-width: 0; }
+
+/* AutoComplete: flex rather than a width, so the input takes whatever the
+   optional dropdown button leaves. Set Fact renders that button only for a
+   categorical key, so the two fields differ and neither can be a fixed number. */
+.ac { display: flex; }
+.ac .p-autocomplete-input { flex: 1 1 auto; min-width: 0; }
+
+/* the one control still on a native <select> — a 3-option list not worth a
+   PrimeVue overlay; styled to match the inputs beside it. */
+.native-select { border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px; color: var(--text-strong); background: var(--panel); }

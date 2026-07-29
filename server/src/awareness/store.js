@@ -64,6 +64,24 @@ export async function timeline({ passport_id, from, to, channels, directions, li
   return q
 }
 
+// How many exposures each of these passports has — ONE grouped count for a
+// whole page of search results, where a timeline() per row would be 25 queries
+// to produce 25 numbers.
+//
+// No merge resolution here, and that's safe rather than sloppy: exposures carry
+// a real FK to whitebox_passports, so merge() re-points them via the FK
+// catalog, and passports.search() never returns a merged-away id. Every id in
+// and every row out is already a survivor.
+export async function countsByPassport(passportIds) {
+  if (!passportIds?.length) return {}
+  const rows = await db(EXPOSURES)
+    .whereIn('passport_id', passportIds)
+    .groupBy('passport_id')
+    .select('passport_id')
+    .count('* as n')
+  return Object.fromEntries(rows.map(r => [r.passport_id, Number(r.n)]))
+}
+
 export async function hasChunks(contentHash) {
   if (!contentHash) return false
   const row = await db(CHUNKS).where({ content_hash: contentHash }).first()

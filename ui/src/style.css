@@ -25,6 +25,32 @@ html, body, #app { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
 .muted { color: var(--muted); }
 
+/* Google Material Symbols (Outlined) — replaces PrimeIcons (pi pi-*) app-wide. Ligature
+   font: the element's text content IS the icon name (e.g. <span class="material-symbols-
+   outlined">check</span>), unlike PrimeIcons' empty-element + CSS ::before codepoint
+   classes. font-variation-settings tunes the variable font's four axes; FILL 0 keeps the
+   outlined (unfilled) style used everywhere in this app for visual consistency. */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 1.125rem;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+/* filled variant — for the handful of spots that used PrimeIcons' separate -fill icon
+   (pi-circle-fill, pi-flag-fill): same glyph name, FILL axis toggled instead of a
+   different icon name. */
+.material-symbols-outlined.fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
 /* app shell — a VS Code-style activity bar on the left, the active module fills the rest */
 .shell { display: flex; height: 100vh; overflow: hidden; }
 .module-host { flex: 1 1 auto; min-width: 0; min-height: 0; position: relative; background: var(--bg); }
@@ -34,3 +60,162 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 .p-confirmdialog { width: 30rem; max-width: calc(100vw - 2rem); }
 /* …and a calmer message size (the default 16px reads oversized in these short prompts) */
 .p-confirmdialog-message { font-size: 13.5px; line-height: 1.5; }
+
+/* confirm.require({ icon: 'pi pi-x', ... }) across the app (delete/exit/schedule/send
+   confirmations) renders PrimeVue's ConfirmDialog header icon as a bare <span> carrying
+   whatever class string was passed — internally, with no scoped-slot access to that
+   string, so there's no way to swap it for a ligature-based <span>text</span> per call.
+   Rather than touch every confirm.require() call site (or leave these six as the only
+   PrimeIcons glyphs left in the app), this reuses the exact same class names PrimeVue
+   already renders and repaints them as Material Symbols via generated content — same
+   font-variation-settings as .material-symbols-outlined, applied through ::before
+   instead of text content. Scoped to .p-confirmdialog so it can't affect any other
+   PrimeIcons usage elsewhere (e.g. PrimeVue's own internal dropdown/checkbox/sort
+   chrome, which still needs the real PrimeIcons font — primeicons.css stays imported
+   for that reason, this is a narrow, additive override, not a replacement of it). */
+.p-confirmdialog .p-confirmdialog-icon.pi {
+  font-family: 'Material Symbols Outlined';
+  font-size: 0;
+}
+.p-confirmdialog .p-confirmdialog-icon.pi::before {
+  font-size: 1.5rem;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.p-confirmdialog .p-confirmdialog-icon.pi-trash::before { content: 'delete'; }
+.p-confirmdialog .p-confirmdialog-icon.pi-link::before { content: 'link'; }
+.p-confirmdialog .p-confirmdialog-icon.pi-bolt::before { content: 'bolt'; }
+.p-confirmdialog .p-confirmdialog-icon.pi-clock::before { content: 'schedule'; }
+.p-confirmdialog .p-confirmdialog-icon.pi-send::before { content: 'send'; }
+.p-confirmdialog .p-confirmdialog-icon.pi-sign-out::before { content: 'logout'; }
+
+/* Paginator — one definition for every paginator in the app: a single bordered
+   pill holding « prev · "N of M" · next », the shape the People rail uses.
+   PrimeVue's default (first/last + numbered page links) needs ~330px, which the
+   350px rail can't give it, so every table sets the same three-part
+   `paginatorTemplate` and they all end up identical rather than "similar".
+   Global, because Users' logins table and Analytics' WidgetCard each used to
+   carry a byte-identical copy of their own paginator CSS — two places for one
+   look to drift, plus a third hand-rolled one in People.
+
+   EVERY selector below doubles its class. PrimeVue's styled mode injects the
+   theme's own `.p-paginator{...}` / `.p-paginator-prev{...}` rules into the
+   document at RUNTIME, i.e. after this file and at equal specificity, so a
+   single class loses every tie. Doing it on only some of the rules is worse
+   than not doing it at all: the box took my 32px height while the nav buttons
+   kept the theme's 40px and overflowed it. */
+.p-paginator.p-paginator {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 32px; min-height: 32px; padding: 0 4px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: transparent;
+}
+.p-paginator .p-paginator-prev.p-paginator-prev,
+.p-paginator .p-paginator-next.p-paginator-next {
+  min-width: 26px; width: 26px; height: 26px; min-height: 26px; margin: 0; padding: 0;
+  border: none; border-radius: 50%; background: transparent; color: var(--muted);
+}
+.p-paginator .p-paginator-prev.p-paginator-prev:not(:disabled):hover,
+.p-paginator .p-paginator-next.p-paginator-next:not(:disabled):hover { background: var(--panel-2); color: var(--text-strong); }
+.p-paginator .p-paginator-prev.p-paginator-prev:disabled,
+.p-paginator .p-paginator-next.p-paginator-next:disabled { opacity: .4; }
+/* min-width so the box doesn't resize as the page number gains a digit */
+.p-paginator .p-paginator-current.p-paginator-current {
+  margin: 0; padding: 0; min-width: 54px; height: auto; text-align: center; line-height: 1;
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+/* The tables put it under the rows, aligned with the rail's right-hand pager.
+   Doubled class like everything above it: single-classed, `border: none` here
+   lost the tie to the theme's own runtime-injected rule, so the wrapper kept
+   drawing a line UNDER the pager — below the last thing on the page, separating
+   it from nothing. The rule above the pager is the table's own last-row border
+   and stays: that one closes the list. */
+.p-datatable-paginator-bottom.p-datatable-paginator-bottom {
+  display: flex; justify-content: flex-end; border: none; padding-top: 8px;
+}
+
+/* An AutoComplete WITH a dropdown button is one control made of two elements —
+   the input and the toggle, joined by their radii (6px 0 0 6px / 0 6px 6px 0).
+   The theme puts the focus border on the INPUT alone, so the ring stopped dead
+   at the seam and left the button sitting outside it, which reads as a broken
+   box rather than a focused field. Moving it to the wrapper makes the ring
+   follow the control.
+   Doubled class for the usual reason: the theme's own .p-autocomplete-input
+   rules are injected at runtime, after this file. */
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown):focus-within {
+  outline: 1px solid var(--accent); outline-offset: 0; border-radius: 6px;
+}
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown) .p-autocomplete-input:focus {
+  border-color: var(--border);
+}
+
+/* ADR-0001 action rows (.save-bar / .actions / .b-actions / .qb-actions).
+   Discard is always a plain-text button; Save/Activate/Pause usually carry a
+   Material Symbol. That icon's 18px line box makes its button 32px tall while
+   the text-only one beside it computes to 30.5px — same padding, same border,
+   different content height. Pinning a common min-height makes every button in
+   these rows the same box whether or not it has an icon.
+   Doubled class for the same reason as the paginator block above: PrimeVue's
+   theme injects its own .p-button rules at runtime, after this file. */
+.b-actions .p-button.p-button,
+.save-bar .p-button.p-button,
+.actions .p-button.p-button,
+.qb-actions .p-button.p-button { min-height: 32px; }
+
+/* Accordion header counts. Global because four modules now put one in a
+   right-pane header, and a per-module copy is how four identical badges drift.
+   `.acc-title` groups the label with its count so the header's space-between
+   pushes only the chevron away — without it the count floats to the middle. */
+.acc-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.count-pill {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  box-sizing: border-box; height: 32px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-strong);
+  font-variant-numeric: tabular-nums; letter-spacing: 0;
+}
+/* the header variant — beside a 12px eyebrow label a full-height pill towers
+   over the word it counts */
+.count-pill.sm { height: auto; min-width: 22px; padding: 2px 7px; font-size: 11px; }
+
+/* Segment pill — the palette row used by Audiences (compose a rule) and by
+   People (put someone on a list). Global because it's now two modules; the
+   drag, rename and editing affordances stay scoped to Audiences, which is the
+   only place they exist. */
+.seg-pill { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.seg-pill:hover { border-color: var(--border-2); }
+.seg-pill.used { opacity: .55; }
+/* the 6px is spacing BETWEEN pills; on the last one it stacks onto whatever
+   padding the containing panel already has */
+.seg-pill:last-child { margin-bottom: 0; }
+.seg-pill .material-symbols-outlined { font-size: 12px; color: var(--accent); }
+.sp-name { flex: 1 1 auto; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-size { font-size: 11px; color: var(--muted); }
+.sp-used { font-size: 11px; color: var(--accent); }
+
+/* Two-line list row — an identifier over a secondary line on the left, a date
+   over a time on the right, both columns on the same two-row grid so the halves
+   can't drift. People's rail and Journeys' enrollments both use it.
+
+   It's an opt-in class applied ALONGSIDE the module's own row class, never
+   folded into `.rail-item`: that name is `display: flex` in four other modules
+   and hoisting a grid onto it would rewrite all of their rails. */
+/* 1px between rail rows. Invisible at rest — it only shows when two ADJACENT
+   rows are highlighted (selected, hovered, bulk-picked), where without it their
+   backgrounds merge into one block and the boundary between two people
+   disappears. Global: every module's rail is the same list, each defines its
+   own .rail-item, and none of them sets a margin — so this is the one place it
+   can live without five copies to drift. */
+.rail-item + .rail-item { margin-top: 1px; }
+
+.two-line { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 6px; }
+.two-line .ri-name { grid-area: 1 / 1; display: block; font-size: 14px; font-weight: 600; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* nothing on line two — centre the name across both rows rather than strand it */
+.two-line .ri-name.tall { grid-row: 1 / span 2; }
+.two-line .ri-sub { grid-area: 2 / 1; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); min-width: 0; }
+.two-line .rw-date { grid-area: 1 / 2; }
+.two-line .rw-time { grid-area: 2 / 2; opacity: .75; }
+.two-line .rw-date, .two-line .rw-time { justify-self: end; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* A small key-less fact chip — People's activity provenance and Journeys' step
+   results both render structured detail this way rather than as raw JSON. */
+.mchip { border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; line-height: 15px; font-size: 10.5px; color: var(--muted); }

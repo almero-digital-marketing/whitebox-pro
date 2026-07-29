@@ -17,7 +17,7 @@ adapters declare identitySpec ──compose union──▶ identity manifest
    reads cookie / url-param per the manifest, gated on marketing consent
                                                       │ POST collected signals
                                                       ▼
- POST /audiences/identity → store on passport (whitebox_audience_identities)
+ POST /audiences/identity → store on passport (whitebox_audience_signals)
                                                       │ at send time
                                                       ▼
  adapter.sendEvent: picks its acceptedKeys (+ server-resolved hashed PII / IP / UA)

@@ -1,27 +1,25 @@
 // Thin client for the audiences plugin. Calls go to /api/audiences/* (the dev proxy
-// strips /api → the server's /audiences/* surface). Same bearer token as analytics
-// (the dev server registers both plugins on the same secret).
+// strips /api → the server's /audiences/* surface). Auth is the logged-in user's
+// session token (see shell/apiClient.ts) — every module shares the same authenticated client.
 
-const TOKEN = (import.meta as any).env?.VITE_ANALYTICS_TOKEN || ''
-const BASE = '/api/audiences'
+import { createClient } from '../../shell/apiClient'
 
-async function req(path: string, opts: any = {}): Promise<any> {
-  const res = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      'content-type': 'application/json',
-      ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
-      ...(opts.headers || {}),
-    },
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`${path} → ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`)
-  }
-  return res.status === 204 ? null : res.json()
-}
+const req = createClient('/api/audiences')
 
 // A segment `source` is the rule-shaped predicate: { select } | { funnel, slot, status }.
+// Every rail asks the same question — a page of rows matching a term — so the
+// query string is built the same way everywhere. Empty values are dropped so a
+// blank search doesn't become `?q=`.
+const pageQs = (o: { q?: string; limit?: number; offset?: number } = {}) => {
+  const s = new URLSearchParams()
+  if (o.q?.trim()) s.set('q', o.q.trim())
+  if (o.limit != null) s.set('limit', String(o.limit))
+  if (o.offset) s.set('offset', String(o.offset))
+  const out = s.toString()
+  return out ? `?${out}` : ''
+}
+export type Paged<T> = { total: number; rows: T[] }
+
 export const audiences = {
   // size of an unsaved source (the chip's "~N people"), reusing the engine preview
   previewSegment: (source: any) => req('/segments/preview', { method: 'POST', body: JSON.stringify({ source }) }),
@@ -37,7 +35,10 @@ export const audiences = {
   segmentMembers: (id: string) => req(`/segments/${id}/members`),
 
   // audiences — boolean compositions of segments. rule = { op:'all'|'any', members:[{segment,negate?}] }
-  listAudiences: () => req('/audiences'),
+  // paged: `{ total, rows }`. Pass a big limit for the picker catalogues in
+  // Campaigns and Journeys, which need every option rather than a page.
+  listAudiences: (o?: { q?: string; limit?: number; offset?: number }) =>
+    req(`/audiences${pageQs(o)}`) as Promise<Paged<any>>,
   // CAPI adapters the server actually has configured (name + eligible). Drives whether a
   // network shows a live delivery toggle or a "Connect" prompt — no silent dry-run.
   listNetworks: () => req('/networks'),

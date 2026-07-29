@@ -9,7 +9,7 @@ const kind = defineModel<string>('kind', { required: true })
   <label class="lab">Visualization</label>
   <div class="viz-grid">
     <button v-for="k in KINDS" :key="k.value" type="button" class="viz" :class="{ on: kind === k.value }" @click="kind = k.value">
-      <i :class="k.icon" /><span>{{ k.label }}</span>
+      <span class="material-symbols-outlined">{{ k.icon }}</span><span>{{ k.label }}</span>
     </button>
   </div>
   <p class="hint">{{ KIND_HINTS[kind] || '' }}</p>

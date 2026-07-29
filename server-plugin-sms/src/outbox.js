@@ -175,7 +175,7 @@ export async function resolveRecipient(row) {
   return passportId
 }
 
-export async function create({ passportId, sessionId, to, from, body, template, media, data, idempotencyKey, batchId }) {
+export async function create({ passportId, sessionId, to, from, body, template, media, data, idempotencyKey, batchId, campaignId, journeyId }) {
   if (idempotencyKey) {
     const existing = await db(TABLE).where({ idempotency_key: idempotencyKey }).first()
     if (existing) return existing
@@ -192,6 +192,9 @@ export async function create({ passportId, sessionId, to, from, body, template, 
       data: data || null,
       idempotency_key: idempotencyKey || null,
       batch_id: batchId || null,
+      // who asked for it — see migration 005. Set on every path, bulk or not.
+      campaign_id: campaignId || null,
+      journey_id: journeyId || null,
     }).returning('*')
     return row
   } catch (err) {
@@ -215,6 +218,8 @@ export async function createMany(items) {
     media: item.media?.length ? item.media : null,
     data: item.data || null,
     batch_id: item.batchId || null,
+    campaign_id: item.campaignId || null,
+    journey_id: item.journeyId || null,
   }))).returning('*')
 }
 
@@ -293,10 +298,37 @@ export async function batchStats(batchId) {
   return { batch_id: batchId, totals }
 }
 
+// The delivery funnel for a scope — the SMS half of a campaign's results
+// block. Same reasoning as mail's funnel(): batchStats() above groups by the
+// row's LATEST status, so counting the nullable timestamps is what makes the
+// stages cumulative. Scoped by attribution only, never by batch — see mail's
+// funnel() for why.
+//
+// There is no `opened` or `clicked` here and there never will be from this
+// table — SMS has no open pixel, and a click is only knowable if the body
+// carried a shortened link (whitebox_short_clicks), which is a different join.
+export async function funnel({ campaignId, journeyId } = {}) {
+  if (!campaignId && !journeyId) return { total: 0, sent: 0, delivered: 0, failed: 0, undelivered: 0, cancelled: 0 }
+  const [row] = await db(TABLE).where(b => {
+    if (campaignId) b.orWhere({ campaign_id: campaignId })
+    if (journeyId) b.orWhere({ journey_id: journeyId })
+  }).select(
+    db.raw(`count(*)::int                                        AS total`),
+    db.raw(`count(sent_at)::int                                  AS sent`),
+    db.raw(`count(delivered_at)::int                             AS delivered`),
+    db.raw(`count(failed_at)::int                                AS failed`),
+    db.raw(`count(cancelled_at)::int                             AS cancelled`),
+    // carrier accepted it but never delivered — terminal, and distinct from a
+    // send failure on our side
+    db.raw(`count(*) FILTER (WHERE status = 'undelivered')::int   AS undelivered`),
+  )
+  return row
+}
+
 // Programmatic send: normalize the recipient, resolve a session, create the row,
 // enqueue it. Shared by the HTTP route and the MCP tool. Returns the row, or
 // throws { status: 400 } on an unusable phone.
-export async function queueSend({ to: rawTo, from, body, template, media, data, passportId, idempotencyKey }) {
+export async function queueSend({ to: rawTo, from, body, template, media, data, passportId, idempotencyKey, campaignId, journeyId }) {
   const to = toE164(rawTo, defaultCountry())
   if (!to) { const e = new Error('invalid phone number'); e.status = 400; throw e }
 
@@ -304,7 +336,7 @@ export async function queueSend({ to: rawTo, from, body, template, media, data, 
   const row = await create({
     passportId: passportId || session?.passport_id || null,
     sessionId: session?.id || null,
-    to, from, body, template, media, data, idempotencyKey,
+    to, from, body, template, media, data, idempotencyKey, campaignId, journeyId,
   })
 
   if (row.status === 'queued' && !row.sent_at) {

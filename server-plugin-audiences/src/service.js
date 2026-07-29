@@ -2,15 +2,16 @@
 // concerns here. See docs/09-api.md.
 
 import { randomUUID } from 'node:crypto'
-import { validate, toRow, fromRow } from './rules.js'
-import { validateSource, predicateKey, fromRow as segFromRow } from './segments.js'
+import { validateSource, predicateKey, fromRow as segFromRow, isList } from './segments.js'
 import { validateAudience, slugify, fromRow as audFromRow } from './audiences.js'
 
-let store, rules, evaluator, delivery, adapters, identity, consent, logger
-let evalQueue
+// `passports` is here only so list membership can be stored against the id a
+// merged person actually resolves to — a row pointing at a tombstone would
+// never come back from any resolve.
+let store, evaluator, adapters, identity, consent, passports, logger
 
 export function init(deps) {
-  ({ store, rules, evaluator, delivery, adapters, identity, consent, logger } = deps)
+  ({ store, evaluator, adapters, identity, consent, passports, logger } = deps)
 }
 
 // --- segments (chart-derived dynamic sub-queries) ---
@@ -19,8 +20,28 @@ export const getSegment = async id => segFromRow(await store.getSegment(id))
 
 // Size + cost of an UNSAVED source (the chip's "~N people" before Save). Reuses the
 // engine's preview — cheap, never fires, samples the judge when there is one.
+// The single place a segment source becomes a set of people. `select` and
+// `funnel` are predicates the evaluator runs; a `list` is stored membership.
+// Both the audience resolver and resolveSegment() call through here, so a list
+// composes into an audience exactly like a query-backed segment — which is the
+// whole point of making it a segment rather than a fourth concept.
+async function cohortOf(source) {
+  if (isList(source)) return (await store.listMemberIds(source.list)).map(id => ({ id }))
+  return evaluator.resolveSource(source)
+}
+
 export async function previewSegment(input) {
-  return evaluator.previewSource(validateSource(input))
+  const source = validateSource(input)
+  if (isList(source)) {
+    // Same shape the evaluator returns, not a list-specific one — the palette
+    // and every other consumer read `est_matches`, and a list that answered
+    // with its own key would silently render blank next to the query segments.
+    // For a list the number is exact rather than estimated, but it's the same
+    // question: how many people is this segment worth?
+    const n = await store.memberCount(source.list)
+    return { candidate_pool: n, est_matches: n }
+  }
+  return evaluator.previewSource(source)
 }
 
 // AI label for an unsaved source — what the chip shows before Save.
@@ -44,6 +65,75 @@ export async function saveSegment({ source: input, name, origin, context } = {})
 }
 
 export const deleteSegment = id => store.deleteSegment(id)
+
+// --- static lists -----------------------------------------------------------
+
+// A list's source is its own id, so the id has to exist before the source does
+// — hence generating it here rather than letting saveSegment() do it. No AI
+// naming either: a hand-built list is named by the person building it.
+export async function createList({ name } = {}) {
+  const clean = (name || '').trim()
+  if (!clean) { const e = new Error('a name is required'); e.status = 400; throw e }
+  const id = randomUUID()
+  const source = validateSource({ list: id })
+  const row = await store.insertSegment({
+    id, name: clean, source: JSON.stringify(source),
+    predicate_key: predicateKey(source), origin: JSON.stringify({ kind: 'list' }),
+  })
+  return segFromRow(row)
+}
+
+// Only list segments — the ones a person can actually be added to. A query
+// segment is offered nowhere as a target, because putting someone "in" it would
+// be a no-op the next time it resolves.
+export async function listLists() {
+  const segs = (await store.listSegments()).map(segFromRow).filter(s => isList(s.source))
+  return Promise.all(segs.map(async s => ({ ...s, count: await store.memberCount(s.id) })))
+}
+
+async function requireList(segmentId) {
+  const seg = await getSegment(segmentId)
+  if (!seg) { const e = new Error('segment not found'); e.status = 404; throw e }
+  if (!isList(seg.source)) {
+    const e = new Error('that segment is a query, not a list — its membership is computed, not assigned')
+    e.status = 400; throw e
+  }
+  return seg
+}
+
+export async function addToList(segmentId, passportId, addedBy) {
+  await requireList(segmentId)
+  // resolve first: adding a merged-away id would create a row pointing at a
+  // tombstone that no resolve would ever return
+  const id = await passports.resolve(passportId)
+  if (!id) { const e = new Error('person not found'); e.status = 404; throw e }
+  await store.addMember(segmentId, id, addedBy)
+  return { segment_id: segmentId, passport_id: id, count: await store.memberCount(segmentId) }
+}
+
+// Bulk cherry-pick. Returns what actually changed, not what was asked for:
+// "added 187 of 240" is the honest answer when the rest were already on it,
+// and it's the number the operator needs to trust the result.
+export async function addManyToList(segmentId, passportIds, addedBy) {
+  await requireList(segmentId)
+  // resolve every id through merges first — a selection can easily contain an
+  // absorbed id (search results are resolved, but a caller may pass anything),
+  // and a row pointing at a tombstone is invisible to every later read
+  const resolved = [...new Set((await Promise.all((passportIds || []).map(id => passports.resolve(id)))).filter(Boolean))]
+  const added = await store.addMembers(segmentId, resolved, addedBy)
+  return { segment_id: segmentId, requested: passportIds?.length || 0, added, count: await store.memberCount(segmentId) }
+}
+
+export async function removeFromList(segmentId, passportId) {
+  await requireList(segmentId)
+  const id = await passports.resolve(passportId)
+  await store.removeMember(segmentId, id || passportId)
+  return { segment_id: segmentId, passport_id: id || passportId, count: await store.memberCount(segmentId) }
+}
+
+// Which lists is this person on? The read the People browser's right pane uses.
+export const passportLists = async passportId =>
+  store.segmentsForPassport(await passports.resolve(passportId) || passportId)
 
 // Rename a saved segment. Dedup keys on the source predicate, not the name, so a rename is safe.
 export async function renameSegment(id, name) {
@@ -69,6 +159,12 @@ export async function ensureDefaultSegments() {
 
 // --- audiences (boolean compositions of segments) ---
 export const listAudiences = async () => (await store.listAudiences()).map(audFromRow)
+// What GET /audiences serves. `{ total, rows }` — the total is what makes the
+// rail's pager honest about a result set the client has never fully seen.
+export async function searchAudiences(opts = {}) {
+  const { total, rows } = await store.searchAudiences(opts)
+  return { total, rows: rows.map(audFromRow) }
+}
 export const getAudience = async id => audFromRow(await store.getAudience(id))
 
 // resolveSegment(id) → Set of passport ids, memoised within one audience resolution so
@@ -80,7 +176,7 @@ function segmentResolver() {
       const seg = await store.getSegment(segmentId)
       if (!seg) return new Set()                           // a deleted segment contributes nobody
       const source = typeof seg.source === 'string' ? JSON.parse(seg.source) : seg.source
-      const cohort = await evaluator.resolveSource(source)
+      const cohort = await cohortOf(source)
       return new Set(cohort.map(m => m.id))
     })())
     return cache.get(segmentId)
@@ -232,92 +328,9 @@ export async function setDelivery(id, { network, enabled }) {
 export async function resolveSegment(id, { limit = 5000 } = {}) {
   const seg = await getSegment(id)
   if (!seg) { const e = new Error('segment not found'); e.status = 404; throw e }
-  const cohort = (await evaluator.resolveSource(seg.source)).slice(0, limit)
+  const cohort = (await cohortOf(seg.source)).slice(0, limit)
   return { count: cohort.length, ids: cohort.map(m => m.id) }
 }
-
-// --- rules ---
-export const listRules = async () => (await store.listRules()).map(fromRow)
-export const getRule = async id => fromRow(await store.getRule(id))
-export async function saveRule(input, updatedBy) {
-  const rule = validate(input)
-  await store.upsertRule(toRow(rule, updatedBy))
-  return rule
-}
-export const deleteRule = id => store.deleteRule(id)
-export async function setEnabled(id, enabled) {
-  const rule = await getRule(id)
-  if (!rule) { const e = new Error('rule not found'); e.status = 404; throw e }
-  rule.enabled = enabled
-  return saveRule(rule)
-}
-
-export const draft = description => evaluator.draftRule(description)
-
-// preview accepts a full rule input OR an existing rule id
-export async function preview(input, { sample = 50 } = {}) {
-  const rule = typeof input === 'string' ? await getRule(input) : validate(input)
-  if (!rule) { const e = new Error('rule not found'); e.status = 404; throw e }
-  return evaluator.preview(rule, { sample })
-}
-
-// --- evaluation + delivery ---
-// Population eval (manual run + keep-warm): the engine resolves the whole
-// qualified cohort in one call (select or funnel slot), then we record + fire
-// each. No candidates-then-judge-each double pass.
-export async function evaluateRule(id, { dryRun = false, limit = 5000 } = {}) {
-  const rule = await getRule(id)
-  if (!rule) { const e = new Error('rule not found'); e.status = 404; throw e }
-  const cohort = (await evaluator.resolveCohort(rule)).slice(0, limit)
-  let fired = 0, suppressed = 0
-  for (const m of cohort) {
-    await store.upsertMatch({
-      rule_id: rule.id, passport_id: m.id, qualified: true,
-      score: m.score, reason: m.reason, evidence: JSON.stringify(m.evidence || {}),
-      first_matched_at: new Date().toISOString(),
-    })
-    const r = await delivery.fireMatch(rule, m.id, m, { dryRun })
-    if (r.skipped) suppressed++
-    else if (Object.values(r.fired).some(Boolean)) fired++
-  }
-  return { evaluated: cohort.length, matched: cohort.length, fired, suppressed, dryRun }
-}
-
-// Dirty/incremental eval — one passport changed. SELECT rules only; funnel rules
-// are population-only (they keep warm via evaluateRule), so we skip them here.
-export async function evaluatePassport(passportId) {
-  const enabled = (await store.enabledRules()).map(fromRow).filter(r => !r.funnel)
-  const out = []
-  for (const rule of enabled) {
-    const v = await evaluator.evaluate(rule, passportId)
-    await store.upsertMatch({ rule_id: rule.id, passport_id: passportId, qualified: v.qualified, score: v.score, reason: v.reason, evidence: JSON.stringify(v.evidence || {}) })
-    if (v.qualified) await delivery.fireMatch(rule, passportId, v)
-    out.push({ rule_id: rule.id, qualified: v.qualified, score: v.score })
-  }
-  return out
-}
-
-// --- inspection ---
-export async function members(ruleId, { limit = 50, offset = 0 } = {}) {
-  const count = Number((await store.ruleMatchCount(ruleId)).n)
-  const sample = await store.ruleMatches(ruleId, { limit, offset })
-  return { count, sample: sample.map(m => ({ passport_id: m.passport_id, score: m.score, reason: m.reason, last_fired_at: m.last_fired_at })) }
-}
-export async function stats(ruleId) {
-  const qualified = Number((await store.ruleMatchCount(ruleId, true)).n)
-  return { rule_id: ruleId, qualified }
-}
-export async function explain(ruleId, passportId) {
-  const m = await store.getMatch(ruleId, passportId)
-  if (!m) return null
-  return {
-    score: m.score, qualified: m.qualified, reason: m.reason,
-    evidence: typeof m.evidence === 'string' ? JSON.parse(m.evidence) : m.evidence,
-    fired: typeof m.fired === 'string' ? JSON.parse(m.fired) : m.fired,
-  }
-}
-export const passportSegments = async passportId =>
-  (await store.passportMatches(passportId)).map(m => ({ rule_id: m.rule_id, score: m.score, last_fired_at: m.last_fired_at }))
 
 // --- networks / identity / facts ---
 export const networks = () => adapters.map(a => ({ name: a.name, modes: a.modes, eligible: a.eligible, transport: a.transport || 'http' }))
@@ -326,43 +339,10 @@ export const availableFacts = () => evaluator.availableFacts()
 export const saveSignals = (passportId, signals) => identity.saveSignals(passportId, signals)
 
 // --- deliveries / suppression ---
-export const deliveries = filter => store.listDeliveries(filter)
 export const suppress = (passportId, reason) => store.suppress(passportId, reason)
 export const unsuppress = passportId => store.unsuppress(passportId)
+// Is this one person on the do-not-target list? The store has had this since
+// suppression existed; it was never exposed on the service because nothing
+// asked per-person until the People module wanted to show it on a profile.
+export const isSuppressed = passportId => store.isSuppressed(passportId)
 export const listSuppression = () => store.listSuppression()
-
-// --- dirty-tracking + workers ---
-export async function markDirty(passportId) {
-  if (!evalQueue || !passportId) return
-  // jobId = passport ⇒ a re-fired dirty event coalesces into one debounced job.
-  await evalQueue.add('eval', { passport_id: passportId }, {
-    jobId: `eval:${passportId}`,
-    delay: 30_000,
-    removeOnComplete: true, removeOnFail: true,
-  })
-}
-
-export function startWorkers({ queue, scheduler }) {
-  if (!queue) return
-  evalQueue = queue.createQueue('audiences-eval')
-  queue.createWorker('audiences-eval', async job => evaluatePassport(job.data.passport_id))
-
-  // keep-warm: re-fire still-qualifying matches before the platform window ages
-  // them out. Wire to your scheduler's cron; see docs/10-deployment.md.
-  if (scheduler?.every) {
-    scheduler.every('1d', () => keepWarmSweep().catch(err => logger?.warn?.({ err }, 'keep-warm failed')))
-  }
-}
-
-export async function keepWarmSweep() {
-  const enabled = (await store.enabledRules()).map(fromRow)
-  for (const rule of enabled) {
-    const cutoff = new Date(Date.now() - 7 * 86_400_000).toISOString() // re-fire if older than 7d
-    const due = await store.dueForRefire(rule.id, cutoff)
-    for (const m of due) {
-      const v = await evaluator.evaluate(rule, m.passport_id) // re-confirm still qualifies
-      if (v.qualified) await delivery.fireMatch(rule, m.passport_id, v)
-      else await store.upsertMatch({ rule_id: rule.id, passport_id: m.passport_id, qualified: false, reason: v.reason })
-    }
-  }
-}

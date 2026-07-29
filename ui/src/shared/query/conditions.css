@@ -1,0 +1,116 @@
+/* Shared condition-row + conditions-builder styles — see clause.ts for the
+   data model these render. Plain/global (not scoped), same "global but
+   visually self-contained" approach analytics/components/query/qb.css
+   already uses — these need to reach ConditionRow's own template regardless
+   of which module embeds it (Analytics' Query builder, Journeys' branch
+   condition editor, ...), which a scoped <style> block couldn't do once the
+   component crosses a module boundary. The cb- prefix is this file's own
+   namespace (collision-checked against the rest of the app); the condition
+   row's own names (.cond, .m-…, .f-…, .notbtn, .cond-type) were already
+   distinctive enough to keep as-is.
+
+   Careful with wildcards in these comments: writing a class glob as ".m-*"
+   immediately before a "/" closes the comment early, and the leftover text
+   then parses as a bogus selector that swallows the rule after it. That is
+   what "the first rule mysteriously disappears" was — a malformed comment
+   here, not a dev-server bug. Spell globs out as ".m-…" instead. */
+.cbx-root { display: flex; flex-direction: column; gap: 6px; }
+/* eyebrow title — matches .event-group-label in Journeys.vue / .lab in
+   analytics' qb.css. Needed here (not just relying on the hint paragraph)
+   because Journeys' branch editor stacks this component directly under its
+   own "By audience / By filter" tab pair — without an explicit heading the
+   match-all/any pill below reads as part of that tab switcher above it. */
+.cb-title { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+/* same all/any pill as Audiences.vue's .b-rulebar/.b-op rule builder and
+   Journeys.vue's own trigger-audience picker — kept here under cb-* since
+   this component crosses module boundaries (a bare .b-op would collide with
+   Journeys.vue's own scoped copy of the same rule). */
+.cb-rulebar { display: flex; align-items: center; gap: 12px; }
+/* the toggle is the row's flexible element — it fills everything left of the
+   add button, which keeps its intrinsic size. min-width:0 lets it shrink
+   rather than overflow on a narrow pane; the two halves split it evenly. */
+.cb-op { display: flex; flex: 1 1 auto; min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cb-rulebar > .p-button { flex: none; }
+.cb-op button { flex: 1; border: none; background: none; font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer; color: var(--muted); }
+.cb-op button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.cb-op button:disabled { opacity: .5; cursor: default; }
+/* no margin — both this and .cond below sit directly in a flex column with
+   its own `gap` (.cbx-root here, .qb in Analytics' Compare section too); an
+   own margin on top of that gap doubles the space between specific pairs
+   of children instead of keeping a uniform rhythm. */
+.cb-hint { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.cb-hint b { color: var(--text); font-weight: 650; }
+
+.cond { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); }
+.cond-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* size/weight set here, not left to the `small` utility class in the markup:
+   that one only exists as `.qb .small` in analytics' qb.css, so outside the
+   Query builder (Journeys' branch editor) it matched nothing and this text
+   fell back to the 16px browser default. Anything this shared component
+   renders has to be styled from this shared file. */
+.cond-note { flex: 1; font-size: 11px; font-weight: 400; }
+/* condition rows reflow (wrap to a new line) instead of truncating on a narrow pane */
+.cond-fields { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+/* what the selected fact actually holds, worded per operator (ConditionRow's
+   factHint). A <p> inside .cond's flex column, so its UA margin has to go or
+   it stacks on top of the column gap. */
+.f-hint { margin: 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
+/* fact-key option row. UNPREFIXED on purpose — PrimeVue teleports the select
+   overlay to <body>, so a rule scoped under .cond would never reach it. */
+.k-opt { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.k-opt-note { font-size: 10.5px; font-style: italic; color: var(--muted); white-space: nowrap; }
+.cond-metric { display: flex; flex-direction: column; gap: 6px; }
+/* The row spans the pane (inherited stretch) and exactly ONE control per row
+   absorbs the leftover width, so it ends flush with the full-width Events/
+   Campaigns pickers above instead of hugging the left edge. Growing a child
+   is what makes the stretch safe: with every child fixed-width the slack
+   piled up at the end of the row and read as a missing/broken box.
+   Which child grows is the one whose content is open-ended — the measure
+   select and the unit select — never the short numeric inputs or the ≥/≤
+   operator, which have a natural size (ADR 0001 rule 9). Same shape as the
+   Wait editor's .unit-row in Journeys.vue, which this row is meant to match.
+   Scoped with `.m-row > …` (2 classes) so it beats the base widths below
+   regardless of source order AND leaves .cond-fields alone — .f-op is shared
+   with the fact row, where f-key/f-val already do the growing. */
+.m-row { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.m-row > .f-op,
+.m-row > .f-win-unit { flex: 1 1 auto; }
+/* "Events"/"Campaigns" stack their title above the field (.m-group) rather
+   than sitting inline beside it — a fixed-width inline label left barely
+   any room for the multiselect itself in a 400px-wide right pane. Same
+   .m-lab is reused inline for "Lookback" below, where there's no such
+   squeeze — it just sizes to its own text there. */
+.m-group { display: flex; flex-direction: column; gap: 4px; }
+.m-lab { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); flex: none; }
+/* flex: none, not 1 1 150px — .m-grow's parent (.m-group) is a COLUMN flex
+   container, so a flex-basis/grow meant for horizontal sizing in the old
+   row layout would instead stretch this element's HEIGHT to fill whatever
+   vertical space is available, which is exactly what made it "so tall".
+   Width alone comes from the plain 100% below. */
+.m-grow { flex: none; min-width: 0; }
+.m-grow .p-multiselect { width: 100%; }
+/* PrimeVue's own chip-mode label defaults to overflow:hidden + no flex-wrap
+   (built for a single-line input), so selecting enough events/campaigns just
+   clips instead of growing the row — let it wrap onto multiple lines.
+   .p-multiselect-display-chip is on the SAME root element as .m-grow (not a
+   descendant of it) — compound selector, no space between the two. */
+.m-grow .p-multiselect-label-container { overflow: visible; }
+.m-grow.p-multiselect-display-chip .p-multiselect-label { flex-wrap: wrap; overflow: visible; }
+/* widths sized to each control's longest label (+ select chrome) so values stay fully visible */
+.notbtn { min-width: 58px; flex: none; }
+.cond-type { width: 120px; flex: none; }            /* 'Activity' */
+.f-key { flex: 1 1 150px; min-width: 140px; }       /* fact key — grows, long keys visible */
+.f-op { flex: 0 1 auto; min-width: 116px; }         /* 'present' / 'count' */
+.f-cmp { flex: none; min-width: 64px; }             /* ≥ / ≤ */
+.f-val { flex: 1 1 130px; min-width: 120px; }       /* fact value — 'lapsed' fully visible, grows */
+.f-num { width: 66px; flex: none; }                 /* a count threshold — a short number */
+.f-win-lab { flex: none; margin-inline-start: 4px; } /* "Lookback" — no fixed width, sits inline in the row */
+/* PrimeVue's InputNumber is a wrapper <span> around its own <input>, and the
+   input does NOT inherit the wrapper's width — left alone it keeps its
+   default ~203px and overflows, sliding under the neighbouring control and
+   protruding past it as a stray white box. Size both. */
+.f-win-num { width: 64px; flex: none; }             /* the lookback amount — a short number */
+.f-win-num input { width: 100%; }
+.f-win-unit { width: 92px; flex: none; }            /* 'hours' / 'days' / 'weeks' */
+/* keep every select's text from clipping: the label area fills its box, no ellipsis */
+.cond .p-select-label, .cond .p-multiselect-label { text-overflow: clip; }

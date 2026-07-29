@@ -6,7 +6,7 @@
 
 The SMS counterpart to [`whitebox-pro-server-plugin-mail`](../server-plugin-mail): outbound sending (single + bulk), inbound replies with **STOP/START opt-out**, **delivery-status (DLR) tracking**, and the two block lists every sender needs (suppressed / undeliverable). Every send and reply becomes part of the customer's awareness profile (channel `sms`).
 
-The **provider is pluggable and routed by destination.** The plugin owns the plumbing; provider packages own transport, webhook authenticity, and payload shapes. [`whitebox-pro-sms-twilio`](../whitebox-pro-sms-twilio) and [`whitebox-pro-sms-mobica`](../whitebox-pro-sms-mobica) ship today — and a single deployment can use **both at once**, routed by phone prefix.
+The **provider is pluggable and routed by destination.** The plugin owns the plumbing; provider packages own transport, webhook authenticity, and payload shapes. `whitebox-pro-sms-twilio` and `whitebox-pro-sms-mobica` ship today — each in its own repo under `../whitebox-pro-integrations/` (see the root README) — and a single deployment can use **both at once**, routed by phone prefix.
 
 ## Provider routing
 
@@ -52,7 +52,23 @@ Canonical status vocabulary: `queued → sent → delivered / undelivered / fail
 
 ## Shared DLR endpoints (fan-out)
 
-Some providers (e.g. Mobica) allow only **one** delivery-callback URL per account, with no per-message override. To run several instances on one such account, fan that URL out to every instance: the status handler advances a row **only** when the report's message id matches one of *its own* sends, and stays completely silent otherwise — no status event, no awareness, no blocklisting of another instance's recipient. This requires the message id to be globally unique across instances; the Mobica provider's `instanceId` prefix guarantees that. See [`whitebox-pro-sms-mobica`](../whitebox-pro-sms-mobica#multi-instance-dlr-fan-out-instanceid).
+Some providers (e.g. Mobica) allow only **one** delivery-callback URL per account, with no per-message override. To run several instances on one such account, fan that URL out to every instance: the status handler advances a row **only** when the report's message id matches one of *its own* sends, and stays completely silent otherwise — no status event, no awareness, no blocklisting of another instance's recipient. This requires the message id to be globally unique across instances; the Mobica provider's `instanceId` prefix guarantees that. See `whitebox-pro-sms-mobica`'s README (§ multi-instance DLR fan-out / instanceId).
+
+## MCP tools
+
+Five tools are registered on the shared `/mcp` server, gated by the host's MCP auth (`config.mcp.auth`) — not this plugin's own `auth` option, which only guards the REST routes above. `registerMcp` is a no-op when the host has no MCP server (`ctx.mcp` falsy): no tools mounted, no error.
+
+| tool | purpose |
+|---|---|
+| `sms.send` | queue an SMS (body or template) to an E.164 number; returns the outbox row |
+| `sms.outbox_get` | fetch one outbox row by id — status, recipient, body, provider, timestamps, segments |
+| `sms.inbox_list` | list inbound SMS (replies, STOP/START), most-recent-first; filter by passport or date |
+| `sms.suppress` | add a phone number to the suppression (opt-out) list |
+| `sms.unsuppress` | remove a phone number from the suppression list |
+
+`sms.send` calls the same `outbox.queueSend()` the REST `POST /sms/outbox` route uses, so it queues onto the same worker and is routed to a provider by `router.forNumber` (default + per-prefix overrides, longest match wins) exactly as REST sends are — no separate MCP-side routing.
+
+Not exposed over MCP: bulk send/cancel (`/sms/bulk*`), the invalid-number list (`/sms/invalid`), and inbound/DLR webhooks — those stay REST/provider-callback only. No resources are registered, only tools.
 
 ## Compliance: STOP/START
 

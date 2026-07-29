@@ -192,6 +192,30 @@ describe('outbox.create idempotency', () => {
   })
 })
 
+describe('outbox.queueSend', () => {
+  it('creates a row, enqueues a send job, and notifies mail.queued', async () => {
+    const { outbox, queue, notify } = makeOutbox()
+    const row = await outbox.queueSend({ to: 'a@b.com', subject: 'Hi', text: 'hello' })
+    expect(row.status).toBe('queued')
+    expect(queue.add).toHaveBeenCalledWith('send', { id: row.id }, { jobId: undefined })
+    expect(notify).toHaveBeenCalledWith('mail.queued', { type: 'mail.queued', data: row })
+  })
+
+  it('reuses the existing row on a repeat idempotencyKey and re-enqueues under the SAME jobId', async () => {
+    // outbox.js itself doesn't suppress the second enqueue — the actual
+    // dedup guarantee is BullMQ's own "same jobId = no-op" behavior on a
+    // real Queue. This test only verifies the jobId stays deterministic
+    // across repeat calls, which is what that guarantee depends on.
+    const { outbox, queue } = makeOutbox()
+    const first = await outbox.queueSend({ to: 'a@b.com', subject: 'Hi', text: 'hello', idempotencyKey: 'journey:enr1:step1' })
+    const second = await outbox.queueSend({ to: 'a@b.com', subject: 'Hi', text: 'hello', idempotencyKey: 'journey:enr1:step1' })
+    expect(second.id).toBe(first.id)
+    expect(queue.add).toHaveBeenCalledTimes(2)
+    expect(queue.add.mock.calls[0][2]).toEqual({ jobId: 'journey:enr1:step1' })
+    expect(queue.add.mock.calls[1][2]).toEqual({ jobId: 'journey:enr1:step1' })
+  })
+})
+
 describe('outbox.failed', () => {
   it('marks row as failed when terminal', async () => {
     const { outbox, db } = makeOutbox()

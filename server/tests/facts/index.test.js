@@ -61,6 +61,62 @@ describe('facts.record + current', () => {
   })
 })
 
+describe('facts.recordMany (bulk)', () => {
+  it('lands the same fact on every passport in one statement', async () => {
+    const ps = [await newPassport(), await newPassport(), await newPassport()]
+    const rows = await facts.recordMany({ passport_ids: ps, key: 'segment', value: 'vip', source: 'people' })
+    expect(rows).toHaveLength(3)
+    for (const p of ps) expect(await facts.current(p)).toEqual({ segment: 'vip' })
+  })
+
+  // one act, one timestamp — per-row clocks would order a single bulk write
+  // arbitrarily against itself
+  it('stamps the whole batch with one observed_at', async () => {
+    const ps = [await newPassport(), await newPassport()]
+    const rows = await facts.recordMany({ passport_ids: ps, key: 'segment', value: 'vip' })
+    expect(new Set(rows.map(r => +r.observed_at)).size).toBe(1)
+  })
+
+  // the same merge resolution record() does — a row on a tombstone is invisible
+  it('resolves merged ids and writes the survivor once, not twice', async () => {
+    const survivor = await newPassport()
+    const absorbed = await newPassport()
+    mergeMap[absorbed] = survivor
+    const rows = await facts.recordMany({ passport_ids: [survivor, absorbed], key: 'segment', value: 'vip' })
+    // two ids in, ONE row out: they are the same person
+    expect(rows).toHaveLength(1)
+    expect(rows[0].passport_id).toBe(survivor)
+  })
+
+  it('infers types per value, the same way record() does', async () => {
+    const ps = [await newPassport(), await newPassport()]
+    await facts.recordMany({ passport_ids: ps, key: 'mrr', value: 240 })
+    expect(await facts.current(ps[0])).toEqual({ mrr: 240 })
+    expect(await facts.get(ps[1], 'mrr')).toBe(240)
+  })
+
+  it('is a no-op on an empty id list and validates like record()', async () => {
+    expect(await facts.recordMany({ passport_ids: [], key: 'k', value: 'v' })).toEqual([])
+    await expect(facts.recordMany({ passport_ids: ['x'], value: 'v' })).rejects.toThrow(/key is required/)
+    await expect(facts.recordMany({ passport_ids: ['x'], key: 'k' })).rejects.toThrow(/value is required/)
+  })
+})
+
+describe('facts.usedKeys', () => {
+  // there is no fixed fact vocabulary, so the keys in use ARE the vocabulary
+  it('returns every key in use, deduped and sorted, across all passports', async () => {
+    const [a, b] = [await newPassport(), await newPassport()]
+    await facts.record({ passport_id: a, key: 'plan_tier', value: 'pro' })
+    await facts.record({ passport_id: b, key: 'plan_tier', value: 'free' })
+    await facts.record({ passport_id: b, key: 'mrr', value: 10 })
+    expect(await facts.usedKeys()).toEqual(['mrr', 'plan_tier'])
+  })
+
+  it('is empty before anything is recorded', async () => {
+    expect(await facts.usedKeys()).toEqual([])
+  })
+})
+
 describe('facts.asOf (time travel)', () => {
   it('returns the value as it stood at a past instant', async () => {
     const p = await newPassport()

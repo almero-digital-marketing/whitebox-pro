@@ -69,8 +69,9 @@ Switch on the channels you use; each one quietly feeds the same per‑customer m
 | 📞 | **Voice** | inbound calls matched back to the visitor, recorded and transcribed |
 | 🗂️ | **CRM** | subscriptions, deals, plan, status — the structured state from whatever systems you already run |
 
-Everyone is **one identity**: an email, a phone number, a login and a web visit all merge
-into a single customer, so a call, a click and a reply belong to the same person.
+Everyone is **one person**: an email, a phone number, a login and a web visit all merge
+into a single customer — however many of each they turn out to have — so a call, a click
+and a reply belong to the same person.
 
 ---
 
@@ -92,16 +93,41 @@ channel is its own plug‑in package.
 
 ### Server · Node.js · Express · BullMQ · Postgres + pgvector
 
+**Core**
+
 | package | what it does |
 |---|---|
-| [`whitebox-pro-server`](server) | Core: HTTP server, the two customer memories (semantic + structured), the query engine, identity, sessions, MCP, plugin loader |
+| [`whitebox-pro-server`](server) | HTTP server, the two customer memories (semantic awareness + structured facts), the query/selector engine, passports & identity, sessions, the event registry, MCP, plugin loader |
+
+**Channels** — put touches *into* the memory
+
+| package | what it does |
+|---|---|
 | [`whitebox-pro-server-plugin-mail`](server-plugin-mail) | Email — outbound (transactional + bulk), inbound, tracking, suppressions |
 | [`whitebox-pro-server-plugin-sms`](server-plugin-sms) | SMS — send, replies, opt‑outs, delivery receipts |
 | [`whitebox-pro-server-plugin-voip`](server-plugin-voip) | Voice — call tracking, recording, transcription |
 | [`whitebox-pro-server-plugin-crm`](server-plugin-crm) | CRM — webhook ingestion of customer state into the memory |
 | [`whitebox-pro-server-plugin-engagement`](server-plugin-engagement) | Web — text / image / video engagement tracking |
+| [`whitebox-pro-server-plugin-conversions`](server-plugin-conversions) | Conversion events from the browser, fanned out to the ad networks and deduped against their pixels |
+| [`whitebox-pro-server-plugin-geolocation`](server-plugin-geolocation) | Passive IP geolocation, recorded as facts — no permission prompt, no extra request |
+| [`whitebox-pro-server-plugin-shortener`](server-plugin-shortener) | Branded short links that bind a visitor's session to a known customer on click |
+
+**Surfaces** — read the memory and act on it
+
+| package | what it does |
+|---|---|
 | [`whitebox-pro-server-plugin-analytics`](server-plugin-analytics) | Ask & recall over the customer memory |
-| [`whitebox-pro-server-plugin-audiences`](server-plugin-audiences) | Turn a question into a living ad‑network audience |
+| [`whitebox-pro-server-plugin-audiences`](server-plugin-audiences) | Turn a question into a living ad‑network audience, plus hand‑built static lists |
+| [`whitebox-pro-server-plugin-campaigns`](server-plugin-campaigns) | One email/SMS send to one or more audiences, with delivery results |
+| [`whitebox-pro-server-plugin-journeys`](server-plugin-journeys) | Multi‑step, trigger‑driven automation — wait, branch, add to a list, trigger a campaign |
+| [`whitebox-pro-server-plugin-people`](server-plugin-people) | Look one customer up: every identity and fact, merge duplicates, GDPR erase. Owns no tables |
+| [`whitebox-pro-server-plugin-oauth`](server-plugin-oauth) | Self‑hosted OAuth 2.1 server — login, PKCE, JWKS — so the console and MCP need no external IdP |
+
+### Admin console · Vue 3 · PrimeVue
+
+| package | what it does |
+|---|---|
+| [`whitebox-pro-ui`](ui) | The operator UI over the surface plugins — analytics, audiences, campaigns, journeys, people, users. **Not** an npm workspace: `cd ui && npm install && npm run dev` |
 
 ### Client · browser SDK
 
@@ -109,7 +135,7 @@ channel is its own plug‑in package.
 |---|---|
 | [`whitebox-pro-client`](client) | Core: transport, identity, consent, plugin host |
 | [`whitebox-pro-client-plugin-engagement`](client-plugin-engagement) | Reading / viewing / watching trackers |
-| [`whitebox-pro-client-plugin-mail`](client-plugin-mail) · [`-voip`](client-plugin-voip) · [`-conversions`](client-plugin-conversions) · [`-crm`](client-plugin-crm) | Contact forms · trackable numbers · conversion events · client observations |
+| [`whitebox-pro-client-plugin-mail`](client-plugin-mail) · [`-voip`](client-plugin-voip) · [`-conversions`](client-plugin-conversions) · [`-crm`](client-plugin-crm) · [`-geolocation`](client-plugin-geolocation) · [`-shortener`](client-plugin-shortener) | Contact forms · trackable numbers · conversion events · client observations · coarse location · claim‑token redemption |
 
 ### Integrations (their own repos)
 
@@ -133,6 +159,12 @@ npm install          # postinstall links present integrations; a no-op when ther
 npm install          # one install wires every workspace (no npm link)
 npm test             # run all package suites
 npm test --workspace=whitebox-pro-server-plugin-mail   # one package
+```
+
+The admin console is outside the workspaces, so it installs on its own:
+
+```bash
+cd ui && npm install && npm run dev
 ```
 
 Tests spin up a throwaway Neon branch per run — copy `.env.test.example` to `.env.test`.

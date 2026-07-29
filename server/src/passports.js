@@ -5,6 +5,12 @@ import logger from './logger.js'
 const PASSPORTS = 'whitebox_passports'
 const IDENTITIES = 'whitebox_passports_identities'
 const MERGES = 'whitebox_passports_merges'
+// The audiences plugin's ad-signal rows. Core doesn't own the table and works
+// fine without it, but it's the one other place where `passport_id` sits inside
+// a unique constraint — `unique(passport_id, name)` — so a blind re-point on
+// merge would collide. Named here so merge()/erase() can give it the same
+// per-row dedupe identities get, instead of blowing up.
+const SIGNALS = 'whitebox_audience_signals'
 
 // Identity types used as merge keys — if two passports share one, they are the same person
 const STRONG = new Set(['fingerprint', 'phone', 'email', 'user'])
@@ -150,6 +156,57 @@ export async function link(passportId, items) {
   }
 }
 
+// Every table that references whitebox_passports(id), discovered from the
+// Postgres catalog rather than a hardcoded list — so a new plugin table is
+// covered the moment it declares its FK, with no change here. merge() and
+// erase() share this so they can never drift on which tables they reach.
+//
+// Only single-column FKs: a composite key referencing passports isn't a
+// per-passport row and can't be blindly re-pointed or deleted.
+async function passportReferences(trx = db) {
+  const { rows } = await trx.raw(`
+    SELECT cl.relname AS tbl, a.attname AS col
+    FROM pg_constraint con
+    JOIN pg_class cl     ON cl.oid = con.conrelid
+    JOIN pg_attribute a  ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+    WHERE con.contype = 'f'
+      AND con.confrelid = 'whitebox_passports'::regclass
+      AND array_length(con.conkey, 1) = 1
+  `)
+  return rows
+}
+
+// Every UNIQUE/PK constraint that includes a passport column, with its OTHER
+// columns. merge() re-points rows from the absorbed passport to the survivor,
+// which is a plain UPDATE — and a plain UPDATE throws the moment the survivor
+// already holds a row with the same (other columns, passport_id). Discovering
+// those constraints from the catalog, the same way passportReferences() does
+// for the FKs, means a new plugin table with a per-passport uniqueness rule is
+// handled the day it's created rather than the day merge first throws on it.
+async function passportUniques(trx = db) {
+  const { rows } = await trx.raw(`
+    SELECT cl.relname AS tbl,
+           pcol.attname AS passport_col,
+           -- ::text is load-bearing: attname is Postgres's "name" type, and
+           -- node-postgres has no parser for name[], so aggregating it raw
+           -- hands back the literal string '{segment_id}' instead of an array.
+           array_remove(array_agg(ocol.attname::text), pcol.attname::text) AS other_cols
+    FROM pg_constraint con
+    JOIN pg_class cl        ON cl.oid = con.conrelid
+    JOIN pg_constraint fk   ON fk.conrelid = con.conrelid
+                           AND fk.contype = 'f'
+                           AND fk.confrelid = 'whitebox_passports'::regclass
+                           AND array_length(fk.conkey, 1) = 1
+    JOIN pg_attribute pcol  ON pcol.attrelid = con.conrelid AND pcol.attnum = fk.conkey[1]
+    JOIN pg_attribute ocol  ON ocol.attrelid = con.conrelid AND ocol.attnum = ANY (con.conkey)
+    WHERE con.contype IN ('u', 'p')
+      AND pcol.attnum = ANY (con.conkey)          -- the passport column is part of it
+      AND array_length(con.conkey, 1) > 1         -- ...alongside something else
+    GROUP BY cl.relname, pcol.attname
+  `)
+  return rows
+}
+
 // Merge `absorbed` into `survivor`: move every reference onto the survivor and
 // record the merge so resolve() forwards future hits. NON-DESTRUCTIVE — the
 // absorbed passport is kept as a childless tombstone (no CASCADE data loss, no
@@ -181,25 +238,50 @@ export async function merge(survivorId, absorbedId) {
         }
       }
 
-      // 2. Every OTHER table with a single-column FK to whitebox_passports(id),
-      //    discovered from the catalog. passport_id is never part of a unique
-      //    constraint outside identities (handled above), so a blind re-point is
-      //    safe. (This also compacts whitebox_passports_merges.survivor_id.)
-      const { rows } = await trx.raw(`
-        SELECT cl.relname AS tbl, a.attname AS col
-        FROM pg_constraint con
-        JOIN pg_class cl     ON cl.oid = con.conrelid
-        JOIN pg_attribute a  ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
-        WHERE con.contype = 'f'
-          AND con.confrelid = 'whitebox_passports'::regclass
-          AND array_length(con.conkey, 1) = 1
-      `)
-      for (const { tbl, col } of rows) {
-        if (tbl === IDENTITIES) continue
-        await trx(tbl).where(col, absorbedId).update({ [col]: survivorId })
+      // 2. Ad signals, if the audiences plugin is installed. Same problem shape
+      //    as a weak identity — unique(passport_id, name) — so the same fix:
+      //    move a signal the survivor lacks, drop one it already has. Keeping
+      //    the survivor's value is deliberate; on a merge the survivor is the
+      //    identity we're consolidating onto, so its click ids are the ones
+      //    still in play.
+      if (await trx.schema.hasTable(SIGNALS)) {
+        const theirs = await trx(SIGNALS).where({ passport_id: absorbedId })
+        for (const sig of theirs) {
+          const dup = await trx(SIGNALS).where({ passport_id: survivorId, name: sig.name }).first()
+          if (dup) await trx(SIGNALS).where({ id: sig.id }).del()
+          else await trx(SIGNALS).where({ id: sig.id }).update({ passport_id: survivorId })
+        }
       }
 
-      // 3. Record the alias so resolve() forwards absorbed → survivor. The
+      // 3. Every OTHER table with a single-column FK to whitebox_passports(id),
+      //    discovered from the catalog — so a new plugin's table is re-pointed
+      //    the day it declares its FK. (This also compacts
+      //    whitebox_passports_merges.survivor_id.)
+      //
+      //    A table whose uniqueness includes the passport column can't take a
+      //    blind UPDATE: if the survivor already holds the same (other cols,
+      //    passport), it collides. Those are found from the catalog too and
+      //    deduped row by row — move what the survivor lacks, drop what it
+      //    already has. The survivor's row wins, matching steps 1 and 2:
+      //    on a merge the survivor is the identity being consolidated onto.
+      const uniques = new Map(
+        (await passportUniques(trx)).map(u => [u.tbl, u]))
+      for (const { tbl, col } of await passportReferences(trx)) {
+        if (tbl === IDENTITIES || tbl === SIGNALS) continue   // both handled above
+        const uniq = uniques.get(tbl)
+        if (!uniq) {
+          await trx(tbl).where(col, absorbedId).update({ [col]: survivorId })
+          continue
+        }
+        for (const row of await trx(tbl).where(col, absorbedId)) {
+          const match = Object.fromEntries(uniq.other_cols.map(c => [c, row[c]]))
+          const dup = await trx(tbl).where({ ...match, [col]: survivorId }).first()
+          if (dup) await trx(tbl).where(row).del()
+          else await trx(tbl).where(row).update({ [col]: survivorId })
+        }
+      }
+
+      // 4. Record the alias so resolve() forwards absorbed → survivor. The
       //    absorbed passport row stays (now childless) — we do NOT delete it.
       await trx(MERGES).insert({ absorbed_id: absorbedId, survivor_id: survivorId })
     })
@@ -209,6 +291,173 @@ export async function merge(survivorId, absorbedId) {
   }
 
   return survivorId
+}
+
+// Permanently delete a passport and everything referencing it — the
+// right-to-be-forgotten counterpart to merge(). DESTRUCTIVE and irreversible;
+// merge() is the non-destructive option and stays the default for "these are
+// the same person".
+//
+// Uses the same passportReferences() discovery as merge(), so the two can never
+// disagree about which tables constitute "this person's data" — the failure
+// mode that makes an erasure quietly incomplete. Returns per-table row counts
+// so a caller can show, and log, exactly what was removed.
+//
+// Also clears merge aliases in BOTH directions: rows where this passport was
+// absorbed (so resolve() stops forwarding to a now-deleted id) and rows where
+// it was the survivor (so an older absorbed id doesn't resolve into a void).
+export async function erase(passportId) {
+  const id = await resolve(passportId)
+  // resolve() only follows the merge chain — it hands back an unknown id
+  // unchanged rather than proving the passport exists. Without this check
+  // erase() would delete nothing, then report success for someone who was
+  // never here, which is exactly the wrong answer to give about an erasure.
+  if (!id || !(await db(PASSPORTS).where({ id }).first())) return null
+
+  const acquired = await lock.acquire(`passport:erase:${id}`, 5000)
+  const removed = {}
+  try {
+    await db.transaction(async trx => {
+      for (const { tbl, col } of await passportReferences(trx)) {
+        if (tbl === MERGES) continue                      // handled explicitly below
+        const n = await trx(tbl).where(col, id).del()
+        if (n) removed[tbl] = n
+      }
+      // A merged person is ONE person holding several passport ids. Erasing
+      // only the survivor would leave every absorbed id behind as a bare,
+      // unresolvable row — no PII in it, but still an identifier belonging to
+      // someone who asked to be forgotten. Collect the whole chain first, then
+      // drop the aliases, then every passport in it.
+      const absorbed = (await trx(MERGES).where({ survivor_id: id }).select('absorbed_id'))
+        .map(r => r.absorbed_id)
+      const aliases = await trx(MERGES).where({ absorbed_id: id }).orWhere({ survivor_id: id }).del()
+      if (aliases) removed[MERGES] = aliases
+      const self = await trx(PASSPORTS).whereIn('id', [id, ...absorbed]).del()
+      if (self) removed[PASSPORTS] = self
+    })
+    logger.info({ passport_id: id, removed }, 'Erased passport')
+  } finally {
+    await lock.release(acquired)
+  }
+  return { id, removed }
+}
+
+// Detach one identity from a passport — for correcting a bad match (a shared
+// device that linked the wrong email, say). Scoped to the passport on purpose:
+// an id alone would let a caller delete any row in the table.
+export async function unlink(passportId, identityId) {
+  const pid = await resolve(passportId)
+  if (!pid) return 0
+  return db(IDENTITIES).where({ id: identityId, passport_id: pid }).del()
+}
+
+// Everything known about one passport, assembled from the two stores that
+// actually hold it. No display-name concept and no fact-key assumptions —
+// facts are optional and their keys are arbitrary (a deployment may have none,
+// or call a name anything), so this returns whatever is there and leaves
+// presentation to the caller.
+export async function get(passportId, { facts } = {}) {
+  const id = await resolve(passportId)
+  if (!id) return null
+  const row = await db(PASSPORTS).where({ id }).first()
+  if (!row) return null
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    last_seen_at: row.last_seen_at,
+    identities: await db(IDENTITIES).where({ passport_id: id })
+      .select('id', 'type', 'name', 'value', 'created_at', 'last_seen_at')
+      .orderBy('last_seen_at', 'desc'),
+    facts: facts ? await facts.current(id) : {},
+  }
+}
+
+// The three places a search term can be looked for. Exported because they're a
+// vocabulary the transports validate against and the UI renders as checkboxes —
+// there must be exactly one list, not a copy per layer.
+export const SEARCH_FIELDS = ['identities', 'facts', 'id']
+
+// Find people. `q` matches an identity value (email/phone/user/fingerprint), an
+// arbitrary FACT value — key-agnostic, never naming a key, because keys differ
+// per deployment — or a passport id.
+//
+// `fields` narrows which of those to look in; omitted (or unrecognised) means
+// all three, so every existing caller keeps its behaviour. Narrowing matters
+// because the three overlap in practice: a numeric term hits phone identities
+// AND order-total facts, and there's no way to say which you meant.
+//
+// `includeAnonymous` defaults false: most passports are anonymous web visitors
+// with no identity and no facts (277 vs 49 identified in the dev DB), so an
+// unfiltered list is mostly rows with nothing in them. Callers opt in.
+//
+// Tombstones never appear: an absorbed passport is somebody else now, and
+// returning it would let a caller act on an id that resolve() forwards away.
+export async function search({ q = '', fields, includeAnonymous = false, limit = 50, offset = 0 } = {}) {
+  const term = String(q || '').trim()
+  const like = `%${term}%`
+  // Accepts an array or a comma-separated string, since this arrives from a
+  // query string as often as from a direct call. An empty or entirely
+  // unrecognised selection falls back to all: a filter typo that silently
+  // matches nothing is a worse failure than one that over-matches.
+  const asked = Array.isArray(fields) ? fields : String(fields ?? '').split(',')
+  const picked = asked.map(f => String(f).trim()).filter(f => SEARCH_FIELDS.includes(f))
+  const scope = picked.length ? picked : SEARCH_FIELDS
+  // A whole uuid, but also a PREFIX of one: the rail labels an anonymous person
+  // by the first 8 hex chars of their id, so what's on screen has to be what
+  // you can paste back in. Gated on the term looking like hex, or every short
+  // word would drag the passport table into an id scan too.
+  const idish = term && /^[0-9a-f]+$/i.test(term.replace(/-/g, ''))
+
+  const base = db(PASSPORTS).select(`${PASSPORTS}.id`)
+    // a merged-away passport is no longer a person you can act on
+    .whereNotExists(db(MERGES).select(db.raw(1)).whereRaw(`${MERGES}.absorbed_id = ${PASSPORTS}.id`))
+
+  if (term) {
+    base.where(b => {
+      // A false seed so each enabled scope ORs on unconditionally. It also
+      // gives the right answer for "id only, term isn't an id" — nobody —
+      // rather than an accidental unfiltered list.
+      b.whereRaw('false')
+      if (scope.includes('identities')) {
+        b.orWhereExists(db(IDENTITIES).select(db.raw(1))
+          .whereRaw(`${IDENTITIES}.passport_id = ${PASSPORTS}.id`).andWhere('value', 'ilike', like))
+      }
+      if (scope.includes('facts')) {
+        b.orWhereExists(db('whitebox_facts').select(db.raw(1))
+          .whereRaw(`whitebox_facts.passport_id = ${PASSPORTS}.id`)
+          // #>> '{}' unwraps a jsonb scalar to text without naming a key
+          .andWhereRaw(`value #>> '{}' ILIKE ?`, [like]))
+      }
+      if (scope.includes('id') && idish) {
+        b.orWhereRaw(`${PASSPORTS}.id::text LIKE ?`, [`${term.toLowerCase()}%`])
+      }
+    })
+  } else if (!includeAnonymous) {
+    base.whereExists(db(IDENTITIES).select(db.raw(1))
+      .whereRaw(`${IDENTITIES}.passport_id = ${PASSPORTS}.id`))
+  }
+
+  const [{ count }] = await base.clone().clearSelect().count('* as count')
+  const rows = await base
+    .select(`${PASSPORTS}.created_at`, `${PASSPORTS}.last_seen_at`)
+    .orderByRaw(`${PASSPORTS}.last_seen_at DESC NULLS LAST`)
+    .limit(Math.min(Number(limit) || 50, 200))
+    .offset(Number(offset) || 0)
+
+  // One query for every result's identities rather than N — the rail renders a
+  // "strongest identity + N more" line, so it needs them all, not just a count.
+  const ids = rows.map(r => r.id)
+  const identities = ids.length
+    ? await db(IDENTITIES).whereIn('passport_id', ids)
+        .select('id', 'passport_id', 'type', 'name', 'value', 'last_seen_at')
+    : []
+  const byPassport = new Map(ids.map(id => [id, []]))
+  for (const i of identities) byPassport.get(i.passport_id)?.push(i)
+
+  return {
+    total: Number(count),
+    people: rows.map(r => ({ ...r, identities: byPassport.get(r.id) || [] })),
+  }
 }
 
 // Generic HTTP entry point for attaching identity claims to a passport —

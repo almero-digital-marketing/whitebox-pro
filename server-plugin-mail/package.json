@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-mail",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mail channel for whitebox — outbound (transactional + bulk), inbound (form + provider webhook), tracking, suppressions, invalid list. Pluggable provider (whitebox-pro-mail-mailgun, whitebox-pro-mail-postmark, …).",
   "type": "module",
   "main": "src/index.js",

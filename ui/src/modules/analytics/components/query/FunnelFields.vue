@@ -9,8 +9,10 @@ defineProps<{ model: any }>()
 
 <template>
   <label class="lab row">
-    <i :class="model.kind === 'dropoff' ? 'pi pi-filter-slash ic' : 'pi pi-filter ic'" />{{ model.kind === 'dropoff' ? 'Drop-off steps' : 'Funnel steps' }} <span class="muted small">(top to bottom)</span>
-    <Button icon="pi pi-plus" text rounded size="small" @click="model.addStep()" />
+    {{ model.kind === 'dropoff' ? 'Drop-off steps' : 'Funnel steps' }} <span class="muted small">(top to bottom)</span>
+    <Button text rounded size="small" @click="model.addStep()">
+      <template #icon><span class="material-symbols-outlined">add</span></template>
+    </Button>
   </label>
   <p class="hint">{{ model.kind === 'dropoff'
     ? 'Same ordered stages as a funnel — the chart shows how many people are LOST between each step (the re-engagement audiences).'
@@ -19,7 +21,9 @@ defineProps<{ model: any }>()
     <span class="step-n">{{ i + 1 }}</span>
     <InputText v-model="s.name" class="step-name" placeholder="Label" />
     <Select v-model="s.event" :options="model.eventOpts" optionLabel="label" optionValue="value" filter placeholder="event action" class="step-tag" />
-    <Button icon="pi pi-times" text rounded size="small" severity="secondary" @click="model.removeStep(i)" />
+    <Button text rounded size="small" severity="secondary" @click="model.removeStep(i)">
+      <template #icon><span class="material-symbols-outlined">close</span></template>
+    </Button>
   </div>
   <p v-if="!model.steps.length" class="hint">No steps yet — add the stages in order.</p>
 </template>

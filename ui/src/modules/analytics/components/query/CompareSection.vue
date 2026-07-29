@@ -6,13 +6,13 @@ import Select from 'primevue/select'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import ToggleSwitch from 'primevue/toggleswitch'
-import ConditionRow from './ConditionRow.vue'
+import ConditionRow from '../../../../shared/query/ConditionRow.vue'
 defineProps<{ model: any }>()
 </script>
 
 <template>
   <label class="lab row">
-    <i class="pi pi-clone ic" />Compare
+    Compare
     <ToggleSwitch v-model="model.compareOn" class="cmp-sw" />
   </label>
   <p class="hint">Overlay several series — e.g. active vs lapsed — to compare them side by side.</p>
@@ -32,7 +32,7 @@ defineProps<{ model: any }>()
     </template>
 
     <template v-else>
-      <label class="lab row"><i class="pi pi-list ic" />Series <Button icon="pi pi-plus" text rounded size="small" @click="model.addSeries()" /></label>
+      <label class="lab row">Series <Button text rounded size="small" @click="model.addSeries()"><template #icon><span class="material-symbols-outlined">add</span></template></Button></label>
       <p class="hint">Each series is a named cohort, measured the same way. e.g. <code>opened email</code> vs <code>got a call</code>.</p>
       <ConditionRow v-for="(s, i) in model.customSeries" :key="i" compact :condition="s.c"
         :fact-keys="model.factKeys" :event-opts="model.eventOpts"
@@ -43,7 +43,7 @@ defineProps<{ model: any }>()
     </template>
 
     <template v-if="model.canStack">
-      <label class="lab"><i class="pi pi-chart-bar ic" />Stack</label>
+      <label class="lab">Stack</label>
       <div class="seg">
         <button type="button" class="seg-btn" :class="{ on: model.stackMode === 'group' }" @click="model.stackMode = 'group'">{{ model.kind === 'timeseries' ? 'Lines' : 'Grouped' }}</button>
         <button type="button" class="seg-btn" :class="{ on: model.stackMode === 'stack' }" @click="model.stackMode = 'stack'">Stacked</button>

@@ -104,12 +104,29 @@ That's it. Analytics will collect from that provider on every `/ask` and include
 ## File layout
 
 ```
-src/plugins/analytics/
-├── index.js          - HTTP routes, Zod schemas, auth
-└── README.md
+src/
+├── index.js              - plugin factory: permissions, migrate(), mounts both REST surfaces + both MCP registrations
+├── routes.js             - original awareness-query REST routes (recall/population/timeline/context/forget/ask/ask-population)
+├── mcp.js                - original 7 MCP tools (whitebox.*)
+├── ask.js                - /ask + /ask-population handlers (system prompt, evidence formatting)
+├── migrations/           - whitebox_reports / whitebox_widgets schema, tracked in whitebox_analytics_migrations
+└── composition/
+    ├── routes.js         - Reports/Widgets REST surface; also exports runQuery/enrichPeople/composeReport/
+    │                        widgetSummary/compactForExplain, reused by composition/mcp.js
+    ├── store.js          - knex CRUD over whitebox_reports / whitebox_widgets; broadcasts analytics.changed
+    │                        over Socket.IO on every mutation
+    ├── compose.js        - the AI compose loop: composeWidgets / describeQuery / explainWidget /
+    │                        explainPerson / suggestQuestions / discoverSchema
+    ├── mcp.js             - the 18 composition MCP tools (analytics_*)
+    ├── mask.js            - PII masking (email/phone) for the people table + LLM prompts
+    └── histogram.js       - pure histogram binning for `distribution` widgets
 ```
 
-No migrations. No worker. No DB tables. Just routes.
+There ARE migrations now, and there ARE DB tables: `whitebox_reports` and `whitebox_widgets`, migrated via a
+dedicated `whitebox_analytics_migrations` tracking table (see `migrate()` in `index.js`). What's still true is
+**no worker / background job** — the composition surface resolves every query live, on every call; the only
+thing ever persisted beyond the reports/widgets themselves is a widget's lazily-generated `summary` (regenerated
+only when its query changes) plus small in-process `explain`/`suggest` caches keyed by a result fingerprint.
 
 ## Endpoints
 
@@ -402,15 +419,207 @@ Deletes all exposures + chunks for that passport (chunks cascade via FK). Return
 
 Fires the `awareness.forgotten` notify event so external systems can react (mail row deletion, voip recording purge, etc.).
 
+## Composition surface
+
+Everything above is the original ask-anything / recall surface. Composition is a second REST surface, mounted
+on the same `/analytics` prefix — the backend for the three-pane analytics console (report list → report canvas
+of widgets → per-widget Query/Agent view). It owns its own state (`whitebox_reports`, `whitebox_widgets`) and
+layers an AI "just ask" loop, an AI co-pilot (describe/explain/suggest), and live query resolution on top of the
+core selector engine.
+
+A **report** is a named board with an ordered list of **widgets**. A **widget** is one chart/table/answer on
+that board, and stores a **query def** — a small JSON object describing what to fetch, not the fetched data
+itself:
+
+```js
+{ selector?, group?, projection?, scope?, passport?, asOf?, limit?,   // selector path
+  funnel?, named?,                                                    // funnel path
+  breakdownFact?: { key, values[] },                                  // fact-value split
+  distribution?: { source, key, bins?, maxBins? },                    // histogram
+  scatter?: { x, y, colorBy?, limit? },                                // two-numeric-fact scatter
+  cohort?: { event?, grain?, periods? },                               // retention grid
+  series?: [{ name, query }], splitBy?: { key, values[] },             // multi-series compare
+  question? }                                                          // grounded natural-language answer
+```
+
+See the header comment in `src/composition/routes.js` (lines 1–24) for the canonical shape, and the system
+prompt in `src/composition/compose.js` for the full grammar the AI is taught — it doubles as the best reference
+for hand-writing a query def.
+
+`kind` (one of 14) picks how a resolved query def renders:
+
+- **`stat`** — a single cohort count (people count)
+- **`timeseries`** — a measure bucketed over time (day/week/month)
+- **`breakdown`** — a measure split by a dimension (a fact, channel, session UTM, or event attribute)
+- **`donut`** — the same query shape as `breakdown`, rendered as a pie (share of total)
+- **`radar`** — the same query shape as `breakdown`, rendered as a polygon (a profile across dimensions)
+- **`distribution`** — a histogram of one numeric fact's value, or an event count, per person
+- **`scatter`** — one dot per person at (factX, factY), optionally colored by a third fact
+- **`pivot` / `heatmap`** — a 2-D compare matrix
+- **`cohort`** — a retention grid — % of each cohort still active k periods later
+- **`funnel`** — ordered steps, each a metric query; renders survivors per step
+- **`dropoff`** — the same funnel shape, rendering the people LOST between each step (the re-engagement audiences)
+- **`table`** — the raw matching people, PII-masked before serialization (see below)
+- **`answer`** — a grounded natural-language answer (`awareness.askPopulation`) — last resort, qualitative only
+
+The filter grammar used inside `selector`/`scope` is a small boolean tree:
+- `fact` — `{ "fact": { "<key>": { "eq"|"ne"|"in"|"gt"|"gte"|"lt"|"lte"|"present": <value> } } }`
+- `metric` — an event aggregate: `{ "metric": { "attrs": { "event": "<name>" }, "count": { "gte": 1 }, "last": "30d" } }` (also `sum`, `distinct_passports`, `session.utm_*`, `channel`)
+- `combine` — `{ "all": [...] }`, `{ "any": [...] }`, `{ "not": ... }`
+- `semantic` — `"about": "<topic words>"` at the selector's top level
+
+### REST endpoints
+
+```
+GET    /analytics/reports                 list reports (newest first, each with widget_count)
+POST   /analytics/reports                 { name, layout? } → report
+GET    /analytics/reports/:id             report + its widgets
+PATCH  /analytics/reports/:id             { name?, layout? }
+DELETE /analytics/reports/:id             (cascades widgets)
+POST   /analytics/reports/:id/widgets     { kind, query, title?, presentation?, position?, provenance?, sort? }
+PATCH  /analytics/widgets/:id             partial widget update
+DELETE /analytics/widgets/:id
+PATCH  /analytics/reports/:id/reorder     { order: [widgetId, …] } — drag-to-reorder
+POST   /analytics/resolve                 run an INLINE query def — live preview, no persistence
+POST   /analytics/widgets/:id/resolve     run a persisted widget's stored query
+POST   /analytics/widgets/:id/summary     the AI's plain-language reading of a widget's query (cached on the row)
+POST   /analytics/compose                 { question, report_id? } → AI assembles + persists widgets
+POST   /analytics/describe                { query } → plain-language question (inverse of compose)
+POST   /analytics/explain                 { id, title, kind, data } → 1–2 sentence insight
+POST   /analytics/people/:id/insight      { context? } → 1–2 sentence profile of one person
+GET    /analytics/suggestions             ?report_id= → "Try one:" question chips
+GET    /analytics/schema                  the queryable vocabulary (fact keys, events, tags) — debug
+```
+
+Read-shaped routes (`GET`, `resolve`, `describe`, `explain`, `suggestions`, `schema`, even `widgets/:id/summary`
+despite it writing a cache onto the row) are gated by `analytics:read`. Anything that creates, edits, or deletes
+a report/widget — including `compose`, because the "just ask" flow persists — requires `analytics:write`.
+
+### Resolve is always live
+
+`/analytics/resolve` and `/analytics/widgets/:id/resolve` re-run the query def against the core selector on
+**every single call** — nothing is cached or materialized. `table`-kind results are passed through
+`enrichPeople()` first, which attaches a display `label` (a known name, or a masked identity) and masked
+`contacts` to each row — raw email/phone never leaves the server (`src/composition/mask.js`).
+
+### Compose: the AI "just ask" loop
+
+`POST /analytics/compose` is how a plain-language question becomes a saved report. `compose.composeWidgets()`
+asks the model — grounded in `discoverSchema()`'s real fact keys/events/campaigns, so it can't invent a
+vocabulary that doesn't exist — for 1–4 widget specs. **Each spec is then validated by actually resolving it**
+before anything is written: a widget whose query the selector rejects is logged and dropped, never persisted
+(`composeReport()` in `composition/routes.js`). Passing an existing `report_id` appends to that report instead
+of creating a new one.
+
+```json
+// POST /analytics/compose
+{ "question": "How many active clients?" }
+```
+```json
+{
+  "report": { "id": "5c1e2f3a-...", "name": "How many active clients?" },
+  "widgets": [
+    {
+      "id": "9a2fbb10-...", "kind": "stat", "title": "Active clients",
+      "query": { "selector": { "filter": { "fact": { "client_status": { "eq": "active" } } } }, "projection": "people" },
+      "provenance": "ai", "sort": 0,
+      "data": { "count": 812 }, "error": null
+    }
+  ]
+}
+```
+
+### The AI co-pilot layer
+
+`describe`, `explain`, `suggest`, and `people/:id/insight` never query the selector for new data — they
+generate insight **text** from a query def or an already-resolved result:
+
+- **describe** — a query def → the plain-language question it answers (the inverse of compose; powers the
+  Query↔Agent toggle in the widget editor).
+- **explain** — a widget's already-rendered result → a 1–2 sentence opportunity/insight ("the cohort worth
+  targeting", "the leak to plug", which series leads). Cached in-process by a fingerprint of
+  `{ id, kind, compactForExplain(data) }` so an unchanged result never re-calls the model.
+- **suggest** (`GET /analytics/suggestions`) — "Try one:" chips, grounded in a clue hierarchy: a report's
+  existing widgets → a meaningful report name → just the raw data vocabulary.
+- **person insight** (`POST /analytics/people/:id/insight`) — a 1–2 sentence profile of one selected person
+  (lifecycle status, LTV, recent activity), with contact-identifier facts stripped before the prompt.
+
+`compactForExplain()` and `widgetSummary()` (both exported from `composition/routes.js`) are shared by REST and
+MCP so the generated text can never diverge by transport.
+
+## MCP tools
+
+Analytics registers **25 MCP tools** in total, from two different files, for two different concerns:
+
+- **`src/mcp.js`** — 7 tools, `whitebox.*` (dot) — ad-hoc awareness Q&A, the same primitives as the original endpoints above
+- **`src/composition/mcp.js`** — 18 tools, `analytics_*` (underscore) — the persisted reports/widgets feature
+
+The `whitebox.` prefix is a deliberate **product-brand** name (it reads as "ask whitebox"), not a plugin-name
+prefix — the composition tools use the plugin's own name instead. Both files are wired from `src/index.js`:
+`registerMcp()` runs unconditionally (same as `mountRoutes()`); `registerCompositionMcp()` only runs when `db`
+and `selector` are present on `ctx` — the identical guard that skips mounting the composition REST routes.
+
+Both tool sets mirror their REST surface **1:1 by calling the exact same underlying functions** — the original
+7 delegate straight to `awareness.ask` / `awareness.recall` / `awareness.population` / etc., and the new 18 call
+`runQuery`, `enrichPeople`, `composeReport`, `widgetSummary`, and `compactForExplain` — all exported from
+`composition/routes.js` **specifically so REST and MCP never diverge**: one implementation, two transports.
+
+### Original 7 — `whitebox.*`
+
+- `whitebox.ask` — grounded Q&A about one customer (`passport_id` + `question`)
+- `whitebox.ask_population` — grounded Q&A about the whole base or a cohort (no `passport_id`)
+- `whitebox.recall` — per-passport semantic search
+- `whitebox.population` — cohort awareness (count + drilldown)
+- `whitebox.timeline` — raw exposure history for one passport
+- `whitebox.context` — inspect the structured context registry for one passport
+- `whitebox.forget` — GDPR forget (irreversible)
+
+### New 18 (composition) — `analytics_*`
+
+**Inspect** (read-only):
+- `analytics_list_reports` — list all reports with `widget_count`
+- `analytics_get_report` — one report with its widgets
+- `analytics_schema` — the queryable vocabulary (fact keys + samples, events, attrs, campaigns, sources, channels)
+- `analytics_suggest_questions` — "Try one:" chips for a report, or generic starters without one
+
+**Author** (AI-native):
+- `analytics_compose` — the "just ask" loop; **persists** a report + validated widgets
+- `analytics_describe_query` — query def → plain-language question; never persists
+- `analytics_widget_summary` — a saved widget's cached AI summary (generated once per query version)
+- `analytics_explain_widget` — resolves a saved widget, returns a 1–2 sentence insight (uncached, unlike REST `/explain`)
+- `analytics_person_insight` — 1–2 sentence profile of one customer
+
+**Resolve** (live, never persists):
+- `analytics_resolve` — run an inline query def
+- `analytics_widget_resolve` — run a persisted widget's stored query
+
+**Act** (guarded — persists a mutation):
+- `analytics_create_report`, `analytics_update_report`, `analytics_delete_report`
+- `analytics_add_widget`, `analytics_update_widget`, `analytics_delete_widget`
+- `analytics_reorder_widgets`
+
 ## Auth
 
-Generic bearer-token middleware from `core/auth.js`. Configured via:
+Two permission scopes gate every route: `analytics:read` (ask questions, view reports, resolve/preview) and
+`analytics:write` (create/edit/delete reports and widgets — including `/compose`, since "just ask" persists).
+Both default **on** for any teammate — unlike Audiences/Campaigns, viewing reports and asking questions isn't
+something that needs an admin's explicit opt-in; the split exists so a teammate *can* be restricted to
+view-only later, not to narrow anyone's access today.
+
+Configured via `resolveReadWriteAuth()` (`whitebox-pro-server/auth`), which accepts:
+- a bare secret string, or `{ secret }` — resolves to the **same** bearer-token verifier for both scopes
+  (matches pre-split behavior exactly)
+- a composed verifier (e.g. `auth0({ … })`)
+- `{ read, write }` — two independent verifiers/secrets, to gate the two scopes differently
 
 ```js
 config.analytics = { auth: { secret: 'your-bearer-token' } }
+// or split them:
+config.analytics = { auth: { read: 'read-only-token', write: 'read-write-token' } }
 ```
 
-If the secret is missing, the plugin fails at startup — analytics endpoints are never accidentally unprotected.
+If either side fails to resolve to a verifier, the plugin fails at startup — analytics endpoints are never
+accidentally unprotected.
 
 Header format:
 ```
@@ -449,7 +658,7 @@ const seen = hits.some(h => h.similarity > 0.8)
 
 For richer flows (LLM-synthesized answers, multi-step queries), the consumer layers that on top — analytics gives you grounded retrieval, your code adds synthesis.
 
-A full client wrapper example is in the project root [README.md](../../../README.md).
+A full client wrapper example is in the project root [README.md](../README.md).
 
 ## What this plugin is NOT
 
@@ -473,31 +682,41 @@ That's it. All other behavior is delegated to `config.awareness`.
 
 ## Operational properties
 
-- **No persistent state.** Restarting the plugin loses nothing.
-- **No background jobs.** No workers, no schedules.
+- **No persistent state — original surface only.** The awareness-query endpoints (`recall`/`population`/
+  `timeline`/`context`/`forget`/`ask`/`ask-population`) are stateless; restarting loses nothing. The composition
+  surface is the exception: reports and widgets persist in Postgres (`whitebox_reports`/`whitebox_widgets`) and
+  survive a restart.
+- **No background jobs.** Still true, composition included — no workers, no schedules, nothing materialized on
+  a timer. Every resolve re-runs live; the only things ever cached are a widget's lazily-generated `summary`
+  (persisted, invalidated on query edit) and small in-process `explain`/`suggest` caches (lost on restart,
+  regenerated on demand).
 - **Stateless requests.** Each request is independent; no session, no rate limiter built in (add at the reverse proxy / WAF layer).
 - **Embedding latency.** Recall and population issue a single embedding call to OpenAI (`text-embedding-3-small` by default — typically ~50ms). Timeline is pure SQL, no LLM call.
 
 ## Test coverage
 
 ```
-tests/plugins/analytics/index.test.js   18 tests
-  - recall: auth required, validation 400, success, error 500
-  - population: auth required, validation 400, success
-  - timeline: filters from query string, success
-  - forget: success, deletion count
-  - ask: auth, validation, success, evidence formatting,
-         empty-recall short-circuit, openai error, limit passthrough
+tests/index.test.js     28 tests  — original REST routes (recall/population/timeline/forget/context/ask/ask-population)
+tests/mcp.test.js       10 tests  — the original 7 whitebox.* MCP tools
+tests/compose.test.js    3 tests  — discoverSchema's fact-label resolution
+                        ————————
+                        41 tests total
 ```
 
-Tests mount the plugin on a fresh Express app with a mocked awareness module. No DB needed.
+Tests mount the plugin on a fresh Express app with a mocked awareness module. No DB needed for `index.test.js`/
+`mcp.test.js`. Note: there is currently no dedicated test file for the composition surface's REST routes
+(`composition/routes.js`) or its 18 MCP tools (`composition/mcp.js`) — `compose.test.js` only covers
+`discoverSchema`'s fact-labeling behavior, not the resolve/compose/CRUD paths.
 
 ## Known gaps
 
 1. **No pagination cursor** — `recall` and `population` cap by `limit`, no way to fetch "next page" of results.
 2. **No saved queries** — every query is independent; can't build named queries / dashboards from within the plugin.
 3. **No rate limiting** — relies on auth gate alone. For production with multiple admin clients, add a rate limiter at the proxy layer.
-4. **No LLM synthesis endpoint** — by design (see "What this plugin is NOT"). Could be added as a thin extra route that pipes recall results through GPT.
+4. ~~No LLM synthesis endpoint~~ — no longer true. The composition surface added `compose`/`describe`/`explain`/
+   `suggestions`/`people/:id/insight` (see "Composition surface" above), all LLM-backed beyond `/ask`. What's
+   still true: none of them is a generic "pipe anything through GPT" route — each is purpose-built for one
+   insight shape.
 5. **No streaming** — long timelines load fully into memory before serializing.
 
 ## Extending
