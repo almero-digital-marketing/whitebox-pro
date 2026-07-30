@@ -347,18 +347,51 @@ describe('summary() status — collected from whoever can describe themselves', 
 describe('status() — live reporting on itself', () => {
   const stats = (over = {}) => () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0, ...over })
 
-  it('reports dashboards, streamed and dropped, all as current state', async () => {
+  // live's row carries BOTH kinds of number, which no other plugin's does: the
+  // traffic aggregates are windowed, the pipeline counters are process-lifetime.
+  it('reports the windowed traffic aggregates and the current-state pipeline', async () => {
     service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: stats({ received: 412, subscribers: 2 }) })
     const s = await service.status({ since: new Date() })
     expect(s.label).toBe('live')
-    expect(s.metrics).toEqual([
-      { key: 'dashboards', value: 2, live: true },
-      { key: 'streamed', value: 412, live: true },
-      { key: 'dropped', value: 0, severity: 'bad', live: true },
+    expect(s.metrics.map(m => m.key)).toEqual([
+      'events/min', 'in', 'out', 'internal', 'people active',
+      'dashboards', 'streamed', 'dropped',
     ])
-    // Nothing here is windowed — process-lifetime totals and a socket.io read.
-    expect(s.metrics.every(m => m.live)).toBe(true)
+    expect(s.metrics.filter(m => m.live).map(m => m.key)).toEqual(['dashboards', 'streamed', 'dropped'])
+    expect(s.metrics.filter(m => !m.live).map(m => m.key))
+      .toEqual(['events/min', 'in', 'out', 'internal', 'people active'])
     expect(s.note).toBeNull()
+  })
+
+  it('folds the registry counts into directions, exactly as the header does', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'mail.sent', count: 60 },
+        { type: 'crm.deal', count: 30 },
+        { type: 'journey.enrolled', count: 10 },
+      ], 7),
+      plugins: {}, logger: console, streamStats: stats({ received: 100 }),
+    })
+    const s = await service.status({ since: new Date(Date.now() - 1800_000) })
+    const at = k => s.metrics.find(m => m.key === k).value
+    expect(at('out')).toBe(60)
+    expect(at('in')).toBe(30)
+    expect(at('internal')).toBe(10)
+    expect(at('people active')).toBe(7)
+    // 100 events over 1800s, per MINUTE whatever the window
+    expect(at('events/min')).toBeCloseTo(3.3, 1)
+  })
+
+  // The rate is derived from `since`, not from a window name — reporting a 24h
+  // total at the default 30m divisor would overstate it 48x.
+  it('rates per minute against the window it was actually given', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 1440 }], 0),
+      plugins: {}, logger: console, streamStats: stats({ received: 1440 }),
+    })
+    const s = await service.status({ since: new Date(Date.now() - 24 * 3600_000) })
+    // 1440 over 24h = 1/min, not the 48/min a hard-coded 30m divisor would give
+    expect(s.metrics.find(m => m.key === 'events/min').value).toBeCloseTo(1, 1)
   })
 
   // The reason this status() is worth having. notify() writes down two independent

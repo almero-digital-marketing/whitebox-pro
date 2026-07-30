@@ -78,7 +78,13 @@
 /* Secondary tier, matching People's `.ppl-console .sub-title` — including its
    --text-strong colour, where this had drifted to --muted. */
 .lv-dl-ch { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-strong); min-width: 36px; }
-.lv-dl-figs { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; color: var(--muted); }
+/* `flex: 1 1 0` + `min-width: 0` so this SHRINKS beside the label and wraps its own
+   contents. Without it, a row with many figures (live's eight) is wider than the
+   card, so the whole container wraps to the next line and leaves the plugin label
+   stranded alone above it. Grow/shrink rather than a width: the label's width
+   depends on the plugin name. */
+.lv-dl-figs { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  color: var(--muted); flex: 1 1 0; min-width: 0; }
 .lv-dl-fig b { font-weight: 650; font-size: 13px; color: var(--text-strong); font-variant-numeric: tabular-nums; margin-right: 3px; }
 .lv-dl-fig.bad, .lv-dl-fig.bad b { color: var(--danger); }
 .lv-dl-fig.bad .material-symbols-outlined { font-size: 14px; vertical-align: -2px; }

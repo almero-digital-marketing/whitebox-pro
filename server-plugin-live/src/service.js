@@ -38,24 +38,68 @@ export async function status({ since } = {}) {
     }
   }
 
-  const metrics = [
+  // The traffic aggregates — the same numbers the board's header leads with, now
+  // reported through this contract rather than only as bespoke top-level fields on
+  // /summary. They are live's own measurement: no plugin can report `events/min`
+  // or `people active`, because those are properties of the whole event stream
+  // rather than of anything a single plugin owns.
+  //
+  // WINDOWED, unlike the three pipeline counters below — so live's own row carries
+  // both kinds, which is the clearest illustration of why `live` exists on a
+  // metric at all.
+  //
+  // This re-reads the registry rather than reusing what summary() folded a moment
+  // earlier: summary() runs collectStatus in the SAME Promise.all as its own
+  // counts, so there is nothing computed yet to hand over. Two indexed aggregates
+  // per 10s poll is the price of status() being self-contained and callable on its
+  // own; a request-scoped cache is the fix if it ever shows up in a profile.
+  // Derived from `since` itself, not from a window name — status() is handed a
+  // Date, and hard-coding the default window here would silently report a 24h
+  // total as a 30m rate.
+  const secs = since instanceof Date
+    ? Math.max(1, Math.round((Date.now() - since.getTime()) / 1000))
+    : parseWindow()
+  let traffic = null
+  let recorded = 0
+  try {
+    const [counts, active] = await Promise.all([
+      eventRegistry.countsByType({ since }),
+      eventRegistry.activePassports ? eventRegistry.activePassports({ since }) : Promise.resolve(0),
+    ])
+    const byDirection = Object.fromEntries(DIRECTIONS.map(d => [d, 0]))
+    let total = 0
+    for (const row of counts) {
+      const { type, count } = row
+      byDirection[direction(type, facetPayload(row))] += count
+      total += count
+    }
+    recorded = total
+    traffic = { total, byDirection, active: Number(active || 0) }
+  } catch (err) {
+    logger?.warn?.({ err }, 'live: status() could not read the registry — reporting pipeline health only')
+  }
+
+  const metrics = []
+  if (traffic) {
+    metrics.push(
+      // Per MINUTE regardless of window, so the figure means the same thing on
+      // every setting — matching the header it mirrors.
+      { key: 'events/min', value: Math.round((traffic.total / secs) * 60 * 10) / 10 },
+      { key: 'in', value: traffic.byDirection.in },
+      { key: 'out', value: traffic.byDirection.out },
+      // Orchestration, not traffic — counted separately so it can't inflate
+      // either direction beside it.
+      { key: 'internal', value: traffic.byDirection.internal },
+      { key: 'people active', value: traffic.active },
+    )
+  }
+  metrics.push(
     { key: 'dashboards', value: s.subscribers, live: true },
     { key: 'streamed', value: s.received, live: true },
     // Over the 200-per-flush ceiling. Non-zero means a dashboard was shown a
     // fraction of the traffic without any way to know which part.
     { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true },
-  ]
-
-  // The cross-check. Only the zero case is decidable: `received` is since-boot
-  // while the registry count is windowed, so the numbers aren't comparable, but
-  // "the log recorded events and the firehose has seen none, ever" cannot be a
-  // quiet system.
-  let recorded = 0
-  try {
-    recorded = (await eventRegistry.countsByType?.({ since }))?.reduce?.((a, r) => a + Number(r.count || 0), 0) ?? 0
-  } catch (err) {
-    logger?.warn?.({ err }, 'live: status() could not read the registry for the firehose cross-check')
-  }
+  )
 
   const note = s.overCeiling
     ? `${s.overCeiling} event${s.overCeiling === 1 ? '' : 's'} discarded at the ${'200'}-per-flush ceiling — dashboards showed a fraction of the traffic`
