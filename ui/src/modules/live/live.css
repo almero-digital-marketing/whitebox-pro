@@ -357,17 +357,26 @@
 .ts-plot { display: flex; align-items: flex-end; gap: 2px; height: 72px; margin-top: 8px; overflow: hidden; min-width: 0;
   position: relative; }
 
-/* Gridlines sit BEHIND the bars (bars are in flow, this is absolute with no
-   z-index of its own) and don't participate in the flex row, so they can't affect
-   the bar widths the ResizeObserver measures — the loop that froze the tab
-   started exactly that way. */
-.ts-grid { position: absolute; inset: 0; pointer-events: none; }
-.ts-tick { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--border); }
+/* Gridlines don't participate in the flex row, so they can't affect the bar widths
+   the ResizeObserver measures — the loop that froze the tab started exactly that way.
+   `z-index: 0` puts them BEHIND the bars, which the comment here used to claim without
+   arranging: an absolutely-positioned element paints ABOVE in-flow siblings by
+   default, so the lines were being drawn over the data rather than under it.
+
+   `--border-2`, not `--border`. At 1px dashed, `--border` (#e2e8f0) is roughly a 7%
+   contrast against the panel and dashes halve the ink again — present in the DOM,
+   invisible on screen, which is why the chart kept reading as having no gridlines.
+   #cbd5e1 is the app's next step up and is what `.count-dot.zero` uses for the same
+   "visible but recessive" job. */
+.ts-grid { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.ts-tick { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--border-2); }
 /* The value rides ON the line, right-aligned, so it needs no gutter — a left axis
    would cost horizontal space the bars are using. */
 .ts-tick b { position: absolute; right: 0; bottom: 1px; padding-left: 4px; background: var(--panel);
   font-size: 9.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
-.ts-bar { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+/* `position: relative; z-index: 1` so the bars paint OVER the gridlines behind them. */
+.ts-bar { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  position: relative; z-index: 1; }
 /* thin marks, 4px rounded data-end at the top of the stack, 2px surface gap
    between the two segments (the `gap` above) */
 .ts-seg { display: block; width: 100%; }
