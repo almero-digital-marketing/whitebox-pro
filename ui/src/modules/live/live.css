@@ -79,16 +79,19 @@
    having to hit the switch itself would be the difference between usable and not.
    The value column is fixed and right-aligned so digits line up instead of drifting
    with label length; tabular-nums stops a `12` being narrower than an `88`. */
-/* A COLUMN: number/name/switch on one line, then the description across the panel's
-   full width beneath. Nested beside the name it only got the width the number and
-   switch left over — about 150px — so a 50-character sentence broke into three
-   ragged lines. */
-.lv-srow { display: flex; flex-direction: column; padding: 5px 6px; margin: 0 -6px;
+/* TWO COLUMNS: the readable half left, the switch right. `align-items: center` puts
+   the switch against the middle of the two-line text block rather than its first
+   line. */
+.lv-srow { display: flex; align-items: center; gap: 8px; padding: 5px 6px; margin: 0 -6px;
   cursor: pointer; }
 .lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
-/* `baseline` here, not center: the 20px figure and the 12px name are one phrase
-   ("0.2 events/min") and should sit on a shared baseline, which was the point of the
-   list-not-a-grid layout. The switch is re-centred against that line below. */
+/* The text column. `min-width: 0` is what makes the description WRAP inside this
+   column instead of stretching the row — without it a flex item refuses to shrink
+   below its content, so a long sentence would push the switch off the edge. Its
+   width is also what stops the description running under the switch. */
+.lv-srow-t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+/* `baseline`, not center: the 20px figure and the 12px name are one phrase
+   ("0.2 events/min") and belong on a shared baseline. */
 .lv-srow-top { display: flex; align-items: baseline; gap: 6px; }
 .lv-srow-n { font-variant-numeric: tabular-nums; flex: none; }
 /* The plugin's own words. `.fld-hint`'s tier one step down: this appears under every
@@ -114,9 +117,10 @@
    leaves the handle sized and travelling for a switch that no longer exists — it
    sat outside the track. If these ever need to be smaller, move the TOKENS, don't
    override the geometry. */
-/* `align-self: center` because the row above it is baseline-aligned: a switch has no
-   text baseline, so it would otherwise hang off the bottom of the line. */
-.lv-sw { margin-left: auto; align-self: center; }
+/* `flex: none` so it keeps its size while the text column absorbs the width. No
+   `margin-left: auto` any more — the text column grows, which puts the switch at the
+   right on its own. */
+.lv-sw { flex: none; }
 
 /* Names the owning plugin, on a plugin's counter only — live's are the whole
    system's and need no owner. Sits between the number and the key, so it reads as

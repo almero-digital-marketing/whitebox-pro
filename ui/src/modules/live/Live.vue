@@ -554,21 +554,25 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                    `sent` means "handed to the provider" while `delivered` means "the
                    provider confirmed the mailbox took it". On hover nobody found
                    them, which is why they are simply shown. -->
+              <!-- TWO COLUMNS: everything readable on the left, the switch on the
+                   right. The description sits under the number and name but inside
+                   the left column, so it stops at the switch rather than running
+                   underneath it — text flowing beneath a control reads as though it
+                   belongs to the row below. -->
               <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }">
-                <span class="lv-srow-top">
-                  <span class="lv-srow-n">
-                    <span v-if="f.bad" class="material-symbols-outlined">error</span>
-                    <b>{{ f.text }}</b>
+                <span class="lv-srow-t">
+                  <span class="lv-srow-top">
+                    <span class="lv-srow-n">
+                      <span v-if="f.bad" class="material-symbols-outlined">error</span>
+                      <b>{{ f.text }}</b>
+                    </span>
+                    <span class="lv-srow-k">{{ f.key }}</span>
                   </span>
-                  <span class="lv-srow-k">{{ f.key }}</span>
-                  <ToggleSwitch class="lv-sw" :model-value="isPinned(`${p.module}:${f.key}`)"
-                    @update:model-value="store.togglePinned(`${p.module}:${f.key}`)"
-                    :aria-label="`Show ${p.label} ${f.key} in the header`" />
+                  <small class="lv-srow-d">{{ f.description }}</small>
                 </span>
-                <!-- Full width, below the number and name. Nested beside the name it
-                     got only the width those two left over — about 150px — so a
-                     50-character sentence broke into three ragged lines. -->
-                <small class="lv-srow-d">{{ f.description }}</small>
+                <ToggleSwitch class="lv-sw" :model-value="isPinned(`${p.module}:${f.key}`)"
+                  @update:model-value="store.togglePinned(`${p.module}:${f.key}`)"
+                  :aria-label="`Show ${p.label} ${f.key} in the header`" />
               </label>
             </div>
 
