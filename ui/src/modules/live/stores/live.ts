@@ -27,8 +27,8 @@ import { useAuthStore } from '../../../shell/stores/auth'
 // The filters below are the real answer to "too much"; this only stops an
 // unattended tab growing without limit.
 //
-// Nothing else accumulates: while paused, arriving events are counted into
-// `overflowed` and dropped rather than buffered, so a paused tab is flat.
+// Nothing else accumulates: the feed is a rolling window of the newest MAX_FEED
+// rows and the aggregates are refetched, so an unattended tab is flat.
 const MAX_FEED = 300
 
 export const useLiveStore = defineStore('live', () => {
@@ -42,9 +42,7 @@ export const useLiveStore = defineStore('live', () => {
   const feed = shallowRef<FeedEvent[]>([])
   const loading = ref(false)
   const connected = ref(false)
-  const paused = ref(false)
   const dropped = ref(0)
-  const overflowed = ref(0)
 
   let detach: (() => void) | null = null
   let poll: any = null
@@ -356,9 +354,6 @@ export const useLiveStore = defineStore('live', () => {
     detach?.()
     detach = connectLive(auth.accessToken || '', (events, drop) => {
       if (drop) dropped.value += drop
-      // Paused means the operator is reading something; new events keep arriving
-      // into the counter but must not move the rows under them.
-      if (paused.value) { overflowed.value += events.length; return }
       const next = [...events.reverse(), ...feed.value]
       if (next.length > MAX_FEED) next.length = MAX_FEED
       feed.value = next
@@ -368,7 +363,7 @@ export const useLiveStore = defineStore('live', () => {
     // a timer. Slower than the feed on purpose: a rate that jitters every 250ms is
     // unreadable.
     clearInterval(poll)
-    poll = setInterval(() => { if (!paused.value) refreshAggregates() }, 10_000)
+    poll = setInterval(() => refreshAggregates(), 10_000)
   }
 
   async function refreshAggregates() {
@@ -385,20 +380,15 @@ export const useLiveStore = defineStore('live', () => {
 
   function stop() { detach?.(); detach = null; clearInterval(poll); poll = null }
 
-  function togglePause() {
-    paused.value = !paused.value
-    if (!paused.value) { overflowed.value = 0; load() }   // catch up on resume
-  }
-
   return {
     window, summary, series, utm, content, feed, visibleFeed,
     feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
     isDirOn, isChanOn, setDirection, setChannel,
-    loading, connected, paused, dropped, overflowed,
+    loading, connected, dropped,
     failing, maxFeed: MAX_FEED,
     pinned, pinnedFigs, isPinned, togglePinned, resetPinned,
-    load, setWindow, start, stop, togglePause, refreshAggregates, setPoints,
+    load, setWindow, start, stop, refreshAggregates, setPoints,
   }
 })

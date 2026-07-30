@@ -31,20 +31,6 @@
    produced.
    `min-height: 0` at every level is what lets the content scroll INSIDE the filled
    panel instead of the pane growing. */
-.lv-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.lv-accordion .p-accordionpanel { border: none; display: flex; flex-direction: column; }
-.lv-accordion .p-accordionpanel > .p-accordioncontent { min-height: 0; }
-.lv-accordion .p-accordionpanel-active { flex: 1 1 auto; min-height: 0; }
-.lv-accordion .p-accordionpanel-active .p-accordioncontent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.lv-accordion .p-accordionpanel-active .p-accordioncontent-wrapper { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.lv-accordion .p-accordionheader { box-sizing: border-box; flex: 0 0 52px; height: 52px;
-  min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700;
-  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel);
-  border: none; border-radius: 0; }
-.lv-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
-.lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.lv-accordion .p-accordioncontent-content { padding: 16px 18px; background: var(--panel); border: none; }
-.lv-accordion .p-accordionpanel-active .p-accordioncontent-content { flex: 1 1 auto; min-height: 0; }
 
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
    Margin, not padding: this sits inside the accordion content, which already brings
@@ -141,9 +127,6 @@
    and reads ragged. Stacking figure-over-label aligned well but doubled the
    header height, which is the wrong trade on a board this dense. */
 .lv-pulse { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
-/* A status chip in the control group: same height rhythm as the window picker
-   beside it, so the row reads as one band of controls. */
-.lv-live { font-size: 10.5px; align-self: center; margin-right: 2px; }
 .lv-fig { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 /* Every figure at the same size — the events/min reading isn't a different KIND
    of number from the ones beside it, and sizing one larger made the row read as
@@ -154,7 +137,6 @@
 .lv-fig.dim b { color: var(--muted); font-weight: 500; }
 .lv-quiet { font-size: 12px; color: var(--muted); max-width: 44ch; line-height: 1.4; }
 
-.lv-controls { display: flex; align-items: center; gap: 10px; }
 /* The segmented control, used by the window picker, Attribution's dimension
    switch and the feed's list|count toggle. One rule: `.lv-windows` and
    `.lv-utm-dims` were byte-identical copies of it, and a third was about to be

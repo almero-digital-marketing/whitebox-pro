@@ -248,6 +248,14 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
    over the word it counts */
 .count-pill.sm { height: auto; min-width: 22px; padding: 2px 7px; font-size: 11px; }
 
+/* A presence dot: green for "yes/live", grey for "none". Lives here beside
+   `.count-pill` because two modules use it — RailPane's row counts and Live's
+   connection state — and it was defined only in RailPane's SCOPED style, so Live's
+   copy of the markup rendered an unstyled <i>: a zero-size, invisible dot. The
+   indicator beside "live" has never actually had one. */
+.count-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex: none; }
+.count-dot.zero { background: var(--border-2); }
+
 /* Segment pill — the palette row used by Audiences (compose a rule) and by
    People (put someone on a list). Global because it's now two modules; the
    drag, rename and editing affordances stay scoped to Audiences, which is the

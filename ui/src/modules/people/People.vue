@@ -391,7 +391,7 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
            Identities is the one that's absent, and not for room: an identity
            belongs to exactly one person by definition, so linking one to 43
            people is a contradiction rather than a slower convenience. -->
-      <Accordion v-if="hasSelection" v-model:value="bulkPanel" class="ppl-accordion">
+      <Accordion v-if="hasSelection" v-model:value="bulkPanel" class="ppl-accordion pane-accordion is-content-sized">
         <AccordionPanel value="facts">
           <AccordionHeader><span class="acc-title">Facts <span class="count-pill sm">{{ selectionCount }}</span></span></AccordionHeader>
           <AccordionContent>
@@ -406,7 +406,7 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
         </AccordionPanel>
       </Accordion>
 
-      <Accordion v-else v-model:value="activePanel" class="ppl-accordion">
+      <Accordion v-else v-model:value="activePanel" class="ppl-accordion pane-accordion is-content-sized">
         <!-- Named for the SUBJECT, not the verb: each panel is everything
              about one kind of data, with adding as one option inside it. The
              count is on the header so a collapsed panel still tells you
@@ -552,15 +552,11 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 .act-src { flex: 1 1 auto; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* same accordion treatment as Journeys' right pane */
-.ppl-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.ppl-accordion :deep(.p-accordionpanel) { border: none; display: flex; flex-direction: column; }
-.ppl-accordion :deep(.p-accordionpanel > .p-accordioncontent) { min-height: 0; }
 /* `0 1 auto`, not `1 1 auto`: an open panel sizes to its content and may
    SHRINK (scrolling inside itself) when it's taller than the pane — but it no
    longer GROWS to fill it. Lists with one pill was leaving ~480px of empty
    panel below the last row. The slack now falls at the foot of the pane,
    under the collapsed headers, where it reads as pane, not as panel. */
-.ppl-accordion :deep(.p-accordionpanel-active) { flex: 0 1 auto; min-height: 0; }
 /* ONE scroller, not two. `.p-accordioncontent-wrapper` and
    `.p-accordioncontent-content` both had `overflow: auto`, so each drew its own
    scrollbar and the inner one's width came off the padded box — leaving the
@@ -572,21 +568,14 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 /* The open panel scrolls INSIDE itself — copied from .jrn-accordion, which
    already solved this. Without it a person with several identities pushes the
    form's Discard/Save straight through the MERGE header below. */
-.ppl-accordion :deep(.p-accordionpanel-active .p-accordioncontent) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* No scrollbar-gutter here. Reserving a gutter squares up the two sides but
    pushes the content inset from 18px to ~34px, which no other module's
    accordion does — conformity with them matters more than the few px of
    asymmetry a classic scrollbar adds, and on overlay scrollbars (the usual
    case) there is no asymmetry to fix. */
-.ppl-accordion :deep(.p-accordionpanel-active .p-accordioncontent-wrapper) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.ppl-accordion :deep(.p-accordionheader) { box-sizing: border-box; flex: 0 0 52px; height: 52px; min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel); border: none; border-radius: 0; }
-.ppl-accordion :deep(.p-accordionpanel:not(:first-child) > .p-accordionheader) { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
-.ppl-accordion :deep(.p-accordionpanel-active > .p-accordionheader) { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.ppl-accordion :deep(.p-accordioncontent-content) { padding: 16px 18px; background: var(--panel); border: none; }
 /* Grows to fill a short panel, but NEVER shrinks: it's the flex child of the
    scroller above, so `flex-shrink: 1` + `min-height: 0` let its box collapse to
    the visible height while its rows overflowed past the bottom edge. The box's
    own padding is drawn at that collapsed edge, so scrolling to the end put the
    last button flush against the panel bottom with the 16px stranded mid-list. */
-.ppl-accordion :deep(.p-accordionpanel-active .p-accordioncontent-content) { flex: 1 0 auto; }
 </style>

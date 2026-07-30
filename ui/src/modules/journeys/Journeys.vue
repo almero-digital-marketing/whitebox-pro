@@ -469,7 +469,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
          Campaigns'/Audiences'/Users' side panes). Resets to the first panel
          every time a different journey loads (see loadIntoEditor). -->
     <aside class="jrn-details">
-      <Accordion v-model:value="activePanel" class="jrn-accordion">
+      <Accordion v-model:value="activePanel" class="jrn-accordion pane-accordion">
         <AccordionPanel value="trigger">
           <AccordionHeader>Trigger</AccordionHeader>
           <AccordionContent>
@@ -578,28 +578,17 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
    into a flex item, which defaults to min-height:auto and refuses to shrink
    for the collapse keyframe unless overridden here for every panel, not just
    the active one). */
-.jrn-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.jrn-accordion :deep(.p-accordionpanel) { border: none; display: flex; flex-direction: column; }
-.jrn-accordion :deep(.p-accordionpanel > .p-accordioncontent) { min-height: 0; }
-.jrn-accordion :deep(.p-accordionpanel-active) { flex: 1 1 auto; min-height: 0; }
-.jrn-accordion :deep(.p-accordionpanel-active .p-accordioncontent) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* No scrollbar-gutter here. Reserving a gutter squares up the two sides but
    pushes the content inset from 18px to ~34px, which no other module's
    accordion does — conformity with them matters more than the few px of
    asymmetry a classic scrollbar adds, and on overlay scrollbars (the usual
    case) there is no asymmetry to fix. */
-.jrn-accordion :deep(.p-accordionpanel-active .p-accordioncontent-wrapper) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.jrn-accordion :deep(.p-accordionheader) { box-sizing: border-box; flex: 0 0 52px; height: 52px; min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel); border: none; border-radius: 0; }
 /* every divider lives on a header's own border-top (deterministic, hard-clamped to 52px),
    never on flex-grown content — !important wins the specificity tie with PrimeVue's own
    :first-child > .p-accordionheader rule regardless of stylesheet injection order. */
-.jrn-accordion :deep(.p-accordionpanel:not(:first-child) > .p-accordionheader) { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
-.jrn-accordion :deep(.p-accordionpanel-active > .p-accordionheader) { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.jrn-accordion :deep(.p-accordioncontent-content) { padding: 16px 18px; background: var(--panel); border: none; }
 /* ONE scroller: the wrapper above. This element carries the padding, so an
    overflow here draws a second scrollbar whose width comes off the padded
    box — leaving rows inset ~19px left and ~33px right. */
-.jrn-accordion :deep(.p-accordionpanel-active .p-accordioncontent-content) { flex: 1 1 auto; min-height: 0; }
 /* Each panel's own look lives in panels/*.vue; the chrome they share with this
    shell (.pane-tip, .sw, .badge, the Discard/Save row) is in panels/panel.css,
    imported above. Nothing here may style a panel's internals — a scoped rule

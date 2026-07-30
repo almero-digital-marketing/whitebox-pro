@@ -10,6 +10,10 @@ import 'primeicons/primeicons.css'
 import App from './App.vue'
 import { router } from './shell/router'
 import './style.css'
+// THE right-pane accordion, shared by People/Journeys/Audiences/Campaigns/Live.
+// Global rather than per-module: it styles PrimeVue's internals, which a scoped
+// stylesheet can only reach through :deep() — five copies of which is what it replaces.
+import './components/pane-accordion.css'
 
 // "Noir" — the black/white primary used on primevue.org (Aura with the primary
 // ramp pointed at zinc, so the accent is near-black in light mode). Surfaces stay

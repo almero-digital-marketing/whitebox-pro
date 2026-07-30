@@ -549,7 +549,7 @@ function ago(iso?: string) {
          Audiences first (attach a target before writing delivery settings or objectives),
          same pattern as Audiences.vue's Segments/Activation accordion. -->
     <aside class="cmp-side">
-      <Accordion v-model:value="activePanel" class="cmp-accordion">
+      <Accordion v-model:value="activePanel" class="cmp-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="audiences">
           <AccordionHeader><span class="acc-title">Audiences <span class="count-pill sm">{{ working?.audiences?.length ?? 0 }}</span></span></AccordionHeader>
           <AccordionContent>
@@ -664,20 +664,9 @@ function ago(iso?: string) {
    from getting stuck (making the panel a flex container turns .p-accordioncontent into a
    flex item, which defaults to min-height:auto and refuses to shrink for the collapse
    keyframe unless overridden here for every panel, not just the active one). */
-.cmp-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.cmp-accordion :deep(.p-accordionpanel) { border: none; display: flex; flex-direction: column; }
-.cmp-accordion :deep(.p-accordionpanel > .p-accordioncontent) { min-height: 0; }
-.cmp-accordion :deep(.p-accordionpanel-active) { flex: 1 1 auto; min-height: 0; }
-.cmp-accordion :deep(.p-accordionpanel-active .p-accordioncontent) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.cmp-accordion :deep(.p-accordionpanel-active .p-accordioncontent-wrapper) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.cmp-accordion :deep(.p-accordionheader) { box-sizing: border-box; flex: 0 0 52px; height: 52px; min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel); border: none; border-radius: 0; }
 /* every divider lives on a header's own border-top (deterministic, hard-clamped to 52px),
    never on flex-grown content — !important wins the specificity tie with PrimeVue's own
    :first-child > .p-accordionheader rule regardless of stylesheet injection order. */
-.cmp-accordion :deep(.p-accordionpanel:not(:first-child) > .p-accordionheader) { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
-.cmp-accordion :deep(.p-accordionpanel-active > .p-accordionheader) { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.cmp-accordion :deep(.p-accordioncontent-content) { padding: 16px 18px; background: var(--panel); border: none; }
-.cmp-accordion :deep(.p-accordionpanel-active .p-accordioncontent-content) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the Audiences panel's tip + list already sit inside AccordionContent's own 16px/18px
    padding above — zero their own, so it isn't doubled (the .cmp-left campaigns rail below
    is NOT inside the accordion and keeps its normal padding). */

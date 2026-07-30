@@ -409,7 +409,7 @@ async function toggleNetwork(n: any) {
          and expanded by default. Activation's CAPI send is gated by an explicit confirm
          (preview of the deliverable cohort). -->
     <aside class="aud-side">
-      <Accordion v-model:value="activePanel" class="aud-accordion">
+      <Accordion v-model:value="activePanel" class="aud-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="segments">
           <AccordionHeader><span class="acc-title">Segments <span class="count-pill sm">{{ working?.members?.length ?? 0 }}</span></span></AccordionHeader>
           <AccordionContent>
@@ -505,7 +505,6 @@ async function toggleNetwork(n: any) {
    The active panel's content always fills the remaining pane height (flex chain all the way
    down to the actual scrollable content div), rather than sitting only as tall as its own
    content with dead space below it — collapsed panels just keep their natural 52px header. */
-.aud-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* min-height:0 here is load-bearing, not cosmetic: making the panel a flex container turns
    .p-accordioncontent into a flex ITEM, and flex items default to min-height:auto — refusing
    to shrink below their own content size. That silently defeats PrimeVue's collapse animation
@@ -514,15 +513,9 @@ async function toggleNetwork(n: any) {
    animationend event Vue's <Transition> waits for never fires and the panel gets stuck
    mid-"leave" forever. Applies to every panel (not just active) since this is exactly what
    the COLLAPSING panel needs mid-transition. */
-.aud-accordion :deep(.p-accordionpanel) { border: none; display: flex; flex-direction: column; }
-.aud-accordion :deep(.p-accordionpanel > .p-accordioncontent) { min-height: 0; }
-.aud-accordion :deep(.p-accordionpanel-active) { flex: 1 1 auto; min-height: 0; }
 /* the flex-grow/fill treatment below IS scoped to the active panel only — unlike min-height:0
    above, forcing flex-grow on a collapsing panel would fight the animation the same way
    display:flex did before this fix. */
-.aud-accordion :deep(.p-accordionpanel-active .p-accordioncontent) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.aud-accordion :deep(.p-accordionpanel-active .p-accordioncontent-wrapper) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.aud-accordion :deep(.p-accordionheader) { box-sizing: border-box; flex: 0 0 52px; height: 52px; min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel); border: none; border-radius: 0; }
 /* Every divider lives on a HEADER (hard-clamped to 52px), never on content (flex-grown,
    fractionally computed — comparing a fixed-height element's border against a flex-grown
    element's border is exactly what caused a sub-pixel mismatch before). A non-first header's
@@ -533,10 +526,6 @@ async function toggleNetwork(n: any) {
    adjacent and never double up. PrimeVue's own `:first-child > .p-accordionheader` rule
    resets border-width via a CSS variable at the same specificity as ours — !important
    guarantees we win regardless of stylesheet injection order. */
-.aud-accordion :deep(.p-accordionpanel:not(:first-child) > .p-accordionheader) { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
-.aud-accordion :deep(.p-accordionpanel-active > .p-accordionheader) { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.aud-accordion :deep(.p-accordioncontent-content) { padding: 16px 18px; background: var(--panel); border: none; }
-.aud-accordion :deep(.p-accordionpanel-active .p-accordioncontent-content) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
 /* pane header — matches the analytics reports pane (.pane-head): a 52px bar with a
    bottom border, uppercase muted title, space-between */

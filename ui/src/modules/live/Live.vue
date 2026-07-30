@@ -27,7 +27,7 @@ const store = useLiveStore()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
   feedChanModes, directionCounts, channelCounts, feedFiltered, hiddenByFilter,
   feedView, feedCounts,
-  connected, paused, dropped, overflowed, failing, pinned, pinnedFigs } = storeToRefs(store)
+  connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
 // Which right-pane section is open — Live first, matching every other pane in the
 // app opening its first panel rather than presenting a stack of closed headers.
@@ -270,32 +270,11 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
         <span v-if="quietFor" class="lv-quiet">{{ quietFor }}</span>
       </div>
 
-      <div class="lv-controls">
-        <!-- Connection status belongs with the controls, not at the head of the
-             figures: it describes the TRANSPORT, not the data, and it sat at the
-             head of them competing for the leading position while reading as a
-             stray 10px label. Next to Pause it's grouped with the
-             other thing that governs whether the feed is moving. -->
-        <span class="lv-live" :class="{ off: !connected }">
-          <i class="count-dot" :class="{ zero: !connected }" /> {{ connected ? 'live' : 'reconnecting' }}
-        </span>
-        <!-- The window picker and the filters moved to the Live pane on the right.
-             They govern every card, not just the row they used to sit above, so they
-             belong with the other board-wide controls rather than in the header —
-             which now carries only the pinned figures and whether the feed is
-             running. -->
-        <!-- Icon-only, the same 30px bordered square as People's search filter
-             (.icon-btn in style.css). Paused is the non-default state, so it
-             takes the `on` treatment; the dot says events are stacking up
-             behind it, which a bare icon otherwise couldn't tell you. -->
-        <button type="button" class="icon-btn" :class="{ on: paused }"
-          :aria-label="paused ? `Resume the feed${overflowed ? ` — ${overflowed} events buffered` : ''}` : 'Pause the feed'"
-          v-tooltip.bottom="paused ? `Resume${overflowed ? ` — ${overflowed} buffered` : ''}` : 'Pause'"
-          @click="store.togglePause()">
-          <span class="material-symbols-outlined">{{ paused ? 'play_arrow' : 'pause' }}</span>
-          <i v-if="paused && overflowed" class="icon-dot" />
-        </button>
-      </div>
+      <!-- The header carries the pinned figures and nothing else now. The window
+           picker and the filters moved to the Live pane (they govern every card, not
+           the row they happened to sit above); the connection state moved to that
+           pane's title, where it labels the section it describes; and Pause is gone
+           entirely. -->
     </header>
 
     <!-- the only chart: counts per bucket over the window, in vs out -->
@@ -379,7 +358,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
       <div class="blk-head lv-feed-head">
         <span>
           Feed
-          <span v-if="paused" class="lv-flag">paused</span>
           <span v-if="dropped" class="lv-flag warn">{{ dropped }} dropped — arriving faster than this view renders</span>
           <span v-if="feed.length >= store.maxFeed" class="lv-flag">showing the most recent {{ store.maxFeed }}</span>
           <!-- The one flag worth interrupting for: a send that isn't arriving. It
@@ -495,12 +473,22 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
          is why they sit beside it rather than in the header above it. -->
     <aside class="lv-side">
 
-      <Accordion v-model:value="sidePanel" class="lv-accordion">
+      <Accordion v-model:value="sidePanel" class="pane-accordion">
         <!-- ── Live: the board-wide controls ──────────────────────────────── -->
         <AccordionPanel value="live">
           <AccordionHeader>
             <span class="acc-title">
               Live
+              <!-- The connection state, as a dot on the title it describes. It was a
+                   10px "live"/"reconnecting" label in the board header, where it
+                   competed with the figures and described something none of them are
+                   about — the transport, not the data.
+                   Colour alone is never the whole signal: the title carries the words
+                   for a screen reader and on hover, since green-vs-grey is exactly
+                   what a colourblind reader loses. -->
+              <i class="count-dot" :class="{ zero: !connected }"
+                :title="connected ? 'Streaming live' : 'Reconnecting — the board is polling meanwhile'"
+                :aria-label="connected ? 'Streaming live' : 'Reconnecting'" />
               <!-- Says the board is narrowed even with the section shut, which
                    matters more here than for Status: a filtered board looks like a
                    quiet one, and that is the single most misleading thing this

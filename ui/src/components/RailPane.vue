@@ -104,8 +104,8 @@ const plural = computed(() => props.nounPlural || `${props.noun}s`)
 /* the flex child is PrimeVue's <nav> wrapper, not .p-paginator inside it —
    margin-left on the inner element pushes nothing */
 .rail-foot > :last-child { margin-left: auto; }
-.count-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex: none; }
-.count-dot.zero { background: var(--border-2); }
+/* `.count-dot` moved to style.css — two modules use it and a scoped copy meant the
+   other one rendered an invisible <i>. */
 
 /* The module's action, styled HERE rather than by each module: it's passed in
    through a slot, so five modules would otherwise each decide what "the add

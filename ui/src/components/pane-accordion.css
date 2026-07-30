@@ -1,0 +1,68 @@
+/* THE right-pane accordion.
+ *
+ * Every module's right pane is a PrimeVue Accordion, and every module had its own
+ * hand-copied set of eleven rules to style it: `.ppl-accordion`, `.jrn-accordion`,
+ * `.aud-accordion`, `.cmp-accordion`, `.lv-accordion`. Nine of the eleven were
+ * byte-identical in all five. That is eleven chances each to drift, and it drifted:
+ * Live shipped with one rule missing (the panel's content box did not fill its
+ * panel) and another one pixel out, and neither was visible by reading the code —
+ * both were found by diffing the declarations mechanically.
+ *
+ * So the nine live here once, and the two that genuinely differ are modifiers.
+ *
+ * USAGE
+ *   <Accordion class="pane-accordion">                     … fills (the common case)
+ *   <Accordion class="pane-accordion is-content-sized">    … People
+ *   <Accordion class="pane-accordion is-content-scroll">   … Audiences, Campaigns
+ *
+ * Keep the module's own class alongside it for module-specific extras
+ * (`.cmp-accordion .rail-list`), so this file never has to know about them.
+ *
+ * NOT scoped, deliberately: it styles PrimeVue's internals, which a scoped stylesheet
+ * can only reach through `:deep()` — and five copies of `:deep()` is what this
+ * replaces. It is imported once, from main.ts.
+ */
+
+/* The pane is a column: headers keep their height, the open panel takes the rest.
+   `min-height: 0` at every level is the load-bearing part — without it a flex child
+   refuses to shrink below its content, so the PANE grows and the page scrolls
+   instead of the panel's own content scrolling. */
+.pane-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pane-accordion .p-accordionpanel { border: none; display: flex; flex-direction: column; }
+.pane-accordion .p-accordionpanel > .p-accordioncontent { min-height: 0; }
+
+/* 52px, uppercase, muted — the app's section-header tier. The active one takes
+   --text-strong and draws the rule under itself. `!important` on the borders because
+   PrimeVue's theme sets them per-panel with its own radius. */
+.pane-accordion .p-accordionheader {
+  box-sizing: border-box; flex: 0 0 52px; height: 52px; min-height: 52px; max-height: 52px;
+  padding: 0 18px; font-size: 12px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); background: var(--panel);
+  border: none; border-radius: 0;
+}
+.pane-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
+.pane-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
+.pane-accordion .p-accordioncontent-content { padding: 16px 18px; background: var(--panel); border: none; }
+
+/* ── the open panel ──────────────────────────────────────────────────────────
+   DEFAULT: it FILLS the pane, so a collapsed panel's header is pushed to the bottom
+   edge. Journeys, Audiences, Campaigns and Live all want this; it is the default
+   because four of five did, and because a header floating halfway up a pane under
+   the panel above it reads as a layout bug. */
+.pane-accordion .p-accordionpanel-active { flex: 1 1 auto; min-height: 0; }
+.pane-accordion .p-accordionpanel-active .p-accordioncontent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pane-accordion .p-accordionpanel-active .p-accordioncontent-wrapper { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.pane-accordion .p-accordionpanel-active .p-accordioncontent-content { flex: 1 1 auto; min-height: 0; }
+
+/* People: the panel is CONTENT-SIZED, so collapsed headers stack directly beneath it
+   rather than being pushed down. Right for two or three panels of form fields, where
+   a stack of headings reads better than one panel stretched down the pane. The
+   content must then grow and not shrink (`1 0 auto`), or the wrapper — which is what
+   scrolls in this variant — has nothing to scroll. */
+.pane-accordion.is-content-sized .p-accordionpanel-active { flex: 0 1 auto; min-height: 0; }
+.pane-accordion.is-content-sized .p-accordionpanel-active .p-accordioncontent-content { flex: 1 0 auto; }
+
+/* Audiences, Campaigns: the CONTENT scrolls rather than the wrapper. Both scroll
+   containers exist in the default (the wrapper has `overflow: auto` above), so this
+   adds the inner one — which is what those two panes were built against. */
+.pane-accordion.is-content-scroll .p-accordionpanel-active .p-accordioncontent-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
