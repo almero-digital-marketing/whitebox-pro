@@ -345,7 +345,7 @@ describe('summary() status — collected from whoever can describe themselves', 
 // one thing the board couldn't report on — and a dead firehose is the failure that
 // looks exactly like a quiet system.
 describe('status() — live reporting on itself', () => {
-  const stats = (over = {}) => () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0, ...over })
+  const stats = (over = {}) => () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0, bootedAt: Date.now() - 3600_000, ...over })
 
   // live's row carries BOTH kinds of number, which no other plugin's does: the
   // traffic aggregates are windowed, the pipeline counters are process-lifetime.
@@ -400,10 +400,27 @@ describe('status() — live reporting on itself', () => {
   it('calls out a dead firehose when the registry recorded events and the stream never has', async () => {
     service.init({
       eventRegistry: registry([{ type: 'mail.sent', count: 40 }], 0),
-      plugins: {}, logger: console, streamStats: stats({ received: 0 }),
+      plugins: {}, logger: console,
+      // booted an hour ago, window is the last minute — so the whole window is
+      // after boot and the two numbers ARE comparable
+      streamStats: stats({ received: 0, bootedAt: Date.now() - 3600_000 }),
     })
-    const s = await service.status({ since: new Date() })
+    const s = await service.status({ since: new Date(Date.now() - 60_000) })
     expect(s.note).toMatch(/Redis subscription is probably dead/)
+  })
+
+  // The false alarm this guard exists for, found on the running board: a restart
+  // leaves the log holding events the stream was never going to see, so the naive
+  // comparison claimed a dead subscription on a perfectly healthy system. An alarm
+  // that fires on every deploy gets learned as noise.
+  it('stays quiet when the window predates boot, rather than blaming Redis for a restart', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 40 }], 0),
+      plugins: {}, logger: console,
+      streamStats: stats({ received: 0, bootedAt: Date.now() - 5_000 }),   // booted 5s ago
+    })
+    const s = await service.status({ since: new Date(Date.now() - 1800_000) })   // 30m window
+    expect(s.note).toBeNull()
   })
 
   // Only the zero case is decidable: `received` is since-boot while the registry
@@ -466,7 +483,13 @@ describe('status() descriptions', () => {
     const s = await service.status({ since: new Date(Date.now() - 1800_000) })
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   // The two-paths cross-check is the reason this status() exists, so `streamed` has
@@ -484,6 +507,6 @@ describe('status() descriptions', () => {
   it('says a missing stream is a wiring problem, not a Redis one', async () => {
     service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: () => null })
     const s = await service.status({})
-    expect(s.metrics[0].description).toMatch(/wiring/i)
+    expect(s.metrics[0].description).toMatch(/wired/i)
   })
 })

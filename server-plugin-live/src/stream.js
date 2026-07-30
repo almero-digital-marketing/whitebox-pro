@@ -98,7 +98,12 @@ export function register({ connect, events, requireRead, logger }) {
   // with the tab, so a drop nobody happened to be watching left no trace anywhere
   // in the system. These are the durable version, and they are the only record of
   // whether this plugin's own pipeline is working.
-  const totals = { received: 0, overCeiling: 0, unwatched: 0 }
+  // `bootedAt` is what stops the firehose cross-check crying wolf. `received` counts
+  // from THIS boot, while the registry count covers the selected window — so right
+  // after a restart the log legitimately holds events the stream was never going to
+  // see, and "recorded > 0 and received === 0" is the normal state rather than a
+  // dead subscription. status() only compares them when the window starts after boot.
+  const totals = { received: 0, overCeiling: 0, unwatched: 0, bootedAt: Date.now() }
 
   const onEvent = (message) => {
     // The firehose carries { type, payload }; the registry row shape is what

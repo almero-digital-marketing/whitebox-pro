@@ -172,7 +172,9 @@ describe('descriptions', () => {
   it('says more than the key already does', async () => {
     const { content } = makeContent(rows)
     for (const m of (await content.status({ since })).metrics) {
-      expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
     }
   })
 })

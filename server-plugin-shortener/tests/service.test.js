@@ -232,7 +232,13 @@ describe('status', () => {
     const s = await service.status({ since: new Date() })
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   // `unclaimed` is the one that looks alarming and isn't — scanners and prefetchers
@@ -241,7 +247,7 @@ describe('status', () => {
     setup()
     store.healthStats.mockResolvedValue(counts)
     const s = await service.status({ since: new Date() })
-    expect(s.metrics.find(m => m.key === 'unclaimed').description).toMatch(/not a failure/i)
+    expect(s.metrics.find(m => m.key === 'unclaimed').description).toMatch(/scanners/i)
   })
 
   it('passes `since` straight through to the windowed query', async () => {

@@ -472,17 +472,17 @@ export async function status({ since } = {}) {
     // dashboard could infer from the keys.
     metrics: [
       { key: 'queued', value: s.queued,
-        description: 'Queued in this window and still waiting for the send worker. Widening the window can raise it — these are messages queued later that have not gone yet.' },
+        description: 'Queued in this window, still waiting to send' },
       { key: 'sent', value: s.sent,
-        description: 'Handed to the provider without error. Not the same as arriving: the provider has accepted responsibility, nothing more.' },
+        description: 'Handed to the provider without error' },
       { key: 'delivered', value: s.delivered,
-        description: 'The provider confirmed the receiving mailbox accepted it. This is the number that means the mail actually landed.' },
+        description: 'The provider confirmed the mailbox accepted it' },
       // non-zero here is a problem, and the surface shows it with an icon and the
       // word — never colour alone
       { key: 'failed', value: s.failed, severity: 'bad',
-        description: 'The provider refused it outright, so nothing was delivered. Usually credentials, a malformed address or a rejected payload.' },
+        description: 'The provider refused it — nothing was delivered' },
       { key: 'bounced', value: s.bounced, severity: 'bad',
-        description: 'Accepted by the provider and then rejected by the receiving server — a dead address, a full mailbox or a spam verdict. Repeated bounces to the same domain damage your sending reputation.' },
+        description: 'Accepted, then rejected by the receiving server' },
     ],
   }
 }

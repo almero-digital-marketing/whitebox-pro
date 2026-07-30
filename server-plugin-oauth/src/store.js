@@ -156,13 +156,13 @@ export async function status({ since } = {}) {
       label: 'oauth',
       metrics: [
         { key: 'logins', value: Number(logins?.count ?? 0),
-          description: 'Successful sign-ins in this window. Only successes exist to count: a wrong password redirects with an error and writes nothing, so this can never show you failed attempts.' },
+          description: 'Successful sign-ins — failures are not stored' },
         // `live`, matching the query above: "who is locked out right now" has no
         // window, and password_hash IS NULL is a state rather than an event.
         { key: 'invites pending', value: outstanding.length - expired, live: true,
-          description: 'People invited who have not set a password yet and whose invite is still valid. Current state, not a window — it counts who is outstanding right now.' },
+          description: 'Invited, no password set yet, still valid' },
         { key: 'invites expired', value: expired, severity: 'bad', live: true,
-          description: 'Invites that lapsed before the person set a password. A real lockout they cannot fix themselves: signing up requires a live invite token, so an admin has to resend before that teammate can get in.' },
+          description: 'Invite lapsed — an admin must resend' },
       ],
       note: expired
         ? `${expired} invite${expired === 1 ? '' : 's'} expired — those teammates can't set a password until someone resends`

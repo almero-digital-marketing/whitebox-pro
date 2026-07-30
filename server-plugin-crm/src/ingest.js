@@ -272,15 +272,15 @@ export async function status({ since } = {}) {
     label: 'crm',
     metrics: [
       { key: 'records', value: structured?.records ?? 0,
-        description: 'Distinct CRM entities written through in this window — deals, tickets, whatever the source system calls them. Counted by distinct entity, not by row, because one record fans out to one fact per field. An over-count is possible: core facts has no plugin column, so this counts entity-tagged facts and CRM happens to be the only writer that sets one.' },
+        description: 'Distinct CRM entities written through this window' },
       { key: 'state facts', value: structured?.facts ?? 0,
-        description: 'Individual field values recorded from those records. Higher than `records` by design — a deal with a stage, an amount and an owner is one record and three facts.' },
+        description: 'Field values from those records, several each' },
       { key: 'notes', value: notes?.notes ?? 0,
-        description: 'Free-text notes attached to people in this window, recorded as authoritative because they came from the CRM itself.' },
+        description: 'Notes from the CRM itself' },
       // Low-trust, client-reported — kept separate so they can't flatter the
       // authoritative counts above.
       { key: 'observations', value: notes?.observations ?? 0,
-        description: 'Notes reported by a client SDK rather than by the CRM. Kept separate on purpose: they are lower-trust, and folding them in would let SDK traffic flatter the authoritative counts beside them.' },
+        description: 'Notes reported by a client SDK — lower trust' },
     ],
     note,
   }

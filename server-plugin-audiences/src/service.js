@@ -359,19 +359,19 @@ export async function status({ since } = {}) {
     // per-event delivery log went with the rule system in migration 011), so
     // `since` is ignored and the card must say so rather than imply otherwise.
     metrics.push({ key: 'audiences', value: counts.audiences, live: true,
-      description: 'Audiences that exist right now. An audience is a standing rule aimed at an ad network, not a snapshot, so this is inventory rather than activity — the window does not apply.' })
+      description: 'Audiences that exist right now' })
     metrics.push({ key: 'segments', value: counts.segments, live: true,
-      description: 'Saved segments that exist right now. A segment is a query over people, recomputed whenever it is asked for, so it has no history to window either.' })
+      description: 'Saved segments that exist right now' })
   }
   let live = 0, dark = 0
   if (byNetwork) {
     for (const n of byNetwork) { live += n.enabled - n.dry_run; dark += n.dry_run }
     metrics.push({ key: 'delivering', value: live, live: true,
-      description: 'Audience-network pairs that are switched on AND have an eligible adapter behind them — the ones actually reaching a platform.' })
+      description: 'Switched on with an eligible adapter behind it' })
     // Switched on, reaching nobody. Non-zero here means someone activated an
     // audience and the ad network never heard about it.
     metrics.push({ key: 'not delivering', value: dark, severity: 'bad', live: true,
-      description: 'Switched on and reaching nobody: activated for a network with no eligible adapter wired, so it is stamped dry-run. The trap is that delivery reads as ON in the UI while nothing ever leaves the building, and no per-event log records the omission — this count is the only place it surfaces.' })
+      description: 'Switched on, reaching nobody — stamped dry-run' })
     // Per-network breakdown of the two totals above, carrying `of` because "meta 1
     // of 5" is the whole story where either number alone is meaningless. These were
     // `gauges` — a separate array for bounded resources — but nothing here is
@@ -390,7 +390,7 @@ export async function status({ since } = {}) {
         value: n.enabled - n.dry_run,
         of: n.enabled,
         live: true,
-        description: `Of the ${n.enabled} audience${n.enabled === 1 ? '' : 's'} activated for ${n.network}, how many actually reach it. The ratio is the point — either number alone says nothing. When this reads 0 of ${n.enabled}, every audience aimed at ${n.network} is a no-op; the severity for that sits on "not delivering", which is the count that goes non-zero in exactly that case.`,
+        description: `Reaching ${n.network}, of ${n.enabled} activated for it`,
       })
     }
   }

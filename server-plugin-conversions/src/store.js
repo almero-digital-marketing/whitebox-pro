@@ -133,21 +133,21 @@ export async function status({ since } = {}) {
     label: 'conversions',
     metrics: [
       { key: 'events', value: totals?.events ?? 0,
-        description: 'Conversion events received and recorded first-party in this window. One event fans out to one call per eligible ad network, so the verdict counts below will normally exceed this.' },
+        description: 'Conversions recorded first-party in this window' },
       { key: 'accepted', value: by.accepted || 0,
-        description: 'Ad-network calls the platform accepted. Counted per network, so one event sent to Meta and TikTok contributes two.' },
+        description: 'Ad-network calls the platform accepted' },
       // Non-zero means conversions the rest of the system believes were reported
       // were not, in fact, reported.
       { key: 'rejected', value: by.rejected || 0, severity: 'bad',
-        description: 'The platform refused the call. This is the number that justifies the card: the event already answered 200 and counts as a success everywhere else, so a refused call loses the conversion silently — the ad platform will never know it happened and will optimise without it. Check the note for which network.' },
+        description: 'Platform refused the call — the conversion is lost' },
       { key: 'errors', value: by.error || 0, severity: 'bad',
-        description: 'The call never got an answer — a network timeout, an unreachable endpoint or a throwing adapter. The same silent loss as `rejected`, one step earlier.' },
+        description: 'No answer — timeout, bad endpoint or adapter throw' },
       // Not failures: a network that isn't configured or eligible, and consent
       // withheld, are both the system doing exactly what it was told.
       { key: 'skipped', value: by.skipped || 0,
-        description: 'Calls not attempted because that network is not configured or the event was not eligible for it. Correct behaviour, not a failure.' },
+        description: 'Network not configured, or the event not eligible' },
       { key: 'consent withheld', value: totals?.consent_skipped ?? 0,
-        description: 'Events recorded first-party but sent to no network because the visitor had not consented to ad tracking. Also correct behaviour — the conversion is yours to analyse, it just does not leave the building.' },
+        description: 'Recorded, sent nowhere — no ad-tracking consent' },
     ],
     note: missing.length
       ? `${missing.join(' and ')} unavailable — the numbers above are incomplete`

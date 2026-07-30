@@ -76,21 +76,21 @@ export async function status({ since, pool } = {}) {
     label: 'voip',
     metrics: [
       { key: 'ringing', value: s.ringing,
-        description: 'Calls that started in this window and are still ringing — nobody has picked up yet.' },
+        description: 'Started in this window, still ringing' },
       { key: 'active', value: s.active,
-        description: 'Calls connected and talking right now, counted from those that started in this window.' },
+        description: 'Connected and talking now' },
       { key: 'ended', value: s.ended,
-        description: 'Calls that connected and finished normally. This is the one that means call tracking worked end to end.' },
+        description: 'Connected and finished normally' },
       // Someone reached out and nobody answered — a failure in the same sense as
       // a bounced email, and the one voip number an operator would act on.
       { key: 'missed', value: s.missed, severity: 'bad',
-        description: 'Somebody called a tracking number and nobody answered. A failure in the same sense as a bounced email: the visitor made contact and got nothing.' },
+        description: 'Somebody called and nobody answered' },
       ...(p ? p.tags.map(t => ({
         key: t.tag,
         value: t.assigned,
         of: t.total,
         live: true,
-        description: `Tracking numbers in the "${t.tag}" pool currently held by a visitor, of ${t.total} configured. Read from this process's assignment map, so it is not windowed, does not survive a restart, and reflects only the instance that answered. When the pool is full the next visitor is shown the untracked fallback number and their call cannot be attributed.`,
+        description: `"${t.tag}" numbers held now, of ${t.total} in the pool`,
         // This plugin's own judgement, not `used === total`: a full pool is only a
         // problem once somebody is actually waiting on it.
         ...(t.exhausted ? { severity: 'bad' } : {}),

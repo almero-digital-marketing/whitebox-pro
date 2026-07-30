@@ -385,7 +385,13 @@ describe('status() descriptions', () => {
     const s = await outbox.status({ since: new Date(Date.now() - 3600_000) })
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   // The distinction that motivated the whole field: two adjacent keys that mean

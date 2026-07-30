@@ -168,6 +168,12 @@ describe('descriptions', () => {
     const s = await ingest.status({ since: new Date('2026-07-01T00:00:00Z') })
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 })

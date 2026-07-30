@@ -292,20 +292,20 @@ export async function status({ since } = {}) {
     metrics: [
       // Windowed: both FILTER on sent_at >= since (store.healthCounts).
       { key: 'sent', value: c.sent,
-        description: 'Campaigns whose send ran in this window. Includes dry runs — see the next number for how many of these actually left the building.' },
+        description: 'Sends that ran in this window, dry runs included' },
       { key: 'dry run', value: c.dry_run,
-        description: 'Of those sends, the ones that recorded the reach they WOULD have had without contacting anybody. Deliberately not flagged: dry-run mode defaults on, so on a deployment that has not gone live every send is one, and marking it would paint the card red for a system doing exactly what it was configured to do.' },
+        description: 'Recorded the reach it would have had — the default' },
       // Current state: these three count by `status`, which has no timestamp to
       // window. A draft created last year is still a draft today, so widening the
       // window can't change them — hence `live`.
       { key: 'scheduled', value: c.scheduled, live: true,
-        description: 'Campaigns committed to a future send time and waiting. Current state, not activity — counted by status, which has no timestamp, so the window does not apply.' },
+        description: 'Committed to a future send time' },
       { key: 'drafts', value: c.draft, live: true,
-        description: 'Campaigns still being written, with no send time set. Current state: a draft from last year is still a draft today.' },
+        description: 'Still being written, no send time set' },
       // Committed to a send time that has passed, and still sitting there —
       // there is no worker that will pick it up.
       { key: 'overdue', value: c.overdue, severity: 'bad', live: true,
-        description: 'Scheduled, past its send time, and still sitting there. Nothing in this plugin will ever deliver it: scheduling only sends a campaign whose time has already come, and there is no worker that revisits one later. Somebody has to send it by hand.' },
+        description: 'Past its send time — nothing will deliver it' },
     ],
     // No `of` on any of these: a campaign has no ceiling, so there is nothing for
     // a ratio to be measured against and a denominator would invent one.

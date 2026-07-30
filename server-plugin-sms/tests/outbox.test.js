@@ -124,12 +124,18 @@ describe('outbox.status — self-describing health', () => {
     boot()
     const s = await outbox.status({ since: new Date() })
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   it('warns that a missing delivery receipt is not necessarily a fault', async () => {
     boot()
     const s = await outbox.status({ since: new Date() })
-    expect(s.metrics.find(m => m.key === 'delivered').description).toMatch(/never send one|without anything being wrong/i)
+    expect(s.metrics.find(m => m.key === 'delivered').description).toMatch(/many never do/i)
   })
 })

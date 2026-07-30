@@ -29,8 +29,7 @@ const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirMode
   connected, paused, dropped, overflowed, failing, pinned, pinnedFigs } = storeToRefs(store)
 
 // Which right-pane section is open. One today, so it starts open — the app's other
-// panes open their first panel too rather than presenting a stack of closed
-// headers.
+// panes open their first panel too rather than presenting a stack of closed headers.
 const sidePanel = ref('status')
 
 // Not via storeToRefs: a plain function on the store, so wrapping it in a ref would
@@ -506,10 +505,17 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
          everything on offer and pick, and an accordion would hide most of it
          behind clicks. -->
     <aside class="lv-side">
-      <!-- An Accordion, like every other right pane in the app (People, Campaigns,
-           Audiences): the pane is a stack of named sections, and "Status" is this
-           module's first. One panel today — declared as a section anyway so the
-           next one is an <AccordionPanel> rather than a restructure. -->
+      <p class="lv-side-hint">
+        Switch a counter on to show it in the header.
+        <button v-if="!isDefaultPinned" type="button" class="lv-link"
+          @click="store.resetPinned()">reset</button>
+      </p>
+
+      <!-- ONE "Status" panel holding every plugin as a group, which is what the app's
+           right panes are: a small stack of named sections, not thirteen of them.
+           A panel per plugin was tried and dropped — thirteen headers turned the
+           pane into a list of things to click before it was a list of counters, and
+           the one you wanted was always shut. -->
       <Accordion v-model:value="sidePanel" class="lv-accordion">
         <AccordionPanel value="status">
           <AccordionHeader>
@@ -521,75 +527,75 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             </span>
           </AccordionHeader>
           <AccordionContent>
-      <!-- Says where the descriptions are. Every counter carries one from the plugin
-           that owns it, but on hover they were undiscoverable — writing 63 of them
-           and then hiding them behind an interaction nobody knows about is worse
-           than not having them. Inline is not an option: some run to a paragraph,
-           and 63 of those in a 340px pane is not a list any more. -->
-      <p class="lv-side-hint">
-        Switch a counter on to show it in the header.
-        Hover one for what it measures.
-        <button v-if="!isDefaultPinned" type="button" class="lv-link"
-          @click="store.resetPinned()">reset</button>
-      </p>
+            <div v-for="p in statusRows" :key="p.module" class="lv-sgroup">
+              <div class="lv-sgroup-head">
+                <span class="lv-dl-ch">{{ p.label }}</span>
+                <!-- The plugin's caveat about what it CAN'T measure, next to the name
+                     it belongs to. Four plugins have one. -->
+                <button v-if="p.note" type="button" class="lv-dl-why"
+                  v-tooltip.left="{ value: p.note, class: 'lv-why-tip' }"
+                  :aria-label="`${p.label}: ${p.note}`">
+                  <span class="material-symbols-outlined">info</span>
+                </button>
+              </div>
 
-      <div v-for="p in statusRows" :key="p.module" class="lv-sgroup">
-        <div class="lv-sgroup-head">
-          <span class="lv-dl-ch">{{ p.label }}</span>
-          <button v-if="p.note" type="button" class="lv-dl-why"
-            v-tooltip.left="{ value: p.note, class: 'lv-why-tip' }"
-            :aria-label="`${p.label}: ${p.note}`">
-            <span class="material-symbols-outlined">info</span>
-          </button>
-        </div>
-
-        <!-- The app's existing toggle row, copied from analytics' CompareSection:
-             a <label> wrapping its text with the switch pushed right by
-             `margin-left: auto` (its `.lab.row` + `.cmp-sw`). Same PrimeVue
-             ToggleSwitch, same geometry — the classes there are scoped under `.qb`,
-             so the values are mirrored in live.css the way this file already
-             mirrors People's `.sub-title`. -->
-        <!-- The description comes from the plugin, not from here — only it knows
-             that `sent` means "handed to the provider" while `delivered` means "the
-             provider confirmed the mailbox took it". On the whole row, because the
-             row is where you decide whether to pin it. -->
-        <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }"
-          v-tooltip.left="{ value: f.description, class: 'lv-why-tip' }">
-          <span class="lv-srow-n">
-            <span v-if="f.bad" class="material-symbols-outlined">error</span>
-            <b>{{ f.text }}</b>
-          </span>
-          <span class="lv-srow-k">{{ f.key }}</span>
-          <ToggleSwitch class="lv-sw" :model-value="isPinned(`${p.module}:${f.key}`)"
-            @update:model-value="store.togglePinned(`${p.module}:${f.key}`)"
-            :aria-label="`Show ${p.label} ${f.key} in the header`" />
-        </label>
-      </div>
-
-      <!-- Absent, not zero: no plugin reporting is a different claim from
-           "everything is at zero". -->
-      <p v-if="!summary?.status?.length" class="lv-empty">
-        No plugin is reporting status. A plugin appears here once it exposes
-        <code>status()</code>.
-      </p>
-
-      <!-- A plugin that THREW is broken, and that's urgent — distinct from one
-           that simply has no status() to call. -->
-      <p v-if="summary?.status_failing?.length" class="lv-note-bad">
-        <span class="material-symbols-outlined">error</span>
-        {{ summary.status_failing.join(', ') }} failed to report — check the server log.
-      </p>
-
-      <!-- Named on purpose. These render as absent above, which is correct, but
-           absence is easy to miss: nobody notices that a plugin has NEVER
-           reported. This is the difference between a pane that shows what's
-           monitored and one that shows what isn't. -->
-      <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
-        not monitored: {{ summary.status_silent.join(', ') }}
-      </p>
+              <!-- The app's existing toggle row, copied from analytics' CompareSection:
+                   a <label> wrapping its text with the switch pushed right by
+                   `margin-left: auto` (its `.lab.row` + `.cmp-sw`). Same PrimeVue
+                   ToggleSwitch, same geometry — the classes there are scoped under
+                   `.qb`, so the values are mirrored in live.css the way this file
+                   already mirrors People's `.sub-title`.
+                   The description is INLINE under the counter, its own full-width
+                   line. It comes from the plugin, not from here — only it knows that
+                   `sent` means "handed to the provider" while `delivered` means "the
+                   provider confirmed the mailbox took it". On hover nobody found
+                   them, which is why they are simply shown. -->
+              <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }">
+                <span class="lv-srow-top">
+                  <span class="lv-srow-n">
+                    <span v-if="f.bad" class="material-symbols-outlined">error</span>
+                    <b>{{ f.text }}</b>
+                  </span>
+                  <span class="lv-srow-k">{{ f.key }}</span>
+                  <ToggleSwitch class="lv-sw" :model-value="isPinned(`${p.module}:${f.key}`)"
+                    @update:model-value="store.togglePinned(`${p.module}:${f.key}`)"
+                    :aria-label="`Show ${p.label} ${f.key} in the header`" />
+                </span>
+                <!-- Full width, below the number and name. Nested beside the name it
+                     got only the width those two left over — about 150px — so a
+                     50-character sentence broke into three ragged lines. -->
+                <small class="lv-srow-d">{{ f.description }}</small>
+              </label>
+            </div>
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
+
+      <!-- Pane-level, outside the accordion: these are claims about the SET of
+           plugins, so they'd be wrong inside any one section. -->
+      <div class="lv-side-foot">
+        <!-- Absent, not zero: no plugin reporting is a different claim from
+             "everything is at zero". -->
+        <p v-if="!summary?.status?.length" class="lv-empty">
+          No plugin is reporting status. A plugin appears here once it exposes
+          <code>status()</code>.
+        </p>
+
+        <!-- A plugin that THREW is broken, and that's urgent — distinct from one
+             that simply has no status() to call. -->
+        <p v-if="summary?.status_failing?.length" class="lv-note-bad">
+          <span class="material-symbols-outlined">error</span>
+          {{ summary.status_failing.join(', ') }} failed to report — check the server log.
+        </p>
+
+        <!-- Named on purpose. These render as absent above, which is correct, but
+             absence is easy to miss: nobody notices that a plugin has NEVER
+             reported. This is the difference between a pane that shows what's
+             monitored and one that shows what isn't. -->
+        <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
+          not monitored: {{ summary.status_silent.join(', ') }}
+        </p>
+      </div>
     </aside>
   </div>
 </template>

@@ -236,7 +236,13 @@ describe('geolocation() — status()', () => {
     const s = await api.service.status({})
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   // `no data` is normal and `failed` is not — two adjacent zero-ish counters whose
@@ -246,7 +252,7 @@ describe('geolocation() — status()', () => {
     const api = await geolocation({ provider }).register({}, ctx)
     const s = await api.service.status({})
     const at = k => s.metrics.find(m => m.key === k).description
-    expect(at('no data')).toMatch(/normal/i)
+    expect(at('no data')).toMatch(/private|unroutable/i)
     expect(at('failed')).toMatch(/threw|corrupt|missing/i)
   })
 

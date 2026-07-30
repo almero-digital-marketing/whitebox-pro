@@ -121,7 +121,13 @@ describe('calls.status descriptions', () => {
     const s = await calls.status({ since, pool: pool() })
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
-    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    for (const m of s.metrics) {
+      // Rendered inline in a 340px pane, so length IS the constraint: one line.
+      expect(m.description.length).toBeLessThanOrEqual(56)
+      // ...and it must still say more than the key already does.
+      expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
+      expect(m.description.length).toBeGreaterThan(12)
+    }
   })
 
   // The pool rows are generated per tag, so their prose must be generated too — a
@@ -141,15 +147,17 @@ describe('calls.status descriptions', () => {
     expect(at(s, 'web').description).not.toBe(at(s, 'sales').description)
   })
 
-  // The pool's three surprising properties — not windowed, dies on restart,
-  // per-instance — are exactly what an operator needs told, since none of them are
-  // visible from the number itself.
-  it('warns that the pool figure is per-process and not windowed', async () => {
+  // The pool's surprising properties — not windowed, dies on a restart, per-instance
+  // — do NOT fit in a one-line inline description, and forcing them in would break
+  // the constraint every other counter is held to. They live in the source comment
+  // and in docs/10-plugin-status.md; what the prose has to carry is the RATIO, since
+  // "3" without "of 8" is the thing an operator would misread.
+  it('carries the ratio, which is the part the number alone cannot say', async () => {
     calls.init({ db: makeDb([]) })
     const s = await calls.status({ since, pool: pool() })
     const d = at(s, 'web').description
-    expect(d).toMatch(/not windowed/i)
-    expect(d).toMatch(/restart/i)
-    expect(d).toMatch(/instance/i)
+    expect(d).toMatch(/held now/i)
+    expect(d).toMatch(/of 8/)
+    expect(d.length).toBeLessThanOrEqual(56)
   })
 })

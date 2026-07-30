@@ -34,7 +34,7 @@ export async function status({ since } = {}) {
     return {
       label: 'live',
       metrics: [{ key: 'streaming', value: 0, severity: 'bad', live: true,
-        description: 'Zero because there is no stream at all: the socket namespace was unavailable when this plugin registered. Dashboards fall back to polling, so the board still works but nothing updates on its own. A wiring problem, not a Redis one.' }],
+        description: 'No socket namespace wired — dashboards poll instead' }],
       note: 'not streaming — connect.namespace() was unavailable at registration, so dashboards poll /summary instead of updating live',
     }
   }
@@ -86,34 +86,45 @@ export async function status({ since } = {}) {
       // Per MINUTE regardless of window, so the figure means the same thing on
       // every setting — matching the header it mirrors.
       { key: 'events/min', value: Math.round((traffic.total / secs) * 60 * 10) / 10,
-        description: 'Recorded events per minute across the whole system. Normalised per minute whatever window is selected, so the figure means the same thing on every setting.' },
+        description: 'Recorded events per minute, whatever the window' },
       { key: 'in', value: traffic.byDirection.in,
-        description: 'Events where something arrived — a page view, a form, a call, a CRM record. Direction is inferred here from the event type and its payload; the plugins themselves do not report it.' },
+        description: 'Something arrived — a view, form, call or record' },
       { key: 'out', value: traffic.byDirection.out,
-        description: 'Events where something left the building — an email, an SMS, an ad-network call.' },
+        description: 'Something left — mail, SMS, an ad-network call' },
       // Orchestration, not traffic — counted separately so it can't inflate
       // either direction beside it.
       { key: 'internal', value: traffic.byDirection.internal,
-        description: 'Orchestration: enrolments, activations, bookkeeping. Counted apart from in and out on purpose, because it is not data crossing the boundary and folding it into either direction would inflate the figures beside it.' },
+        description: 'Orchestration, not data crossing the boundary' },
       { key: 'people active', value: traffic.active,
-        description: 'Distinct people touched in this window. Events about the system rather than about a person are not counted.' },
+        description: 'Distinct people touched in this window' },
     )
   }
   metrics.push(
     { key: 'dashboards', value: s.subscribers, live: true,
-      description: 'Live boards connected to the socket right now. Zero means nobody is watching; batches are then discarded rather than buffered, since the event log holds the durable copy anyway.' },
+      description: 'Live boards connected right now' },
     { key: 'streamed', value: s.received, live: true,
-      description: 'Events this process has received off the Redis firehose since it booted. Worth watching next to the event counts above: notify() writes down two independent paths, so if this stays at zero while the log fills, the Redis subscription is dead and the feed will stay empty however busy the system is.' },
+      description: 'Events off the Redis firehose since boot' },
     // Over the 200-per-flush ceiling. Non-zero means a dashboard was shown a
     // fraction of the traffic without any way to know which part.
     { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true,
-      description: 'Events discarded because a single flush exceeded its 200-event ceiling. Non-zero means a dashboard was shown a fraction of the traffic with no way to tell which part was missing. Process-lifetime: the per-batch count sent to the browser resets constantly and dies with the tab, so this is the only durable record.' },
+      description: 'Discarded at the 200-per-flush ceiling' },
   )
+
+  // The cross-check, and the guard that stops it crying wolf.
+  //
+  // `received` counts from THIS boot; `recorded` covers the selected window. Right
+  // after a restart the log legitimately holds events the stream was never going to
+  // see, so "recorded > 0 and received === 0" is the normal state for a while — and
+  // warning then is worse than not warning at all, because an alarm that fires on
+  // every deploy gets learned as noise.
+  // Only comparable when the whole window is after boot. Verified live: a restart
+  // was making this claim a dead Redis subscription on a perfectly healthy system.
+  const windowIsAfterBoot = since instanceof Date && s.bootedAt && since.getTime() >= s.bootedAt
 
   const note = s.overCeiling
     ? `${s.overCeiling} event${s.overCeiling === 1 ? '' : 's'} discarded at the ${'200'}-per-flush ceiling — dashboards showed a fraction of the traffic`
-    : (recorded && !s.received)
-      ? 'the event log is recording but nothing has arrived on the firehose since boot — the Redis subscription is probably dead, so the feed will stay empty while the system is busy'
+    : (windowIsAfterBoot && recorded && !s.received)
+      ? 'the event log is recording but nothing has arrived on the firehose — the Redis subscription is probably dead, so the feed will stay empty while the system is busy'
       : (!s.subscribers && s.unwatched)
         ? `${s.unwatched} event${s.unwatched === 1 ? '' : 's'} went unstreamed with no dashboard connected — not a fault, the registry holds them`
         : null

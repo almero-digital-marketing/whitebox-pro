@@ -22,7 +22,10 @@
    padding are one object across the app rather than a lookalike: the ACTIVE panel
    is the one that grows and scrolls, which is the whole reason for the flex chain
    (`min-height: 0` at every level, or the pane grows instead of the content
-   scrolling). */
+   scrolling).
+   This works BECAUSE there is one panel. A version with thirteen — one per plugin —
+   needed 34px headers and a scrolling pane just to fit its own chrome, which was the
+   first sign that thirteen sections was the wrong shape. */
 .lv-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .lv-accordion .p-accordionpanel { border: none; display: flex; flex-direction: column; }
 .lv-accordion .p-accordionpanel > .p-accordioncontent { min-height: 0; }
@@ -37,13 +40,23 @@
 .lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
 .lv-accordion .p-accordioncontent-content { padding: 14px 18px; background: var(--panel); border: none; }
 
-/* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane. */
-.lv-side-hint { margin: 0 0 10px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+/* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
+   Above the accordion, which owns no outer padding, so it brings its own. */
+.lv-side-hint { margin: 0; padding: 12px 18px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* One plugin's counters. No rule between groups: the uppercase heading already
-   separates them, and thirteen hairlines down a narrow pane added structure the
-   content didn't need. Whitespace does the grouping instead — hence the larger gap
-   above a heading than between its rows. */
+/* The plugin's own caveat, at the top of its opened panel. Same tier as the pane
+   hint — it is the same kind of sentence, one scope down. */
+.lv-side-note { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+
+/* Claims about the SET of plugins, below every section. Separated by a rule because
+   they are not part of the last panel, which is exactly how they'd otherwise read. */
+.lv-side-foot { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); }
+.lv-side-foot > :first-child { margin-top: 0; }
+.lv-side-foot:not(:has(> *)) { display: none; }
+
+/* One plugin's counters inside the Status panel. No rule between groups: the
+   uppercase heading already separates them, and thirteen hairlines down a narrow
+   pane added structure the content didn't need. */
 .lv-sgroup + .lv-sgroup { margin-top: 14px; }
 .lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 
@@ -56,10 +69,21 @@
    having to hit the switch itself would be the difference between usable and not.
    The value column is fixed and right-aligned so digits line up instead of drifting
    with label length; tabular-nums stops a `12` being narrower than an `88`. */
-.lv-srow { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; margin: 0 -6px;
+/* A COLUMN: number/name/switch on one line, then the description across the panel's
+   full width beneath. Nested beside the name it only got the width the number and
+   switch left over — about 150px — so a 50-character sentence broke into three
+   ragged lines. */
+.lv-srow { display: flex; flex-direction: column; padding: 5px 6px; margin: 0 -6px;
   cursor: pointer; }
 .lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
-.lv-srow-n { font-variant-numeric: tabular-nums; }
+/* `baseline` here, not center: the 20px figure and the 12px name are one phrase
+   ("0.2 events/min") and should sit on a shared baseline, which was the point of the
+   list-not-a-grid layout. The switch is re-centred against that line below. */
+.lv-srow-top { display: flex; align-items: baseline; gap: 6px; }
+.lv-srow-n { font-variant-numeric: tabular-nums; flex: none; }
+/* The plugin's own words. `.fld-hint`'s tier one step down: this appears under every
+   row, so at 11.5px it competed with the name above it. */
+.lv-srow-d { display: block; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
 /* The app's stat tier for a figure inside a PANEL — `.bs-num` / `.bs-lbl`, the same
    20px/650 + 12px/muted pair Audiences, Campaigns and Journeys' result panels use.
    Not the header's `.lv-fig b` (22px beside 11.5px), which this borrowed at first:
@@ -71,7 +95,7 @@
    the trade, and tabular-nums still stops a single value jittering as it ticks. */
 .lv-srow-n b { font-size: 20px; font-weight: 650; color: var(--text-strong);
   font-variant-numeric: tabular-nums; }
-.lv-srow-k { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-srow-k { font-size: 12px; color: var(--text-strong); }
 .lv-srow.bad .lv-srow-n b, .lv-srow.bad .lv-srow-k { color: var(--danger); }
 .lv-srow.bad .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--danger); }
 /* `margin-left: auto` and NOTHING else — exactly what CompareSection's `.cmp-sw`
@@ -80,7 +104,9 @@
    leaves the handle sized and travelling for a switch that no longer exists — it
    sat outside the track. If these ever need to be smaller, move the TOKENS, don't
    override the geometry. */
-.lv-sw { margin-left: auto; }
+/* `align-self: center` because the row above it is baseline-aligned: a switch has no
+   text baseline, so it would otherwise hang off the bottom of the line. */
+.lv-sw { margin-left: auto; align-self: center; }
 
 /* Names the owning plugin, on a plugin's counter only — live's are the whole
    system's and need no owner. Sits between the number and the key, so it reads as
