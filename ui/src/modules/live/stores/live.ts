@@ -243,20 +243,28 @@ export const useLiveStore = defineStore('live', () => {
   // Resolved against the current summary, in PINNED order. A pin whose plugin has
   // stopped reporting is skipped rather than rendered as a zero — the same rule the
   // Status card follows, because absent and zero are different claims.
+  type PinnedFig = { module: string; owner: string | null; key: string; text: string; bad: boolean }
   const pinnedFigs = computed(() => {
-    const byId = new Map<string, { module: string; key: string; text: string; bad: boolean }>()
+    const byId = new Map<string, PinnedFig>()
     for (const p of summary.value?.status || []) {
       for (const m of p.metrics) {
         byId.set(`${p.module}:${m.key}`, {
-          module: p.label,
+          module: p.module,
+          // Who to name in the header, or null for nobody.
+          //
+          // live's counters are the whole system's — `events/min`, `in`, `out`,
+          // `people active` are properties of the traffic itself, and qualifying
+          // them read as "LIVE" repeated across the row for no information.
+          // A PLUGIN's number does need its owner: `failed` alone is ambiguous
+          // across mail, sms, journeys and conversions.
+          owner: p.module === 'live' ? null : p.label,
           key: m.key,
           text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
           bad: m.severity === 'bad' && m.value > 0,
         })
       }
     }
-    return pinned.value.map(id => byId.get(id)).filter(Boolean) as
-      { module: string; key: string; text: string; bad: boolean }[]
+    return pinned.value.map(id => byId.get(id)).filter(Boolean) as PinnedFig[]
   })
 
   // How many bars the strip can draw, measured by the component itself (see

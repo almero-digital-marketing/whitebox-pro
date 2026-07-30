@@ -53,11 +53,19 @@
    having to hit the switch itself would be the difference between usable and not.
    The value column is fixed and right-aligned so digits line up instead of drifting
    with label length; tabular-nums stops a `12` being narrower than an `88`. */
-.lv-srow { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center;
-  gap: 8px; padding: 3px 0; cursor: pointer; font-size: 11.5px; }
+.lv-srow { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; margin: 0 -6px;
+  cursor: pointer; font-size: 11.5px; }
 .lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
-.lv-srow-n { text-align: right; font-variant-numeric: tabular-nums; }
-.lv-srow-n b { font-weight: 650; font-size: 12.5px; color: var(--text-strong); }
+.lv-srow-n { font-variant-numeric: tabular-nums; }
+/* The same figure the header leads with — `.lv-fig b`, verbatim. These rows ARE the
+   header's counters, so a counter should not change size depending on which of the
+   two you happen to be looking at.
+   No fixed number column and no right-alignment: the row reads as a sentence
+   ("0.1 events/min") rather than a table cell, which is what a list of differently
+   named things wants. The cost is that the digits no longer form a column — that's
+   the trade, and tabular-nums still stops a single value jittering as it ticks. */
+.lv-srow-n b { font-size: 22px; font-weight: 650; color: var(--text-strong);
+  font-variant-numeric: tabular-nums; }
 .lv-srow-k { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-srow.bad .lv-srow-n b, .lv-srow.bad .lv-srow-k { color: var(--danger); }
 .lv-srow.bad .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--danger); }
@@ -69,10 +77,10 @@
    override the geometry. */
 .lv-sw { margin-left: auto; }
 
-/* Names the owning plugin on every pinned figure. Muted and smaller — it's a
-   qualifier on the number, not part of it. */
-.lv-fig-mod { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--muted); margin-right: 3px; }
+/* Names the owning plugin, on a plugin's counter only — live's are the whole
+   system's and need no owner. Sits between the number and the key, so it reads as
+   one phrase ("2 mail failed") rather than a prefix on the row. */
+.lv-fig-mod { color: var(--text-strong); margin-right: 3px; }
 
 .lv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 /* One inline row on a single baseline. Sizes stay within ~2x so the baseline

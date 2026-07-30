@@ -242,14 +242,16 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
            aggregates, which meant the most prominent row on the board was the one
            thing nobody could change — while mail's `failed` and journeys' `stuck`,
            the numbers people actually watch for, sat two scrolls down.
-           The module is named on every figure rather than only on non-live ones:
-           `failed` alone is ambiguous across mail, sms, journeys and conversions,
-           and a conditional qualifier is worse than a consistent one. -->
+           Only a PLUGIN's counter is qualified with its owner. live's are the whole
+           system's — `events/min`, `in`, `people active` are properties of the
+           traffic itself, and naming the owner turned the row into "LIVE" repeated
+           five times for no information. `failed`, by contrast, is ambiguous across
+           mail, sms, journeys and conversions, so it keeps its owner. -->
       <div class="lv-pulse">
         <span v-for="f in pinnedFigs" :key="`${f.module}:${f.key}`"
           class="lv-fig" :class="{ bad: f.bad }">
-          <span class="lv-fig-mod">{{ f.module }}</span>
-          <b>{{ f.text }}</b> {{ f.key }}
+          <b>{{ f.text }}</b>
+          <span v-if="f.owner" class="lv-fig-mod">{{ f.owner }}</span>{{ f.key }}
         </span>
 
         <!-- An empty header is a choice someone made, not a broken board — so it
