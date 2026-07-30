@@ -77,6 +77,32 @@ const contentRows = computed(() => {
   return rows.map(r => ({ ...r, pct: Math.round((r.count / total) * 100) }))
 })
 
+// Status rows, with every figure flattened to one display shape so the template
+// doesn't branch on metric-vs-gauge.
+//
+// The split is the point. This card sits under a window selector, but roughly half
+// its numbers ignore it — `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web` are all
+// "right now" — and shown undifferentiated beside `0 sent` they read as windowed
+// when they aren't. Switching 30m → 24h and watching half the card not move is how
+// you'd eventually find that out; the marker is how you find out immediately.
+//
+// Gauges need no `live` flag of their own: a ceiling is a current-state fact by
+// definition, so they always join the live group.
+const statusRows = computed(() => (summary.value?.status || []).map(p => {
+  const fig = (key: string, text: string, bad: boolean) => ({ key, text, bad })
+  const isBad = (m: { severity?: string; value: number }) => m.severity === 'bad' && m.value > 0
+  return {
+    module: p.module,
+    label: p.label,
+    note: p.note,
+    windowed: p.metrics.filter(m => !m.live).map(m => fig(m.key, String(m.value), isBad(m))),
+    live: [
+      ...p.metrics.filter(m => m.live).map(m => fig(m.key, String(m.value), isBad(m))),
+      ...p.gauges.map(g => fig(g.label, `${g.used}/${g.total}`, !!g.exhausted)),
+    ],
+  }
+}))
+
 // in/out/internal always offered; `unknown` only when there is one to look at.
 const directionChips = computed(() => {
   const base: Direction[] = ['in', 'out', 'internal']
@@ -319,34 +345,46 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
       <section class="lv-card">
         <div class="blk-head">Status</div>
 
-        <div v-for="p in (summary?.status || [])" :key="p.module" class="lv-deliv">
+        <div v-for="p in statusRows" :key="p.module" class="lv-deliv">
           <div class="lv-dl-row">
             <span class="lv-dl-ch">{{ p.label }}</span>
             <span class="lv-dl-figs">
-              <!-- `severity: 'bad'` is the plugin's own call. Shown with an icon
-                   and the word, never colour alone. -->
-              <span v-for="m in p.metrics" :key="m.key" class="lv-dl-fig"
-                :class="{ bad: m.severity === 'bad' && m.value > 0 }">
-                <span v-if="m.severity === 'bad' && m.value > 0" class="material-symbols-outlined">error</span>
-                <b>{{ m.value }}</b> {{ m.key }}
+              <!-- Windowed first: these are the ones the selector above actually
+                   governs. `bad` is the plugin's own call, shown with an icon and
+                   the word, never colour alone. -->
+              <span v-for="f in p.windowed" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
+                <span v-if="f.bad" class="material-symbols-outlined">error</span>
+                <b>{{ f.text }}</b> {{ f.key }}
+              </span>
+
+              <!-- Then current state, behind a marker that reads as a word rather
+                   than a glyph needing a legend at the foot of the card. It sits
+                   exactly where the claim changes, so the distinction is read in
+                   the row instead of remembered. Shown even when a plugin has
+                   NOTHING windowed (geolocation, audiences) — that's the case you
+                   most need it for. A gauge lands here by definition: a ceiling is
+                   a right-now fact. -->
+              <span v-if="p.live.length" class="lv-dl-now">now</span>
+              <span v-for="f in p.live" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
+                <span v-if="f.bad" class="material-symbols-outlined">error</span>
+                <b>{{ f.text }}</b> {{ f.key }}
               </span>
             </span>
+
+            <!-- The note explains what this plugin CAN'T measure. That matters when
+                 you're asking why a number is zero, and never before — so it costs
+                 the row no height and waits behind an icon.
+                 A button, not a span: it's the app's tooltip convention, and the
+                 reason is that a button takes focus, so the note is reachable by
+                 keyboard and by tap, where hover doesn't exist. `info`, not
+                 `warning` — severity is the metrics' job, and a caveat isn't one. -->
+            <button v-if="p.note" type="button" class="lv-dl-why"
+              v-tooltip.top="{ value: p.note, class: 'lv-why-tip' }"
+              :aria-label="`${p.label}: ${p.note}`">
+              <span class="material-symbols-outlined">info</span>
+            </button>
           </div>
 
-          <!-- A bounded resource: the ratio is the point, so it gets a track
-               rather than another number. -->
-          <ul v-if="p.gauges.length" class="lv-pool-tags">
-            <li v-for="g in p.gauges" :key="g.label" class="lv-bar">
-              <span class="lv-bar-k">{{ g.label }}</span>
-              <span class="lv-bar-track">
-                <i :style="{ width: (g.total ? Math.round((g.used / g.total) * 100) : 0) + '%',
-                             background: g.exhausted ? 'var(--danger)' : DIRECTION_COLOR.in }" />
-              </span>
-              <span class="lv-bar-n">{{ g.used }}/{{ g.total }}</span>
-            </li>
-          </ul>
-
-          <p v-if="p.note" class="lv-dl-note">{{ p.note }}</p>
         </div>
 
         <!-- Absent, not zero: no plugin reporting is a different claim from

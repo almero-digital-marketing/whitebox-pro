@@ -84,14 +84,34 @@
 .lv-dl-fig.bad .material-symbols-outlined { font-size: 14px; vertical-align: -2px; }
 /* status, reserved — and it ships with an icon and the word "failed", never
    colour on its own */
-/* A plugin's own footnote: the gap it can't measure, in its words. Quiet, and
-   TIGHT to the row above — `.lv-deliv + .lv-deliv` already draws the separator
-   between plugins, so hugging its own row is what makes the note read as
-   belonging to that plugin instead of floating between two of them.
-   This had no rule at all (the markup asked for `.lv-fp-hint`, which is defined
-   nowhere), so it rendered as a default <p>: body size with 1em margins, taller
-   than the metrics it annotates and louder than the numbers it qualifies. */
-.lv-dl-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
+/* A plugin's note — what it can't measure — behind an icon, on hover or focus.
+   `margin-left: auto` parks it at the card's right edge, so the plugins carrying a
+   caveat form a scannable column instead of an icon floating at a different x on
+   every row. No height: it lives inside the flex row it annotates.
+   Sized here rather than reusing `.icon-btn`, which is a 30px control built for
+   toolbars — five of those would out-weigh the numbers they annotate. */
+/* Marks where a row stops answering "in the last 30m" and starts answering "right
+   now". A word, not a glyph: a glyph would need a legend, and a legend at the foot
+   of the card is something you have to remember while reading rows above it. */
+.lv-dl-now { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 4px; align-self: center; }
+
+.lv-dl-why { margin-left: auto; display: inline-flex; align-items: center;
+  border: 0; background: none; padding: 0; cursor: help; color: var(--muted); }
+.lv-dl-why:hover, .lv-dl-why:focus-visible { color: var(--text-strong); }
+.lv-dl-why .material-symbols-outlined { font-size: 14px; }
+/* Not nested under .lv-* on purpose: PrimeVue portals the tooltip to <body>, so no
+   ancestor selector from this module can reach it. The directive's `class` option
+   is the supported hook, and scoping the width to these tooltips leaves the app's
+   short ones ("Remove", "Sign out") at the theme default, where 12.5rem is right.
+   These carry a sentence, and at that width it broke into five ragged lines.
+   `.p-tooltip` is doubled up on purpose: PrimeVue injects its theme at RUNTIME, so
+   its `.p-tooltip { max-width }` lands after this file and beats a lone
+   `.lv-why-tip` on source order at equal specificity — the same trap
+   `.icon-btn.lv-filter-btn` exists for. The text element needs it too, or it caps
+   the content while the box is free to grow. */
+.p-tooltip.lv-why-tip, .p-tooltip.lv-why-tip .p-tooltip-text { max-width: 320px; }
 
 /* The "Top event types" card is gone — the feed's `count` view is the same
    breakdown, live and filterable, so keeping both meant maintaining two answers
@@ -132,8 +152,10 @@
 /* The pool sits under the three channel rows, separated like they are, and
    reuses the .lv-bar track from the direction cards — a gauge is a gauge. */
 .lv-pool { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.lv-pool-tags { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
-.lv-pool-tags .lv-bar { grid-template-columns: 54px 1fr 46px; font-size: 11px; }
+/* `.lv-pool-tags` is gone: status gauges render inline as ordinary figures now, so
+   voip is no longer the one plugin with a second row. `.lv-bar` stays — it's the
+   distribution track for Coming in / Going out / UTM / Content, where the relative
+   share IS the point, unlike a 0-of-8 pool. */
 
 /* Two different claims, two different weights: a plugin that THREW is a problem
    (danger, icon + words), one that simply has no status() is an inventory gap

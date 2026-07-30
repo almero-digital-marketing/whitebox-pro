@@ -22,7 +22,19 @@ export interface FeedEvent {
 }
 
 /** One plugin describing its own health — see docs/10-plugin-status.md. */
-export interface StatusMetric { key: string; value: number; severity?: 'bad' }
+export interface StatusMetric {
+  key: string
+  value: number
+  severity?: 'bad'
+  /**
+   * This number is CURRENT STATE and ignores the window — "how many right now",
+   * not "how many in the last 30m". Roughly half the card is like this
+   * (`0 drafts`, `1 segments`, `0 enrolled`), and showing it beside a windowed
+   * count under a window selector reads as a lie: changing 30m → 24h leaves it
+   * untouched. Plugins that ignore `since` must say so with this.
+   */
+  live?: boolean
+}
 export interface StatusGauge { label: string; used: number; total: number; exhausted?: boolean }
 export interface PluginStatus {
   module: string
