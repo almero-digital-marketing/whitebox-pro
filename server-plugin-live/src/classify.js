@@ -137,3 +137,35 @@ export function channel(type, payload) {
 }
 
 export const DIRECTIONS = ['in', 'out', 'internal', 'unknown']
+
+// Every channel this module can classify — DERIVED from the map above, so adding a
+// prefix there adds a filter option here and the two cannot drift.
+//
+// It exists because a filter list is not a report. The options were the channels
+// with traffic in the selected window, which meant a quiet window offered nothing to
+// filter BY: you could not switch a channel off before it got busy, only after. A
+// channel is a thing this system has, so it is listed whether or not it has done
+// anything lately.
+//
+// `awareness` is excluded: it is a type prefix, never a channel — an awareness event
+// reports its own channel in the payload (see channel() above), which is why `web`
+// has to be added by hand. `web` is the one channel that arrives ONLY that way, from
+// the browser SDK's page views, so no prefix in the map mentions it.
+// Prefixes that are NOT channels anyone can filter by:
+//   awareness — a type prefix, never a channel. An awareness event reports its own
+//               channel in the payload (see channel() above), which is also why
+//               `web` has to be listed by hand: it arrives ONLY that way, from the
+//               browser SDK's page views, so no prefix mentions it.
+//   journeys  — a defensive alias beside `journey.` in the map. Verified: every
+//               emitted event is `journey.*` (journey.enrolled/completed/exited/
+//               step.webhook), so offering both spellings would put an option in the
+//               filter that can never match anything.
+//   queue     — same: the prefix is classified defensively but nothing emits it.
+// Kept in BY_PREFIX because classifying an event that does turn up costs nothing;
+// excluded here because a filter option that can never match is noise.
+const NOT_CHANNELS = new Set(['awareness', 'journeys', 'queue'])
+
+export const CHANNELS = [...new Set([
+  ...Object.keys(BY_PREFIX).map(k => k.split('.')[0]).filter(c => !NOT_CHANNELS.has(c)),
+  'web',
+])].sort()

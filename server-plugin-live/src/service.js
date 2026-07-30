@@ -3,7 +3,7 @@
 //
 // Everything is windowed, and the window is the only parameter that matters —
 // "47/min" is meaningless without saying over what.
-import { direction, channel, DIRECTIONS } from './classify.js'
+import { direction, channel, DIRECTIONS, CHANNELS } from './classify.js'
 import { describe } from './describe.js'
 
 let eventRegistry, plugins, pluginNames, logger, streamStats
@@ -322,7 +322,24 @@ export async function summary({ window: w, dir, chan } = {}) {
   // (It used to be derived in the browser from the feed rows, which had the same
   // effect for a different reason: a quiet window holds no rows, so there was nothing
   // to offer even though the window had traffic the feed had already evicted.)
-  const axes = { direction: Object.fromEntries(DIRECTIONS.map(d => [d, 0])), channel: {} }
+  // Seeded from the channels this plugin can classify, not from the window's traffic.
+  // A filter list is not a report: the options used to be whatever had happened
+  // lately, so a quiet window offered nothing to filter BY — you could switch a
+  // channel off only after it got busy. A channel is a thing the system HAS.
+  // Unioned with whatever the window contains, so a channel classify.js has never
+  // heard of still appears rather than being silently unfilterable.
+  const axes = {
+    direction: Object.fromEntries(DIRECTIONS.map(d => [d, 0])),
+    channel: Object.fromEntries(CHANNELS.map(c => [c, 0])),
+  }
+  // Counts keyed by BOTH facets, which is what "Coming in" and "Going out" actually
+  // need. The UI used to carry its own two lists of which channels are inbound and
+  // which outbound, and that duplication caused two bugs in one sitting: `conversions`
+  // for `conversion` (silently dropping every conversion) and a missing `adnetwork`
+  // (the card read "nothing sent" beside fourteen adnetwork events in the feed).
+  // A channel can't be assigned one direction — mail.received is in, mail.sent is
+  // out — so the split has to be per EVENT, and only the server sees that.
+  const byDirChannel = Object.fromEntries(DIRECTIONS.map(d => [d, {}]))
   let total = 0
   for (const row of counts) {
     const { type, count } = row
@@ -345,6 +362,8 @@ export async function summary({ window: w, dir, chan } = {}) {
     if (!(filter.dirPasses(d) && filter.chanPasses(ch))) continue
     byDirection[d] = (byDirection[d] || 0) + count
     byChannel[ch] = (byChannel[ch] || 0) + count
+    byDirChannel[d] = byDirChannel[d] || {}
+    byDirChannel[d][ch] = (byDirChannel[d][ch] || 0) + count
     total += count
   }
 
@@ -362,6 +381,9 @@ export async function summary({ window: w, dir, chan } = {}) {
     // by_direction/by_channel above, which ARE narrowed — these must not be, or the
     // control narrows itself out of existence.
     axes,
+    // Per direction, per channel. The manifest the in/out cards render, so no
+    // surface has to keep its own list of which channels flow which way.
+    by_direction_channel: byDirChannel,
     // Collapsed back to ONE row per type. `counts` is now keyed by
     // (type, recorded_direction, recorded_channel) so the folding above can
     // classify each facet correctly — but that made `awareness.recorded` appear

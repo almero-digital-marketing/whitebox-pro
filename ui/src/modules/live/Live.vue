@@ -55,28 +55,28 @@ const WINDOWS: WindowKey[] = ['5m', '30m', '1h', '24h']
 onActivated(() => { store.load(); store.start() })
 onDeactivated(() => store.stop())
 
-// Channels split by which way they carry data, so the two cards answer
-// "what's arriving" and "what are we sending" rather than one merged list that
-// answers neither.
-// Keys must match what the API reports, which for everything except awareness is
-// the event type's first segment (classify.js `channel()` → type.split('.')[0]).
-// So it's `conversion`, SINGULAR — the plugin emits `conversion.${name}`. The
-// plural spelling here silently dropped every conversion from this card, because
-// rank() filters out keys the summary doesn't contain.
-const IN_CHANNELS = ['session', 'passport', 'web', 'crm', 'conversion', 'engagement', 'shortener', 'voip']
-const inChannels = computed(() => rank(IN_CHANNELS))
-// `adnetwork` belongs here: a server-to-server CAPI call to Meta/TikTok is data
-// leaving us. Omitting it made "Going out" read "Nothing sent in this window"
-// while fourteen adnetwork.accepted events sat in the feed's count view —
-// this list and classify.js's out-set have to agree, or the card contradicts
-// the board.
-const outChannels = computed(() => rank(['mail', 'sms', 'adnetwork', 'webhook']))
-function rank(keys: string[]) {
-  const by = summary.value?.by_channel || {}
-  const rows = keys.filter(k => by[k]).map(k => ({ key: k, count: by[k] }))
+// Coming in / Going out, straight from the server's manifest
+// (`summary.by_direction_channel`) — counts already split by direction AND channel.
+//
+// This file used to keep its own two lists of which channels flow which way, and
+// that duplication caused two bugs in one sitting: `conversions` where the API says
+// `conversion`, which silently dropped every conversion from the card; and a missing
+// `adnetwork`, so "Going out" read "nothing sent" beside fourteen adnetwork events in
+// the feed. A hard-coded list can only ever be a stale copy of the classifier.
+//
+// It also cannot be right in principle: a channel does not have one direction.
+// `mail.received` is inbound and `mail.sent` is outbound, so the split has to be per
+// EVENT — which only the server sees.
+function rank(byChannel: Record<string, number> | undefined) {
+  const rows = Object.entries(byChannel || {})
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => ({ key, count }))
   const max = Math.max(1, ...rows.map(r => r.count))
-  return rows.sort((a, b) => b.count - a.count).map(r => ({ ...r, pct: Math.round((r.count / max) * 100) }))
+  return rows.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+    .map(r => ({ ...r, pct: Math.round((r.count / max) * 100) }))
 }
+const inChannels = computed(() => rank(summary.value?.by_direction_channel?.in))
+const outChannels = computed(() => rank(summary.value?.by_direction_channel?.out))
 
 // Which UTM dimension the card is showing. One card with a switch rather than
 // three cards: they answer the same question at different depths, and three

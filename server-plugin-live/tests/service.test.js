@@ -626,12 +626,36 @@ describe('summary().axes — what the filter lists offer', () => {
     { type: 'crm.deal', count: 30 },
     { type: 'journey.enrolled', count: 10 },
   ]
+  const seen = (map) => Object.fromEntries(Object.entries(map).filter(([, n]) => n > 0))
 
-  it('counts every direction and channel present in the window', async () => {
+  // A filter list is not a report. The options are every channel this plugin can
+  // classify, so you can switch one off BEFORE it gets busy — the old behaviour
+  // offered only what had happened lately, which meant a quiet window offered
+  // nothing at all and the list simply looked broken.
+  it('offers every known channel whether or not it has traffic', async () => {
+    service.init({ eventRegistry: registry([], 0), logger: console })
+    const s = await service.summary({ window: '30m' })
+    expect(Object.keys(s.axes.channel).length).toBeGreaterThan(10)
+    expect(s.axes.channel).toHaveProperty('mail', 0)
+    expect(s.axes.channel).toHaveProperty('voip', 0)
+    // `web` arrives only as an awareness channel, never as a type prefix, so it has
+    // to be in the list by name or the browser SDK's traffic is unfilterable.
+    expect(s.axes.channel).toHaveProperty('web', 0)
+    // `awareness` is a TYPE prefix, not a channel — its events report their own.
+    expect(s.axes.channel).not.toHaveProperty('awareness')
+    // Nor are the defensive aliases in BY_PREFIX that nothing emits. Offering both
+    // `journey` and `journeys` would put an option in the filter that can never
+    // match anything, and the same for `queue`.
+    expect(s.axes.channel).toHaveProperty('journey', 0)
+    expect(s.axes.channel).not.toHaveProperty('journeys')
+    expect(s.axes.channel).not.toHaveProperty('queue')
+  })
+
+  it('counts the window on top of that list', async () => {
     service.init({ eventRegistry: registry(counts, 0), logger: console })
     const s = await service.summary({ window: '30m' })
     expect(s.axes.direction).toMatchObject({ out: 60, in: 30, internal: 10 })
-    expect(s.axes.channel).toEqual({ mail: 60, crm: 30, journey: 10 })
+    expect(seen(s.axes.channel)).toEqual({ mail: 60, crm: 30, journey: 10 })
   })
 
   // The rule that keeps a filter usable: each axis is counted as if only the OTHER
@@ -644,8 +668,8 @@ describe('summary().axes — what the filter lists offer', () => {
     // The cards ARE narrowed...
     expect(s.total).toBe(60)
     expect(s.by_channel).toEqual({ mail: 60 })
-    // ...while the channel list still offers all three, with their full counts.
-    expect(s.axes.channel).toEqual({ mail: 60, crm: 30, journey: 10 })
+    // ...while the channel list still shows all three with their full counts.
+    expect(seen(s.axes.channel)).toEqual({ mail: 60, crm: 30, journey: 10 })
     // The direction facet DOES respect the channel filter — it's the other axis.
     expect(s.axes.direction).toMatchObject({ out: 60, in: 0, internal: 0 })
   })
@@ -656,13 +680,63 @@ describe('summary().axes — what the filter lists offer', () => {
     // direction list keeps internal visible, so it can be switched back on
     expect(s.axes.direction).toMatchObject({ internal: 10, out: 60, in: 30 })
     // channel list drops the excluded direction's channel
-    expect(s.axes.channel).toEqual({ mail: 60, crm: 30 })
+    expect(seen(s.axes.channel)).toEqual({ mail: 60, crm: 30 })
   })
 
-  it('is an empty channel map when the window genuinely had no traffic', async () => {
-    service.init({ eventRegistry: registry([], 0), logger: console })
+  // A channel classify.js has never heard of must still be filterable, or it is
+  // invisible to the one control that could hide it.
+  it('unions in a channel it does not know about', async () => {
+    service.init({ eventRegistry: registry([{ type: 'newthing.happened', count: 4 }], 0), logger: console })
     const s = await service.summary({ window: '30m' })
-    expect(s.axes.channel).toEqual({})
-    expect(s.axes.direction).toMatchObject({ in: 0, out: 0, internal: 0 })
+    expect(s.axes.channel).toHaveProperty('newthing', 4)
+  })
+})
+
+// The manifest the Coming in / Going out cards render. Live.vue used to keep its own
+// two lists of which channels flow which way; that duplication caused `conversions`
+// for `conversion` (dropping every conversion from the card) and a missing
+// `adnetwork` ("nothing sent" beside fourteen adnetwork events in the feed).
+describe('summary().by_direction_channel — the in/out manifest', () => {
+  it('splits channel counts by direction, per event', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'mail.sent', count: 60 },
+        { type: 'crm.deal', count: 30 },
+        { type: 'journey.enrolled', count: 10 },
+      ], 0),
+      logger: console,
+    })
+    const s = await service.summary({ window: '30m' })
+    expect(s.by_direction_channel.out).toEqual({ mail: 60 })
+    expect(s.by_direction_channel.in).toEqual({ crm: 30 })
+    expect(s.by_direction_channel.internal).toEqual({ journey: 10 })
+  })
+
+  // Why a per-CHANNEL direction would have been wrong: one channel legitimately
+  // carries both, so the split has to be per event.
+  it('puts one channel on both sides when it genuinely flows both ways', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'awareness.recorded', count: 25, recorded_direction: 'exposure', recorded_channel: 'mail' },
+        { type: 'awareness.recorded', count: 7, recorded_direction: 'expression', recorded_channel: 'mail' },
+      ], 0),
+      logger: console,
+    })
+    const s = await service.summary({ window: '30m' })
+    expect(s.by_direction_channel.out).toEqual({ mail: 25 })
+    expect(s.by_direction_channel.in).toEqual({ mail: 7 })
+  })
+
+  it('is narrowed by the board filter, like the cards it feeds', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'mail.sent', count: 60 },
+        { type: 'crm.deal', count: 30 },
+      ], 0),
+      logger: console,
+    })
+    const s = await service.summary({ window: '30m', dir: 'in' })
+    expect(s.by_direction_channel.in).toEqual({ crm: 30 })
+    expect(s.by_direction_channel.out).toEqual({})
   })
 })

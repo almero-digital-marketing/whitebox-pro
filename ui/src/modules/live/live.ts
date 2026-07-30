@@ -85,6 +85,13 @@ export interface Summary {
    * `by_direction`/`by_channel` above are the narrowed numbers the cards render.
    */
   axes: Axes
+  /**
+   * Counts per direction, per channel — the manifest the Coming in / Going out cards
+   * render. A channel does not have a single direction (`mail.received` is inbound,
+   * `mail.sent` outbound), so the split is per event and only the server can make it.
+   * Replaces two hard-coded lists in Live.vue that had already drifted twice.
+   */
+  by_direction_channel: Record<string, Record<string, number>>
   active_passports: number
   // unwindowed — what makes an empty window legible as 'quiet' not 'broken'
   last_event_at: string | null
