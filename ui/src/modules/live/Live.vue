@@ -19,13 +19,12 @@ import Accordion from 'primevue/accordion'
 import AccordionPanel from 'primevue/accordionpanel'
 import AccordionHeader from 'primevue/accordionheader'
 import AccordionContent from 'primevue/accordioncontent'
-import FilterMenu from '../../components/FilterMenu.vue'
 import TrafficStrip from './components/TrafficStrip.vue'
 import './live.css'
 
 const store = useLiveStore()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
-  feedChanModes, directionCounts, channelCounts, feedFiltered, hiddenByFilter,
+  feedChanModes, directionCounts, channelCounts, feedFiltered,
   feedView, feedCounts,
   connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
@@ -149,58 +148,11 @@ const directionChips = computed(() => {
 // One helper for both axes, so the chips can't drift apart in how they read.
 // `title` spells the cycle out because a tri-state control has no conventional
 // affordance — the next state has to be discoverable without experimenting.
-// Shaped for FilterMenu: groups of { value, label, count }. Channels come from
-// the window rather than a fixed list, so this is a computed, not a constant.
-const filterGroups = computed(() => {
-  const groups = [{
-    label: 'Direction',
-    items: directionChips.value.map(d => ({
-      value: d, label: `${DIRECTION_GLYPH[d]} ${d}`, count: directionCounts.value[d] ?? 0,
-    })),
-  }]
-  if (channelCounts.value.length) {
-    groups.push({
-      label: 'Channel',
-      items: channelCounts.value.map(c => ({ value: c.channel, label: c.channel, count: c.count })),
-    })
-  }
-  return groups
-})
-
-// FilterMenu takes a plain object, not a Map — one object covering both axes,
-// since values can't collide (a direction is never a channel name).
-const filterModes = computed(() => ({
-  ...Object.fromEntries(feedDirModes.value),
-  ...Object.fromEntries(feedChanModes.value),
-}))
-
-// Which axis a value belongs to, so one `toggle` event reaches the right store
-// action. Direction is the closed set; anything else is a channel.
-function onToggle(value: string) {
-  if (directionChips.value.includes(value as any)) store.toggleDirection(value)
-  else store.toggleChannel(value)
-}
-
-// A summary for the button's tooltip: with an icon-only control the dot says
-// "narrowed" but not how, and this is the only place that can.
-const filterSummary = computed(() => {
-  const parts: string[] = []
-  const say = (modes: Map<string, string>, kind: string) => {
-    const inc = [...modes.entries()].filter(([, m]) => m === 'include').map(([k]) => k)
-    const exc = [...modes.entries()].filter(([, m]) => m === 'exclude').map(([k]) => k)
-    if (inc.length) parts.push(`${kind}: only ${inc.join(', ')}`)
-    if (exc.length) parts.push(`${kind}: not ${exc.join(', ')}`)
-  }
-  say(feedDirModes.value as any, 'direction')
-  say(feedChanModes.value as any, 'channel')
-  if (feedQuery.value.trim()) parts.push(`matching "${feedQuery.value.trim()}"`)
-  // Only describe a filter the OPERATOR set. At rest the board excludes
-  // `internal` by default, and narrating that here made the tooltip claim a
-  // filter was active while the dot — which tracks deviation from the default —
-  // correctly said otherwise. Two readouts of the same thing must agree.
-  if (!feedFiltered.value) return 'Filter the feed'
-  return parts.length ? parts.join(' · ') : 'Filter the feed'
-})
+// The feed's own filter menu is gone, and with it `filterGroups`, `filterModes`,
+// `onToggle` and `filterSummary`. They existed only to shape this module's tri-state
+// into that component's props, and to narrate an icon-only control in a tooltip. The
+// Live pane renders the axes directly as labelled rows, so there is nothing to shape
+// and nothing to narrate.
 
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString()
 
@@ -367,24 +319,27 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             ({{ failing.items.map(i => `${i.value} ${i.label} ${i.key}`).join(', ') }})
           </span>
         </span>
-        <!-- Filters, composable and all client-side over the loaded feed. Every
-             chip carries the count it WOULD yield given the other filters, so a
-             number never disagrees with the list under it, and channels are
-             offered from what's actually in the window rather than a fixed list
-             of mostly-dead options. -->
+        <!-- No direction/channel filter here any more: the Live pane's filters are
+             board-wide and already govern this list, so a second control for the same
+             state would be two places to look and two to keep in step.
+             What stays is the text SEARCH, which the pane does not offer — it matches
+             over type, detail and person rather than narrowing an axis. -->
         <span class="lv-filters">
-          <!-- A plain text input, matching RailSearch (the app's filter box):
-               `type="search"` brings Chrome's own cancel button and its own
-               metrics, which read as a different control from every other filter
-               in the app. `spellcheck="false"` for the same reason it's there —
-               event types and campaign names aren't prose. The clear affordance
-               is explicit, like RailSearch's, rather than the native one. -->
+          <!-- A plain text input, matching RailSearch (the app's search box):
+               `type="text"` not `type="search"`, because Chrome's own cancel button and
+               metrics read as a different control from every other one in the app.
+               `spellcheck="false"` for the same reason it's there — event types and
+               campaign names aren't prose. The clear affordance is explicit, like
+               RailSearch's, rather than the native one.
+               Called SEARCH, not filter: the word "filter" now means the pane's
+               board-wide axes, and this is a different act — matching text across a
+               row rather than narrowing the board. -->
           <span class="lv-searchbox">
             <input v-model="feedQuery" type="text" class="lv-search" spellcheck="false"
-              placeholder="filter — mail -bounced"
-              aria-label="Filter the feed by event type, detail or person. Prefix a word with a minus to exclude it."
+              placeholder="search — mail -bounced"
+              aria-label="Search the feed by event type, detail or person. Prefix a word with a minus to exclude it."
               title="Words must all match; prefix with - to exclude, e.g. mail -bounced" />
-            <button v-if="feedQuery" type="button" class="lv-search-clear" aria-label="Clear the text filter"
+            <button v-if="feedQuery" type="button" class="lv-search-clear" aria-label="Clear the search"
               @click="feedQuery = ''"><span class="material-symbols-outlined">close</span></button>
           </span>
 
@@ -398,16 +353,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               @click="feedView = v">{{ v }}</button>
           </div>
 
-          <!-- The app's standard filter control (components/FilterMenu.vue) —
-               the same button and panel People's rail uses, in its tri-state
-               mode. Previously this module hand-rolled both, which is why the
-               two looked nothing alike. -->
-          <FilterMenu mode="tri" :groups="filterGroups" :modes="filterModes"
-            :active="feedFiltered" :title="filterSummary" aria-label="Filter the feed"
-            hint="Click to show only · again to exclude · again to clear"
-            clearable @toggle="onToggle" @clear="store.clearFeedFilters()">
-            <template #clear>Clear filters<span v-if="hiddenByFilter"> — {{ hiddenByFilter }} hidden</span></template>
-          </FilterMenu>
         </span>
       </div>
       <!-- COUNT: one row per type, ordered by what ticked most recently. Shares

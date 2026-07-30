@@ -382,10 +382,10 @@
 .lv-search-clear:hover { color: var(--accent); }
 .lv-search-clear .material-symbols-outlined { font-size: 14px; }
 
-/* The filter button and its panel live in components/FilterMenu.vue now — the
-   app's one filter control, shared with People's rail. Nothing module-specific
-   was left to keep here, and a local copy is exactly how the two drifted apart
-   in the first place. */
+/* This module has no filter control of its own at all now. The direction and channel
+   axes are the Live pane's, and they are board-wide — a second control over the same
+   state is two places to look and two to keep in step. `.lv-search*` below is a
+   different act: matching text across a row, which the pane does not offer. */
 
 /* An inline text action inside an empty state — not a button-looking control,
    because the empty state is a sentence. */
