@@ -200,11 +200,14 @@
 }
 @media (min-width: 720px) { .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-/* The list gets exactly that height whether it holds one row or twenty. `.lv-empty`
-   matches it, or an empty card would collapse and its row-mate would stand alone at
-   full height — grid rows stretch to their tallest cell. */
+/* The list gets exactly that height whether it holds one row or twenty, which is
+   also what stops an empty card collapsing — every card's empty state is an <li>
+   INSIDE this list, so the reserved height applies to it already.
+   There is deliberately no `min-height` on `.lv-empty`. Adding one gave the <li> the
+   full body height inside a box of exactly that height, and `.lv-empty`'s own
+   `margin: 4px 0 0` pushed the total 4px past it — so every empty card grew a
+   scrollbar with nothing to scroll. */
 .lv-grid .lv-bars { height: var(--lv-body-h); overflow: auto; }
-.lv-grid .lv-empty { min-height: var(--lv-body-h); }
 
 /* horizontal bars: the labels are words (web/mail/sms), and rotating them to
    fit a vertical axis is the classic unreadable-axis mistake */
