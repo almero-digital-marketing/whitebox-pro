@@ -110,7 +110,16 @@ const contentRows = computed(() => {
 // `of` renders as a ratio because either number alone says nothing: "3 of 8 held"
 // is the claim, not "3". There is no separate gauge shape any more — that array
 // existed only while the board drew a track for it.
-const statusRows = computed(() => (summary.value?.status || []).map(p => ({
+// `live` first, then the plugins in the order the server reports them (config
+// order). It otherwise lands LAST purely because it registers last, which buried
+// the whole-system counters — events/min, in, out, people active — at the bottom of
+// a 63-row scroll. They're the ones most people pin, so they lead.
+const orderedStatus = computed(() => {
+  const rows = summary.value?.status || []
+  return [...rows.filter(p => p.module === 'live'), ...rows.filter(p => p.module !== 'live')]
+})
+
+const statusRows = computed(() => orderedStatus.value.map(p => ({
   module: p.module,
   label: p.label,
   note: p.note,
@@ -512,8 +521,14 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             </span>
           </AccordionHeader>
           <AccordionContent>
+      <!-- Says where the descriptions are. Every counter carries one from the plugin
+           that owns it, but on hover they were undiscoverable — writing 63 of them
+           and then hiding them behind an interaction nobody knows about is worse
+           than not having them. Inline is not an option: some run to a paragraph,
+           and 63 of those in a 340px pane is not a list any more. -->
       <p class="lv-side-hint">
         Switch a counter on to show it in the header.
+        Hover one for what it measures.
         <button v-if="!isDefaultPinned" type="button" class="lv-link"
           @click="store.resetPinned()">reset</button>
       </p>

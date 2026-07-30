@@ -40,11 +40,11 @@
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane. */
 .lv-side-hint { margin: 0 0 10px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* One plugin's counters. The heading is `.lv-dl-ch`, which already matches People's
-   `.ppl-console .sub-title` (11px/700/.04em/uppercase/--text-strong), so the
-   separator matches that too: 4px above, 12px below the rule. It was 6px/6px, which
-   read tighter than every other pane in the app. */
-.lv-sgroup + .lv-sgroup { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+/* One plugin's counters. No rule between groups: the uppercase heading already
+   separates them, and thirteen hairlines down a narrow pane added structure the
+   content didn't need. Whitespace does the grouping instead — hence the larger gap
+   above a heading than between its rows. */
+.lv-sgroup + .lv-sgroup { margin-top: 14px; }
 .lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 
 /* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
@@ -187,7 +187,15 @@
    The `live` flag still travels on the wire and is still true; nothing renders it.
    Whatever renders it next should not be a per-figure decoration. */
 
-.lv-dl-why { margin-left: auto; display: inline-flex; align-items: center;
+/* A plugin's note — the gap it can't measure — behind an icon, on hover or focus.
+   Sits directly after the plugin name, so it reads as belonging to that heading.
+   It used to carry `margin-left: auto`, which was right when this was one inline row
+   per plugin inside a card: the icons formed a scannable column down the right edge.
+   In the pane the heading is its own line, so a right-parked icon floated alone with
+   the whole width between it and the name it annotates.
+   Sized here rather than reusing `.icon-btn`, a 30px toolbar control that would
+   dominate the 11px heading beside it. */
+.lv-dl-why { display: inline-flex; align-items: center;
   border: 0; background: none; padding: 0; cursor: help; color: var(--muted); }
 .lv-dl-why:hover, .lv-dl-why:focus-visible { color: var(--text-strong); }
 .lv-dl-why .material-symbols-outlined { font-size: 14px; }
