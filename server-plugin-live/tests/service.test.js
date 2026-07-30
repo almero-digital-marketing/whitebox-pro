@@ -340,3 +340,81 @@ describe('summary() status — collected from whoever can describe themselves', 
     expect((await service.summary({})).status.map(p => p.module)).toEqual(['late'])
   })
 })
+
+// The plugin's own pipeline. This is the gap that made the monitoring plugin the
+// one thing the board couldn't report on — and a dead firehose is the failure that
+// looks exactly like a quiet system.
+describe('status() — live reporting on itself', () => {
+  const stats = (over = {}) => () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0, ...over })
+
+  it('reports dashboards, streamed and dropped, all as current state', async () => {
+    service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: stats({ received: 412, subscribers: 2 }) })
+    const s = await service.status({ since: new Date() })
+    expect(s.label).toBe('live')
+    expect(s.metrics).toEqual([
+      { key: 'dashboards', value: 2, live: true },
+      { key: 'streamed', value: 412, live: true },
+      { key: 'dropped', value: 0, severity: 'bad', live: true },
+    ])
+    // Nothing here is windowed — process-lifetime totals and a socket.io read.
+    expect(s.metrics.every(m => m.live)).toBe(true)
+    expect(s.note).toBeNull()
+  })
+
+  // The reason this status() is worth having. notify() writes down two independent
+  // paths; if the Redis half dies the registry keeps filling and the feed goes
+  // silent, which is indistinguishable from nothing happening.
+  it('calls out a dead firehose when the registry recorded events and the stream never has', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 40 }], 0),
+      plugins: {}, logger: console, streamStats: stats({ received: 0 }),
+    })
+    const s = await service.status({ since: new Date() })
+    expect(s.note).toMatch(/Redis subscription is probably dead/)
+  })
+
+  // Only the zero case is decidable: `received` is since-boot while the registry
+  // count is windowed, so the two numbers are not comparable.
+  it('stays quiet when the stream has received anything at all', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 40 }], 0),
+      plugins: {}, logger: console, streamStats: stats({ received: 1 }),
+    })
+    expect((await service.status({ since: new Date() })).note).toBeNull()
+  })
+
+  it('reports drops at the flush ceiling ahead of anything else', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 40 }], 0),
+      plugins: {}, logger: console, streamStats: stats({ received: 0, overCeiling: 7 }),
+    })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.find(m => m.key === 'dropped').value).toBe(7)
+    expect(s.note).toMatch(/7 events discarded/)
+  })
+
+  // "There is no stream" and "the stream carried nothing" have different fixes.
+  it('distinguishes no stream at all from an idle one', async () => {
+    service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: () => null })
+    const s = await service.status({})
+    expect(s.metrics).toEqual([{ key: 'streaming', value: 0, severity: 'bad', live: true }])
+    expect(s.note).toMatch(/not streaming/)
+  })
+
+  it('does not throw when the registry read fails mid-cross-check', async () => {
+    const reg = registry([], 0)
+    reg.countsByType = vi.fn(async () => { throw new Error('db down') })
+    service.init({ eventRegistry: reg, plugins: {}, logger: { warn: vi.fn() }, streamStats: stats({ received: 3 }) })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.find(m => m.key === 'streamed').value).toBe(3)
+  })
+
+  // It has to reach the card through the same discovery path as everyone else.
+  it('appears in summary().status like any other plugin, not as a special case', async () => {
+    const self = { service: { status: async () => ({ label: 'live', metrics: [{ key: 'streamed', value: 9, live: true }], note: null }) } }
+    service.init({ eventRegistry: registry([], 0), plugins: { live: self }, pluginNames: ['live'], logger: console })
+    const s = await service.summary({})
+    expect(s.status.map(p => p.module)).toEqual(['live'])
+    expect(s.status_silent).toEqual([])
+  })
+})

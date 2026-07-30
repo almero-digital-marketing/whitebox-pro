@@ -6,10 +6,66 @@
 import { direction, channel, DIRECTIONS } from './classify.js'
 import { describe } from './describe.js'
 
-let eventRegistry, plugins, pluginNames, logger
+let eventRegistry, plugins, pluginNames, logger, streamStats
 
 export function init(deps) {
-  ({ eventRegistry, plugins, pluginNames, logger } = deps)
+  ({ eventRegistry, plugins, pluginNames, logger, streamStats } = deps)
+}
+
+// This plugin's own health — the one thing the board could not previously show,
+// which is a pointed gap for the plugin whose job is showing whether things work.
+//
+// The metric worth having is `streamed`, because notify() writes down TWO
+// independent paths: the event registry (durable, Postgres) and FIREHOSE_CHANNEL
+// (Redis pub/sub, which drives the feed and the socket). They normally move
+// together. If the Redis subscription dies, the registry keeps filling while the
+// feed goes quiet — and a quiet feed is indistinguishable from a quiet system,
+// which is exactly the failure this whole card exists to catch. Comparing the two
+// is the only way to tell, and this is the only place that can see both.
+//
+// Nothing here is windowed: the totals are process-lifetime and `subscribers` is
+// read from socket.io now, so every metric is `live`.
+export async function status({ since } = {}) {
+  const s = streamStats?.() ?? null
+
+  // No stream at all is a different claim from a stream that has carried nothing,
+  // and it has a different fix (wire up connect, vs go look at Redis).
+  if (!s) {
+    return {
+      label: 'live',
+      metrics: [{ key: 'streaming', value: 0, severity: 'bad', live: true }],
+      note: 'not streaming — connect.namespace() was unavailable at registration, so dashboards poll /summary instead of updating live',
+    }
+  }
+
+  const metrics = [
+    { key: 'dashboards', value: s.subscribers, live: true },
+    { key: 'streamed', value: s.received, live: true },
+    // Over the 200-per-flush ceiling. Non-zero means a dashboard was shown a
+    // fraction of the traffic without any way to know which part.
+    { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true },
+  ]
+
+  // The cross-check. Only the zero case is decidable: `received` is since-boot
+  // while the registry count is windowed, so the numbers aren't comparable, but
+  // "the log recorded events and the firehose has seen none, ever" cannot be a
+  // quiet system.
+  let recorded = 0
+  try {
+    recorded = (await eventRegistry.countsByType?.({ since }))?.reduce?.((a, r) => a + Number(r.count || 0), 0) ?? 0
+  } catch (err) {
+    logger?.warn?.({ err }, 'live: status() could not read the registry for the firehose cross-check')
+  }
+
+  const note = s.overCeiling
+    ? `${s.overCeiling} event${s.overCeiling === 1 ? '' : 's'} discarded at the ${'200'}-per-flush ceiling — dashboards showed a fraction of the traffic`
+    : (recorded && !s.received)
+      ? 'the event log is recording but nothing has arrived on the firehose since boot — the Redis subscription is probably dead, so the feed will stay empty while the system is busy'
+      : (!s.subscribers && s.unwatched)
+        ? `${s.unwatched} event${s.unwatched === 1 ? '' : 's'} went unstreamed with no dashboard connected — not a fault, the registry holds them`
+        : null
+
+  return { label: 'live', metrics, note }
 }
 
 // Accepts 5m / 30m / 1h / 24h, defaults to 30m. Parsed rather than free-form
@@ -58,9 +114,14 @@ function collapseTypes(counts) {
 // A plugin that throws is omitted rather than reported as zeros: absent means
 // "nobody is watching this", zero means "nothing happened", and rendering the
 // first as the second is how a broken channel looks healthy.
-// Observers are excluded from the silent list below: this plugin monitoring
-// itself is noise, and console-events is a route shim with no state of its own.
-// Anything else that's registered and silent is worth naming.
+// Excluded from the SILENT list only — not from the card. `console-events` is a
+// route shim with no state of its own, so naming it as unmonitored would be
+// noise. `live` is listed here for the same reason historically ("a monitor
+// reporting on itself"), but that was the wrong call: its own pipeline was the one
+// thing the board couldn't show, and a dead firehose looks exactly like a quiet
+// system. It now implements status() (above), so it appears in `reported` and this
+// set never sees it — the entry is kept only so that removing status() would
+// degrade to "shim", not to a false "unmonitored".
 const OBSERVERS = new Set(['live', 'console-events'])
 
 async function collectStatus(since) {

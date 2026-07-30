@@ -50,13 +50,20 @@ export function live(options = {}) {
       // ctx.plugins holds just those that returned a service, so a plugin that
       // returns nothing would otherwise be invisible even as "not monitored".
       const pluginNames = (ctx.config?.plugins || []).map(p => p?.name).filter(Boolean)
-      service.init({ eventRegistry, plugins: ctx.plugins, pluginNames, logger })
-      rest.register(app, { service, requireRead: auth.middleware })
 
       // The live half is optional in the sense that it degrades: without a
       // socket the dashboard still renders from /summary and /recent, it just
       // won't update on its own.
+      //
+      // Registered BEFORE service.init so its stats thunk can be handed over —
+      // service.status() reports this plugin's own pipeline, and the stream is the
+      // only thing that knows whether the firehose is delivering. Safe in this
+      // order because the only thing stream.js takes from service.js is
+      // `toFeedRow`, which is pure.
       const streaming = stream.register({ connect, events, requireRead: auth.middleware, logger })
+
+      service.init({ eventRegistry, plugins: ctx.plugins, pluginNames, logger, streamStats: streaming.stats })
+      rest.register(app, { service, requireRead: auth.middleware })
 
       logger.info('Live plugin ready')
       return { service, close: streaming.close }

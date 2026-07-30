@@ -220,7 +220,13 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              coloured series: it isn't traffic, and counting it as either
              direction would inflate the figures beside it -->
         <span class="lv-fig dim"><b>{{ summary?.by_direction?.internal ?? 0 }}</b> internal</span>
-        <span class="lv-fig" title="Distinct people touched in this window. Events about the system rather than a person aren't counted.">
+        <!-- v-tooltip, not a native `title`: the Status card below explains itself
+             the same way, and two tooltip mechanisms on one screen look and behave
+             differently (the native one waits about a second and is OS-styled).
+             Native `title` is kept elsewhere in this file only for revealing text
+             the layout has clipped, which is a different job. -->
+        <span class="lv-fig"
+          v-tooltip.bottom="{ value: `Distinct people touched in this window. Events about the system rather than a person aren't counted.`, class: 'lv-why-tip' }">
           <b>{{ summary?.active_passports ?? 0 }}</b> people active
         </span>
 
@@ -248,7 +254,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              behind it, which a bare icon otherwise couldn't tell you. -->
         <button type="button" class="icon-btn" :class="{ on: paused }"
           :aria-label="paused ? `Resume the feed${overflowed ? ` — ${overflowed} events buffered` : ''}` : 'Pause the feed'"
-          :title="paused ? `Resume${overflowed ? ` — ${overflowed} buffered` : ''}` : 'Pause'"
+          v-tooltip.bottom="paused ? `Resume${overflowed ? ` — ${overflowed} buffered` : ''}` : 'Pause'"
           @click="store.togglePause()">
           <span class="material-symbols-outlined">{{ paused ? 'play_arrow' : 'pause' }}</span>
           <i v-if="paused && overflowed" class="icon-dot" />
@@ -438,7 +444,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <div class="lv-seg">
             <button v-for="v in (['list', 'count'] as const)" :key="v" type="button" class="lv-win"
               :class="{ on: feedView === v }"
-              :title="v === 'list' ? 'Every event, newest first' : 'One row per event type, most recently seen first'"
+              v-tooltip.top="v === 'list' ? 'Every event, newest first' : 'One row per event type, most recently seen first'"
               @click="feedView = v">{{ v }}</button>
           </div>
 

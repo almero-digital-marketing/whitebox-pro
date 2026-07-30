@@ -57,7 +57,10 @@ export const authorize = (middleware, token) => new Promise((resolve, reject) =>
 export function register({ connect, events, requireRead, logger }) {
   if (!connect?.namespace) {
     logger.warn('live: connect.namespace() unavailable — the dashboard will poll instead of streaming')
-    return { close: () => {} }
+    // `stats: () => null` is the signal, not an object of zeros. "There is no
+    // stream" and "the stream has carried nothing" are different claims, and
+    // status() renders them differently.
+    return { close: () => {}, stats: () => null }
   }
 
   const ns = connect.namespace('/live')
@@ -90,11 +93,19 @@ export function register({ connect, events, requireRead, logger }) {
   let buffer = []
   let dropped = 0
 
+  // Process-lifetime totals, for status(). Deliberately separate from `dropped`
+  // above, which resets on every flush: that copy travels to the client and dies
+  // with the tab, so a drop nobody happened to be watching left no trace anywhere
+  // in the system. These are the durable version, and they are the only record of
+  // whether this plugin's own pipeline is working.
+  const totals = { received: 0, overCeiling: 0, unwatched: 0 }
+
   const onEvent = (message) => {
     // The firehose carries { type, payload }; the registry row shape is what
     // toFeedRow() reads, so adapt once here and the client can't tell a
     // streamed event from a backfilled one.
-    if (buffer.length >= MAX_PER_FLUSH) { dropped++; return }
+    totals.received++
+    if (buffer.length >= MAX_PER_FLUSH) { dropped++; totals.overCeiling++; return }
     // `data` here is the INPUT toFeedRow reads (it derives detail/direction/
     // channel from it) — it is not carried through onto the emitted row.
     buffer.push(toFeedRow({
@@ -113,6 +124,7 @@ export function register({ connect, events, requireRead, logger }) {
     // No connected dashboards? Drop the batch rather than let it grow — nobody
     // is waiting for it, and the registry holds the durable copy regardless.
     if (ns.sockets.size) ns.emit('live.batch', { events: buffer, dropped })
+    else totals.unwatched += buffer.length
     buffer = []
     dropped = 0
   }, FLUSH_MS)
@@ -121,6 +133,11 @@ export function register({ connect, events, requireRead, logger }) {
   logger.info('live: streaming on the /live namespace')
 
   return {
+    // What this plugin knows about its OWN pipeline. Nothing here is windowed:
+    // the totals are process-lifetime (they reset on restart and don't extend to a
+    // second instance) and `subscribers` is read from socket.io right now.
+    stats: () => ({ ...totals, subscribers: ns.sockets.size }),
+
     close() {
       clearInterval(timer)
       events.unsubscribe?.(FIREHOSE_CHANNEL, onEvent)
