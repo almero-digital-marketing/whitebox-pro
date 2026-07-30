@@ -84,6 +84,14 @@
 .lv-dl-fig.bad .material-symbols-outlined { font-size: 14px; vertical-align: -2px; }
 /* status, reserved — and it ships with an icon and the word "failed", never
    colour on its own */
+/* A plugin's own footnote: the gap it can't measure, in its words. Quiet, and
+   TIGHT to the row above — `.lv-deliv + .lv-deliv` already draws the separator
+   between plugins, so hugging its own row is what makes the note read as
+   belonging to that plugin instead of floating between two of them.
+   This had no rule at all (the markup asked for `.lv-fp-hint`, which is defined
+   nowhere), so it rendered as a default <p>: body size with 1em margins, taller
+   than the metrics it annotates and louder than the numbers it qualifies. */
+.lv-dl-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
 
 /* The "Top event types" card is gone — the feed's `count` view is the same
    breakdown, live and filterable, so keeping both meant maintaining two answers

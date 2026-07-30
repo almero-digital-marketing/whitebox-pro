@@ -346,7 +346,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             </li>
           </ul>
 
-          <p v-if="p.note" class="lv-fp-hint">{{ p.note }}</p>
+          <p v-if="p.note" class="lv-dl-note">{{ p.note }}</p>
         </div>
 
         <!-- Absent, not zero: no plugin reporting is a different claim from
