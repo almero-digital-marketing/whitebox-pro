@@ -406,12 +406,12 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              absence is easy to miss: nobody notices that a plugin has NEVER
              reported. This is the difference between a card that shows what's
              monitored and one that shows what isn't. -->
-        <!-- Says once what the colour means. Needed because colour on its own is
+        <!-- Says once what the weight means. Needed because a visual difference is
              not a message: it tells you two kinds of number are in play but never
-             which is which. Only rendered when there IS a coloured figure on the
-             card, so it isn't explaining something nobody can see. -->
+             which is which — that's what got asked. Only rendered when the card
+             actually has one, so it never explains something nobody can see. -->
         <p v-if="statusRows.some(p => p.live.length)" class="lv-dl-legend">
-          <span class="is-now">Coloured</span> figures are current state — the
+          Numbers in normal weight (<b>0</b>) are current state — the
           {{ store.window }} window doesn't apply to them.
         </p>
 
