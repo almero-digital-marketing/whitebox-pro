@@ -177,14 +177,38 @@
    inside them, so every card ellipsised while the board had space to spare.
    Explicit breakpoints rather than auto-fit because the constraint here is a
    column COUNT (a readable row), not a minimum card width. */
-.lv-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+/* TWO columns, so each card is half the board's width, and the four fall into two
+   rows: Coming in | Going out, then Attribution | Content. Attribution sits beside
+   Content because they answer adjacent questions — where the traffic came from, and
+   what it looked at — and the source order already puts them together.
+   It was three columns above 1180px, which left Attribution beside Going out and
+   Content alone on a second row, and made every list narrow enough to ellipsise the
+   campaign names that are the whole point of the card.
+
+   FIXED BODY HEIGHT, sized for ten rows and scrolling past that. Cards whose height
+   follows their content make the board jump on every poll — a card with two rows this
+   tick and six the next drags everything below it — and a list that can only show
+   three of ten is a list you cannot read. The arithmetic is spelled out rather than
+   baked into one number so that changing the row count is changing `--lv-rows`. */
+.lv-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px;
+  --lv-rows: 10;
+  --lv-row-h: 16px;                                    /* .lv-bar, 12px text beside an 8px track */
+  --lv-row-gap: 7px;                                   /* .lv-bars gap */
+  --lv-body-h: calc(var(--lv-rows) * var(--lv-row-h) + (var(--lv-rows) - 1) * var(--lv-row-gap));
+}
 @media (min-width: 720px) { .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 1180px) { .lv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* The list gets exactly that height whether it holds two rows or twenty. `.lv-empty`
+   matches it, or an empty card would collapse and its row-mate would stand alone at
+   full height. */
+.lv-grid .lv-bars { height: var(--lv-body-h); overflow: auto; }
+.lv-grid .lv-empty { min-height: var(--lv-body-h); }
 
 /* horizontal bars: the labels are words (web/mail/sms), and rotating them to
    fit a vertical axis is the classic unreadable-axis mistake */
 .lv-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
-.lv-bar { display: grid; grid-template-columns: 84px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; }
+.lv-bar { display: grid; grid-template-columns: 84px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; min-height: var(--lv-row-h, 16px); }
 .lv-bar-k { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-bar-track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 /* 4px rounded data-end, anchored to the baseline */

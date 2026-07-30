@@ -288,7 +288,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
            a video watched and a paragraph read are one event each — no separate
            engagement.* type that would double-count every touch upstairs. -->
       <section class="lv-card">
-        <div class="blk-head">Content consumed</div>
+        <div class="blk-head">Content</div>
         <ul class="lv-bars">
           <li v-for="r in contentRows" :key="r.value" class="lv-bar">
             <span class="lv-bar-k" :title="r.value">{{ r.value }}</span>

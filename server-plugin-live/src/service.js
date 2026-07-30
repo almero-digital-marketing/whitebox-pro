@@ -418,7 +418,9 @@ export async function summary({ window: w, dir, chan } = {}) {
 // while the card says sessions.
 const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign']
 
-export async function utm({ window: w, limit = 8 } = {}) {
+// limit 10, matching content() and the ten rows the board's cards are sized for —
+// it was 8, so Attribution could never fill the space reserved for it.
+export async function utm({ window: w, limit = 10 } = {}) {
   const secs = parseWindow(w)
   const from = since(secs)
 
