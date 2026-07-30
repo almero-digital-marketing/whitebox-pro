@@ -12,6 +12,16 @@ export default function mailPlugin() {
         if (!subject) throw new Error('mail.submit: `subject` is required')
 
         return queue(async () => {
+          // This one REJECTS on failure, unlike the fire-and-forget plugins
+          // (conversions, engagement, crm all catch and warn). Deliberate, and the
+          // difference is who is waiting: submit() backs a contact form that a person
+          // just filled in and pressed send on. Swallowing a failed submit would show
+          // them a success they did not get, and lose their message. The caller is
+          // awaiting this and needs to be able to say "that didn't send, try again".
+          //
+          // If a future pass is making the client resilient to an unreachable server,
+          // this is the call that must keep throwing.
+          //
           // If files are provided, send as multipart so multer parses them server-side.
           // Otherwise plain JSON.
           if (files && files.length) {

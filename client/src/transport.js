@@ -7,6 +7,7 @@
 export default function createTransport({ url, getSessionId, getPassportId, emitter, logger }) {
   let socket = null
   let connected = false
+  let reportedFailure = false   // see connect_error below — one warning per outage
 
   async function open() {
     if (socket) return socket
@@ -26,6 +27,9 @@ export default function createTransport({ url, getSessionId, getPassportId, emit
 
     socket.on('connect', () => {
       connected = true
+      // A successful connect ends the outage, so the next one is worth reporting
+      // again — this is per-outage, not once per page.
+      reportedFailure = false
       emitter.emit('transport:connected', { id: socket.id })
     })
     socket.on('disconnect', (reason) => {
@@ -33,7 +37,14 @@ export default function createTransport({ url, getSessionId, getPassportId, emit
       emitter.emit('transport:disconnected', { reason })
     })
     socket.on('connect_error', (err) => {
-      logger?.warn?.('whitebox: socket.io connect_error', err?.message || err)
+      // ONCE per outage, not once per attempt. socket.io retries with backoff to a
+      // 30s ceiling and never gives up, so logging every attempt means a warning
+      // every 30 seconds for as long as the server is down — in the HOST's console,
+      // about a system that is not theirs. The first one carries the information;
+      // the rest are just the retry loop being audible.
+      if (reportedFailure) return
+      reportedFailure = true
+      logger?.warn?.('whitebox: realtime connection unavailable, retrying in the background', err?.message || err)
     })
     socket.onAny((event, data) => {
       emitter.emit(event, data)

@@ -382,20 +382,33 @@ describe('whitebox factory', () => {
     expect(await goodP).toBe('ok')
   })
 
-  it('namespace proxy: a call queued against a plugin whose install() throws rejects clearly, doesn\'t hang', async () => {
+  // This used to assert the call REJECTS with "never installed". It now resolves
+  // undefined and warns once, deliberately — see the proxy's rejection handler.
+  // The concern the old test had (never hang, say something clear) is unchanged and
+  // still asserted here; what changed is who hears about it. These calls are
+  // fire-and-forget — nobody awaits `wb.conversions.pageView()` — so a rejection had
+  // no handler anywhere and surfaced as an unhandled rejection in the HOST's console
+  // and error reporter, once per call, about a failure they cannot act on.
+  // `wb.plugin(name)` still rejects, and is asserted below: an explicit lookup is a
+  // question, and a typo'd or absent plugin has to stay loud somewhere.
+  it('namespace proxy: a call against a plugin whose install() throws resolves quietly, doesn\'t hang', async () => {
     mockFetch(async () => ({ ok: true, status: 200, text: async () => '{}' }))
+    const warn = vi.fn()
     const broken = {
       name: 'broken',
       install() { throw new Error('boom') },
     }
     const wb = whitebox({
       url: 'https://api.example.com', transport: false,
-      logger: { warn: () => {}, error: () => {} },
+      logger: { warn, error: () => {} },
       plugins: [broken],
     })
     const pending = wb.broken.doSomething()
     await wb.ready
-    await expect(pending).rejects.toThrow(/broken.*never installed/)
+    await expect(pending).resolves.toBeUndefined()
+    expect(warn.mock.calls.some(c => /broken.*unavailable/.test(String(c[0])))).toBe(true)
+    // …and the explicit lookup still tells you plainly.
+    await expect(wb.plugin('broken')).rejects.toThrow(/broken.*never installed/)
   })
 
   it('namespace proxy: wb[name] is never reassigned — a reference grabbed early still works after ready', async () => {

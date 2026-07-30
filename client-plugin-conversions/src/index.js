@@ -46,6 +46,8 @@ export default function conversionsPlugin(options = {}) {
     install(core) {
       const { http, queue, consent, logger, getPassportId } = core
       const pixels = createPixels({ networks: networkSelect, logger })
+      // See the catch in emit(): one warning per outage, not one per event.
+      let sendFailed = false
 
       function consented() {
         if (!requireConsent) return true
@@ -77,15 +79,48 @@ export default function conversionsPlugin(options = {}) {
           url: typeof window !== 'undefined' ? window.location.href : null,
         }
         const run = async () => {
-          await http.request('/conversions/events', {
-            method: 'POST',
-            // signals carry the browser-only ad cookies the server APIs match on
-            // (GA4 client_id is required; _fbp/_fbc/_ttp improve CAPI matching).
-            // Collected per the selected networks' declarative specs (not a
-            // hardcoded list) — same vocabulary the server adapters declare.
-            body: { passport_id: getPassportId?.(), events: [event], signals: collectSignals(networkSelect) },
-          })
-          return { event_id: eventId, pixels: firedPixels }
+          try {
+            await http.request('/conversions/events', {
+              method: 'POST',
+              // signals carry the browser-only ad cookies the server APIs match on
+              // (GA4 client_id is required; _fbp/_fbc/_ttp improve CAPI matching).
+              // Collected per the selected networks' declarative specs (not a
+              // hardcoded list) — same vocabulary the server adapters declare.
+              body: { passport_id: getPassportId?.(), events: [event], signals: collectSignals(networkSelect) },
+            })
+            // A success ends the outage, so the next failure is news again.
+            sendFailed = false
+            return { event_id: eventId, pixels: firedPixels }
+          } catch (err) {
+            // NEVER reject. A conversion send is fire-and-forget — a host tracks a
+            // page view in a router hook and does not await it — so a rejection here
+            // has no handler anywhere and surfaces as an unhandled rejection in the
+            // HOST's console and error reporter. One per navigation, about a system
+            // that is not theirs, describing a failure they cannot act on.
+            //
+            // The browser pixels have ALREADY fired by this point (step 1 above, and
+            // it is synchronous), so a server outage costs the first-party record and
+            // the server-side CAPI call, not the ad-platform signal. `pixels` in the
+            // result still reports truthfully what did go out.
+            //
+            // `error` is on the result rather than thrown, so a caller who does await
+            // — a checkout that wants to know whether its Purchase was recorded — can
+            // still see it and decide. Reporting through the return value keeps that
+            // possible without imposing it on everyone else.
+            // ONCE per outage at warn, the rest at debug — the same policy the
+            // transport uses for its retries, and for the same reason: a busy site
+            // tracks many events, and a warning each would fill the host's console
+            // with one message repeated. The first tells them the server is
+            // unreachable, which is the whole of the news; which particular event was
+            // lost stays available at debug, and on the returned result.
+            if (sendFailed) {
+              logger?.debug?.('conversions: send failed', name, err)
+            } else {
+              sendFailed = true
+              logger?.warn?.('conversions: server unreachable — events are not being recorded (later failures logged at debug)', err)
+            }
+            return { event_id: eventId, pixels: firedPixels, error: err?.message || String(err) }
+          }
         }
         return queue ? queue(run) : run()
       }

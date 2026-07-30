@@ -132,3 +132,98 @@ describe('conversions plugin — consent', () => {
     expect(requests).toHaveLength(1)
   })
 })
+
+// The server being unreachable must not surface in the host's product. A conversion
+// send is fire-and-forget — a router hook tracks a page view and does not await it —
+// so a rejection here has no handler anywhere and lands in the HOST's console and
+// error reporter, once per navigation, about a failure they cannot act on.
+describe('conversions plugin — server unreachable', () => {
+  function offlineSetup() {
+    const core = {
+      http: { request: vi.fn(async () => { throw new TypeError('Failed to fetch') }) },
+      queue: (fn) => fn(),
+      consent: { has: () => true },
+      logger: { debug: vi.fn(), warn: vi.fn() },
+      getPassportId: () => 'p-123',
+      attach: vi.fn(),
+    }
+    conversionsPlugin({}).install(core)
+    return { api: core.attach.mock.calls[0][1], core }
+  }
+
+  it('resolves instead of rejecting', async () => {
+    const { api } = offlineSetup()
+    await expect(api.pageView({ url: '/x' })).resolves.toBeDefined()
+  })
+
+  it('raises no unhandled rejection when the call is not awaited', async () => {
+    const seen = []
+    const onUnhandled = (e) => seen.push(e)
+    process.on('unhandledRejection', onUnhandled)
+    const { api } = offlineSetup()
+    api.pageView({ url: '/a' })
+    api.purchase({ value: 10, currency: 'BGN' })
+    await new Promise(r => setTimeout(r, 0))
+    await new Promise(r => setTimeout(r, 0))
+    process.off('unhandledRejection', onUnhandled)
+    expect(seen).toEqual([])
+  })
+
+  // Reported on the RESULT, not thrown — a checkout that wants to know whether its
+  // Purchase was recorded can still find out, without that being forced on the
+  // page-view call in a router hook.
+  it('reports the failure on the result for a caller who does await', async () => {
+    const { api } = offlineSetup()
+    const res = await api.purchase({ value: 10, currency: 'BGN' })
+    expect(res.error).toMatch(/Failed to fetch/)
+    expect(res.event_id).toBeTruthy()
+  })
+
+  // One warning per OUTAGE, not per event — a busy site tracks many, and a warning
+  // each would fill the host's console with one message repeated. The rest go to
+  // debug, where the detail is still available.
+  it('warns once per outage and drops the rest to debug', async () => {
+    const { api, core } = offlineSetup()
+    await api.pageView({ url: '/a' })
+    await api.pageView({ url: '/b' })
+    await api.purchase({ value: 1, currency: 'BGN' })
+
+    const warned = core.logger.warn.mock.calls.filter(c => /server unreachable/.test(String(c[0])))
+    expect(warned.length).toBe(1)
+    const debugged = core.logger.debug.mock.calls.filter(c => /send failed/.test(String(c[0])))
+    expect(debugged.length).toBe(2)
+  })
+
+  // A success ends the outage, so a later failure is news again.
+  it('warns again after a success in between', async () => {
+    const core = {
+      http: { request: vi.fn() },
+      queue: (fn) => fn(),
+      consent: { has: () => true },
+      logger: { debug: vi.fn(), warn: vi.fn() },
+      getPassportId: () => 'p',
+      attach: vi.fn(),
+    }
+    conversionsPlugin({}).install(core)
+    const api = core.attach.mock.calls[0][1]
+
+    core.http.request.mockRejectedValueOnce(new TypeError('down'))
+    await api.pageView({ url: '/a' })
+    core.http.request.mockResolvedValueOnce({})          // back up
+    await api.pageView({ url: '/b' })
+    core.http.request.mockRejectedValueOnce(new TypeError('down again'))
+    await api.pageView({ url: '/c' })
+
+    const warned = core.logger.warn.mock.calls.filter(c => /server unreachable/.test(String(c[0])))
+    expect(warned.length).toBe(2)
+  })
+
+  // The pixels fire synchronously BEFORE the server call, so an outage costs the
+  // first-party record and the CAPI call — not the ad-platform signal. The result has
+  // to keep saying so truthfully.
+  it('still reports the pixels that did fire', async () => {
+    const { api } = offlineSetup()
+    const res = await api.pageView({ url: '/x' })
+    expect(res).toHaveProperty('pixels')
+  })
+})

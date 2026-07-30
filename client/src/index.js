@@ -136,6 +136,27 @@ export default function whitebox(options = {}) {
     return { passportId }
   }
 
+  // The visitor who arrived DURING an outage. /sessions/resolve is attempted once,
+  // at load — so without this their whole visit stays session-less even after the
+  // server comes back, and everything they do is recorded against nothing.
+  //
+  // Public as well as automatic: the core retries when the socket reports a
+  // connection, but a host with a better signal of its own (a failed request
+  // succeeding, coming back from background) can ask directly.
+  async function resolveSession({ force = false } = {}) {
+    if (sessionId && !force) return { sessionId, passportId }
+    await resolveSessionFromServer()
+    return { sessionId, passportId }
+  }
+
+  // A reconnect means the server is answering again. Only worth acting on if the
+  // outage actually cost us a session — otherwise every ordinary reconnect would
+  // mint a fresh resolve for nothing.
+  emitter.on('transport:connected', () => {
+    if (sessionId) return
+    resolveSession().catch(err => logger?.warn?.('whitebox: session retry failed', err))
+  })
+
   // Anything called before ready is queued and replayed
   function queue(fn) {
     if (ready) return fn()
@@ -173,6 +194,10 @@ export default function whitebox(options = {}) {
   // call — which resolves once attach() runs, or rejects with a clear error
   // if the plugin's install() throws or the name is never declared, instead
   // of hanging forever.
+  // Warned-about plugins, so an outage says its piece once instead of once per
+  // call. A page that tracks every navigation would otherwise fill the console.
+  const warnedMissing = new Set()
+
   function makeNamespaceProxy(name) {
     return new Proxy({}, {
       get(_, prop) {
@@ -182,10 +207,34 @@ export default function whitebox(options = {}) {
         // same function reference across repeated reads (`.bind()` would
         // mint a fresh wrapper on every access instead).
         if (installed.has(name)) return installed.get(name)[prop]
-        return (...args) => getPlugin(name).then(real => {
-          const fn = real[prop]
-          return typeof fn === 'function' ? fn.apply(real, args) : fn
-        })
+        return (...args) => getPlugin(name).then(
+          real => {
+            const fn = real[prop]
+            return typeof fn === 'function' ? fn.apply(real, args) : fn
+          },
+          // The plugin never installed — most often because install() awaited the
+          // network and the server is unreachable. RESOLVE, don't reject.
+          //
+          // These calls are fire-and-forget by design: nobody awaits
+          // `wb.conversions.pageView()`. A rejection here therefore has no handler
+          // anywhere, so it surfaces as an unhandled rejection — one per call, in
+          // the host's console and in whatever error reporter they run. A page that
+          // tracks navigations would report an error on every navigation, about a
+          // system that is not theirs and a failure they cannot act on.
+          //
+          // `wb.plugin(name)` still rejects: that is the explicit lookup, and a
+          // caller who asks that question directly wants a real answer, so a typo'd
+          // or genuinely absent plugin stays loud there.
+          () => {
+            if (!warnedMissing.has(name)) {
+              warnedMissing.add(name)
+              // Interpolated, not %s-formatted: a pino-style logger treats the first
+              // argument as the entire message and would drop the name.
+              logger?.warn?.(`whitebox: plugin "${name}" is unavailable — calls to it are no-ops`)
+            }
+            return undefined
+          },
+        )
       },
     })
   }
@@ -281,6 +330,10 @@ export default function whitebox(options = {}) {
 
     // Built-in: attach identity claims to the current passport. See identify() above.
     identify,
+
+    // Retry /sessions/resolve. Called automatically when the transport reconnects
+    // without a session; public for hosts with a better signal of their own.
+    resolveSession,
 
     // Late-bound plugin registration (after constructor). Returns wb for chaining.
     // Validates the plugin shape synchronously, then kicks off install. If the
