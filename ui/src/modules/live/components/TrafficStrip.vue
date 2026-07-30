@@ -12,7 +12,17 @@
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { DIRECTION_COLOR, DIRECTION_GLYPH, type Series } from '../live'
 
-const props = defineProps<{ series: Series | null }>()
+const props = defineProps<{
+  series: Series | null
+  /**
+   * "Nothing in the last 30m — last activity 50 min ago." Computed by the board,
+   * because it needs `summary.last_event_at`, which the series does not carry.
+   * Shown in place of the plot when the window is empty: an empty chart is
+   * ambiguous — nothing happening and nothing WORKING look identical — and this is
+   * the sentence that resolves it.
+   */
+  quiet?: string | null
+}>()
 
 // Resolution belongs to whoever knows the width, and that's this component. It
 // reports how many bars it can draw and the parent refetches at that resolution
@@ -111,8 +121,18 @@ const ticks = computed(() => {
 // Buckets can exist while every bar is zero — a window in which plenty happened
 // but none of it was traffic (orchestration only). Rendering flat bars under
 // "peak 0" reads as a broken chart, so say what's actually true instead.
-const internalOnly = computed(() => Boolean(props.series?.buckets?.length) && peak.value === 0)
+// Two DIFFERENT empty windows, and conflating them was a small lie the strip told.
+//   flat + internal traffic  — plenty happened, none of it crossed the boundary.
+//   flat + nothing at all    — the window is genuinely empty, and the only useful
+//                              thing to say is when something last happened. That
+//                              sentence is `quiet`, computed by the board (it needs
+//                              `last_event_at`, which the series doesn't carry).
+// `internalOnly` used to be true for both, so a dead-quiet window read "No traffic in
+// or out — 0 internal events (enrollments, activations) ran", which states a zero as
+// if it were an explanation.
 const internalTotal = computed(() => (props.series?.buckets || []).reduce((a, b) => a + b.internal, 0))
+const flat = computed(() => Boolean(props.series?.buckets?.length) && peak.value === 0)
+const internalOnly = computed(() => flat.value && internalTotal.value > 0)
 </script>
 
 <template>
@@ -131,12 +151,12 @@ const internalTotal = computed(() => (props.series?.buckets || []).reduce((a, b)
       :aria-label="`Traffic over the window: ${bars.length} buckets, peak ${peak} events`">
       <!-- Behind the bars, and aria-hidden: the label above already states the
            peak, so a screen reader gains nothing from the tick values. -->
-      <div v-if="ticks.length && !internalOnly" class="ts-grid" aria-hidden="true">
+      <div v-if="ticks.length && !flat" class="ts-grid" aria-hidden="true">
         <span v-for="t in ticks" :key="t.value" class="ts-tick" :style="{ bottom: t.pct + '%' }">
           <b>{{ t.value }}</b>
         </span>
       </div>
-      <template v-if="!internalOnly">
+      <template v-if="!flat">
         <!-- every bar carries a native tooltip: the hover layer a chart in HTML
              should ship by default -->
         <div v-for="(b, i) in bars" :key="i" class="ts-bar"
@@ -149,10 +169,15 @@ const internalTotal = computed(() => (props.series?.buckets || []).reduce((a, b)
         No traffic in or out of this window — {{ internalTotal }} internal event{{ internalTotal === 1 ? '' : 's' }}
         (enrollments, activations) ran, which isn't data crossing the boundary.
       </p>
-      <p v-else-if="!bars.length" class="lv-empty ts-empty">No events in this window.</p>
+      <!-- The quiet-vs-broken sentence, in the chart it explains. It sat in the board
+           header beside the pinned figures, where it was a line of prose among numbers
+           and described this plot rather than them. -->
+      <p v-else-if="flat || !bars.length" class="lv-empty ts-empty">
+        {{ quiet || 'No events in this window.' }}
+      </p>
     </div>
 
-    <div v-if="bars.length && !internalOnly" class="ts-axis">
+    <div v-if="bars.length && !flat" class="ts-axis">
       <span>{{ bars[0].label }}</span><span>{{ bars[bars.length - 1].label }}</span>
     </div>
   </div>

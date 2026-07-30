@@ -217,9 +217,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           No counters pinned — switch some on in the Status pane.
         </span>
 
-        <!-- Says why the figures are zeros — "quiet" and "broken" look identical
-             otherwise. Alongside them, never replacing them. -->
-        <span v-if="quietFor" class="lv-quiet">{{ quietFor }}</span>
       </div>
 
       <!-- The header carries the pinned figures and nothing else now. The window
@@ -231,7 +228,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
 
     <!-- the only chart: counts per bucket over the window, in vs out -->
     <section class="lv-card lv-strip">
-      <TrafficStrip :series="series" @resolution="store.setPoints" />
+      <TrafficStrip :series="series" :quiet="quietFor" @resolution="store.setPoints" />
     </section>
 
     <div class="lv-grid">
