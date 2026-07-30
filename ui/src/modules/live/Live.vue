@@ -358,14 +358,15 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                 <b>{{ f.text }}</b> {{ f.key }}
               </span>
 
-              <!-- Then current state, behind a marker that reads as a word rather
-                   than a glyph needing a legend at the foot of the card. It sits
-                   exactly where the claim changes, so the distinction is read in
-                   the row instead of remembered. Shown even when a plugin has
-                   NOTHING windowed (geolocation, audiences) — that's the case you
-                   most need it for. -->
-              <span v-if="p.live.length" class="lv-dl-now">now</span>
-              <span v-for="f in p.live" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
+              <!-- Then current state, in the accent colour rather than behind an
+                   inline marker. A chip reading "now" spent row width and still had
+                   to be explained; colour costs nothing and, grouped at the end of
+                   every row, the distinction is legible as a pattern across the
+                   card. The legend below says what it means once, and each figure
+                   carries it on hover for anyone reading a single row. -->
+              <span v-for="f in p.live" :key="f.key" class="lv-dl-fig is-now"
+                :class="{ bad: f.bad }"
+                v-tooltip.top="{ value: `${f.key}: current state — the ${store.window} window does not apply to it`, class: 'lv-why-tip' }">
                 <span v-if="f.bad" class="material-symbols-outlined">error</span>
                 <b>{{ f.text }}</b> {{ f.key }}
               </span>
@@ -405,6 +406,15 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              absence is easy to miss: nobody notices that a plugin has NEVER
              reported. This is the difference between a card that shows what's
              monitored and one that shows what isn't. -->
+        <!-- Says once what the colour means. Needed because colour on its own is
+             not a message: it tells you two kinds of number are in play but never
+             which is which. Only rendered when there IS a coloured figure on the
+             card, so it isn't explaining something nobody can see. -->
+        <p v-if="statusRows.some(p => p.live.length)" class="lv-dl-legend">
+          <span class="is-now">Coloured</span> figures are current state — the
+          {{ store.window }} window doesn't apply to them.
+        </p>
+
         <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
           not monitored: {{ summary.status_silent.join(', ') }}
         </p>

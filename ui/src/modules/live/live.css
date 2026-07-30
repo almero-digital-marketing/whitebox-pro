@@ -90,12 +90,24 @@
    every row. No height: it lives inside the flex row it annotates.
    Sized here rather than reusing `.icon-btn`, which is a 30px control built for
    toolbars — five of those would out-weigh the numbers they annotate. */
-/* Marks where a row stops answering "in the last 30m" and starts answering "right
-   now". A word, not a glyph: a glyph would need a legend, and a legend at the foot
-   of the card is something you have to remember while reading rows above it. */
-.lv-dl-now { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--muted); border: 1px solid var(--border); border-radius: 3px;
-  padding: 0 4px; align-self: center; }
+/* Current-state figures. Colour rather than an inline marker: a "now" chip spent
+   row width on every affected plugin and still needed explaining, whereas these
+   always sit at the end of a row, so the colour reads as a pattern down the card.
+   Applied to the LABEL as well as the number — colouring only the digit made it
+   look like a severity hint on that one value rather than a class of figure.
+   `:not(.bad)` is load-bearing. `.lv-dl-fig.bad` is defined ABOVE this and carries
+   the same specificity, so without the exclusion this rule would win on source
+   order and paint a failing metric teal — and every metric that can fail while
+   being current state is one you must not miss (`stuck`, `overdue`,
+   `invites expired`, `not delivering`, an exhausted pool). Excluding rather than
+   reordering keeps the two sets disjoint, so a later edit can't reintroduce it. */
+.lv-dl-fig.is-now:not(.bad), .lv-dl-fig.is-now:not(.bad) b { color: var(--accent-2); }
+.lv-dl-fig.is-now { cursor: help; }
+
+/* Says once what the colour means, and shows it in the colour it's describing. */
+.lv-dl-legend { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+.lv-dl-legend .is-now { color: var(--accent-2); font-weight: 650; }
 
 .lv-dl-why { margin-left: auto; display: inline-flex; align-items: center;
   border: 0; background: none; padding: 0; cursor: help; color: var(--muted); }
