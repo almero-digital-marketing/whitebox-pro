@@ -61,12 +61,13 @@
 .lv-srow-k { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-srow.bad .lv-srow-n b, .lv-srow.bad .lv-srow-k { color: var(--danger); }
 .lv-srow.bad .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--danger); }
+/* `margin-left: auto` and NOTHING else — exactly what CompareSection's `.cmp-sw`
+   does. Do not set width/height here: PrimeVue positions the handle from its own
+   design tokens (--p-toggleswitch-* ), so resizing the track and handle in raw px
+   leaves the handle sized and travelling for a switch that no longer exists — it
+   sat outside the track. If these ever need to be smaller, move the TOKENS, don't
+   override the geometry. */
 .lv-sw { margin-left: auto; }
-/* Smaller than PrimeVue's default: at stock size a column of 65 of these outweighs
-   the numbers they select. Deep, because the switch's parts are the component's own
-   DOM and live.css is not scoped to it. */
-.lv-side .p-toggleswitch { width: 30px; height: 17px; }
-.lv-side .p-toggleswitch-handle { width: 13px; height: 13px; }
 
 /* Names the owning plugin on every pinned figure. Muted and smaller — it's a
    qualifier on the number, not part of it. */
