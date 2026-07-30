@@ -131,14 +131,8 @@
 .ppl-console .danger-box { border: 1px solid rgba(220,38,38,.35); background: rgba(220,38,38,.05); border-radius: 9px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .ppl-console .danger-box .fld-l { color: #dc2626; }
 
-/* The left rail's "where to search" dropdown. Unprefixed on purpose: PrimeVue
-   teleports the overlay to <body>, outside .ppl-console, so neither a scoped
-   rule in People.vue nor a .ppl-console prefix can reach it. Namespaced by
-   .scope-panel (the component's overlayClass) instead, so these can't leak
-   into the app's other MultiSelects. */
-.scope-panel .p-multiselect-option { align-items: flex-start; padding-block: 7px; }
-.scope-opt { display: flex; flex-direction: column; gap: 1px; }
-.scope-opt b { font-size: 12px; font-weight: 600; }
-/* the hint is what makes the choice meaningful — "Facts" alone doesn't say
-   that the search is key-agnostic, which is the surprising part */
-.scope-opt small { font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+/* The rail's filter dropdown moved to components/FilterMenu.vue, which is a
+   plain Popover with its own scoped rows — so it no longer needs unprefixed
+   global rules to reach a teleported PrimeVue overlay, and the `.scope-*`
+   classes that existed only for that are gone. The hint-under-label shape they
+   provided is now `.fm-k small` inside the component, where it can't leak. */

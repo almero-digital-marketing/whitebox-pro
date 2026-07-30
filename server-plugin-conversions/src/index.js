@@ -47,7 +47,11 @@ export function conversions(options = {}) {
         ? authVerifier.middleware
         : (req, res) => res.status(401).json({ error: 'conversions: set auth to use the audit endpoint' })
 
-      const reporter = createReporter({ networks: options.networks || [], passports, logger })
+      // notify first: the reporter emits per-network delivery events through it,
+      // so it has to exist before the reporter is constructed.
+      const { notify } = createNotify({ webhooksConfig: options.webhooks, events, webhooks, eventRegistry })
+
+      const reporter = createReporter({ networks: options.networks || [], passports, logger, notify })
 
       // Consent gate for ad-network fan-out. The client already gates on
       // marketing consent before sending, so the default is to honour that
@@ -61,7 +65,6 @@ export function conversions(options = {}) {
       }
 
       // Init singletons in dependency order.
-      const { notify } = createNotify({ webhooksConfig: options.webhooks, events, webhooks, eventRegistry })
       store.init({ db })
       ingest.init({ awareness, reporter, consentOk, logger, resolvePassport: passports.resolve, notify })
 

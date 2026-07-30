@@ -32,12 +32,23 @@ export function makeFakeDb() {
       const project = (list) => state.cols
         ? list.map(r => Object.fromEntries(state.cols.map(c => [c, r[c]])))
         : list.map(r => ({ ...r }))
+      // ORDER BY is a LIST, applied in the order it was declared — knex APPENDS
+      // each orderBy() rather than replacing the last one. Modelling that
+      // matters here specifically: pagedList() adds a unique tiebreaker after
+      // the caller's sort column, and a fake that kept only the final term
+      // would silently sort by the tiebreaker ALONE — the tests would pass
+      // while proving the opposite of the real query's behaviour.
       const resolved = () => {
         const list = applyFilters()
-        if (!state.orderCol) return project(window(list))
+        if (!state.order.length) return project(window(list))
         const sorted = [...list].sort((a, b) => {
-          const [x, y] = [a[state.orderCol], b[state.orderCol]]
-          return state.orderDir === 'desc' ? (x < y ? 1 : x > y ? -1 : 0) : (x > y ? 1 : x < y ? -1 : 0)
+          for (const [col, dir] of state.order) {
+            const [x, y] = [a[col], b[col]]
+            if (x === y) continue
+            const cmp = x > y ? 1 : -1
+            return dir === 'desc' ? -cmp : cmp
+          }
+          return 0
         })
         return project(window(sorted))
       }
@@ -60,13 +71,24 @@ export function makeFakeDb() {
           return makeQuery({ ...state, cond: { ...state.cond, ...cond } })
         },
         andWhere(col, op, val) { return makeQuery({ ...state, extra: [...state.extra, [col, op, val]] }) },
-        orderBy(col, dir = 'asc') { return makeQuery({ ...state, orderCol: col, orderDir: dir }) },
+        orderBy(col, dir = 'asc') { return makeQuery({ ...state, order: [...state.order, [col, dir]] }) },
+        // pagedList() reaches for modify() to add its tiebreaker conditionally.
+        // Real knex hands the callback a MUTABLE builder; this fake is
+        // immutable, so instead of passing a stub that understands one method
+        // (and silently no-ops on any other), record whatever the callback
+        // calls and replay it onto the chain.
+        modify(fn) {
+          const calls = []
+          const rec = new Proxy({}, { get: (_t, m) => (...args) => { calls.push([m, args]); return rec } })
+          fn(rec)
+          return calls.reduce((q, [m, args]) => q[m](...args), this)
+        },
         // The slice of knex that pagedList() drives. clone() is what makes it
         // safe to count and then fetch from one builder; the two clear* calls
         // are how it strips the projection and ordering off the COUNT.
         clone() { return makeQuery({ ...state }) },
         clearSelect() { return makeQuery({ ...state, cols: null }) },
-        clearOrder() { return makeQuery({ ...state, orderCol: null, orderDir: null }) },
+        clearOrder() { return makeQuery({ ...state, order: [] }) },
         limit(n) { return makeQuery({ ...state, limit: n }) },
         offset(n) { return makeQuery({ ...state, offset: n }) },
         async count() { return [{ count: String(applyFilters().length) }] },
@@ -125,7 +147,7 @@ export function makeFakeDb() {
       return chain
     }
 
-    return { insert, ...makeQuery({ cond: {}, extra: [], orTerms: [], cols: null, orderCol: null, orderDir: null, limit: null, offset: 0 }) }
+    return { insert, ...makeQuery({ cond: {}, extra: [], orTerms: [], cols: null, order: [], limit: null, offset: 0 }) }
   }
 
   const db = (name) => table(name)

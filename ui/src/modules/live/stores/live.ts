@@ -1,0 +1,278 @@
+// Live dashboard state. Two sources that must agree:
+//   · REST   — the aggregates and the backfill, fetched per window
+//   · socket — new events as they happen, appended to the same feed
+//
+// The backfill matters more than it looks: without it a quiet system is
+// indistinguishable from a broken one, and "is it broken?" is the entire question
+// this module exists to answer.
+import { defineStore } from 'pinia'
+import { ref, computed, shallowRef } from 'vue'
+import {
+  liveClient as client,
+  type FeedEvent, type Summary, type Series, type WindowKey, type Utm, type Content,
+} from '../live'
+import { connectLive } from '../realtime'
+import { notifyError } from '../../../shell/toast'
+import { useAuthStore } from '../../../shell/stores/auth'
+
+// Bounded on purpose, and the UI SAYS it's bounded — silently dropping the tail
+// would make a busy system look calm.
+//
+// 300, not 500. Two costs grow with this number and only one is obvious:
+//   · retained objects — ~110 bytes/row since feed rows stopped carrying the raw
+//     payload (it was half their weight and nothing rendered it)
+//   · DOM nodes — the feed is NOT virtualised, so every row is a real <li> with
+//     several grid cells. 500 rows is ~3000 elements re-laid-out on each flush,
+//     and that, not memory, is what makes a busy board feel sluggish.
+// The filters below are the real answer to "too much"; this only stops an
+// unattended tab growing without limit.
+//
+// Nothing else accumulates: while paused, arriving events are counted into
+// `overflowed` and dropped rather than buffered, so a paused tab is flat.
+const MAX_FEED = 300
+
+export const useLiveStore = defineStore('live', () => {
+  const window = ref<WindowKey>('30m')
+  const summary = ref<Summary | null>(null)
+  const series = ref<Series | null>(null)
+  const utm = ref<Utm | null>(null)
+  const content = ref<Content | null>(null)
+  // shallowRef: the feed is replaced wholesale on every flush, and deep
+  // reactivity over hundreds of event objects is pure overhead.
+  const feed = shallowRef<FeedEvent[]>([])
+  const loading = ref(false)
+  const connected = ref(false)
+  const paused = ref(false)
+  const dropped = ref(0)
+  const overflowed = ref(0)
+
+  let detach: (() => void) | null = null
+  let poll: any = null
+
+  // ── feed filters ─────────────────────────────────────────────────────────
+  //
+  // Each axis is TRI-STATE per value: neutral / include / exclude. An
+  // include-only model can't express "everything except adnetwork" — the common
+  // case when one chatty channel is drowning the feed — and including the other
+  // five instead breaks the moment a sixth appears.
+  //
+  // Combination rules, the standard faceted ones:
+  //   · any exclude on a value       ⇒ that value never matches (exclude wins)
+  //   · at least one include on axis ⇒ only included values match
+  //   · no include on the axis       ⇒ every non-excluded value matches
+  //
+  // Exclude beating include matters for the text box, where `mail -bounced` has to
+  // mean "mail, but not bounced" rather than an unresolvable contradiction.
+  //
+  // Default is `internal: exclude` — orchestration is real and worth seeing, but
+  // letting it lead buried the in/out rows under a column of identical "·" glyphs.
+  // Note this is an EXCLUDE rather than "include in+out": it leaves in/out
+  // unconstrained, so a new direction shows up by default instead of being
+  // silently omitted by a whitelist nobody remembered to update.
+  type Mode = 'include' | 'exclude'
+  const feedQuery = ref('')
+  const feedDirModes = ref<Map<string, Mode>>(new Map([['internal', 'exclude']]))
+  const feedChanModes = ref<Map<string, Mode>>(new Map())
+
+  function axisMatch(value: string, modes: Map<string, Mode>) {
+    if (modes.get(value) === 'exclude') return false
+    let hasInclude = false
+    for (const m of modes.values()) if (m === 'include') { hasInclude = true; break }
+    return !hasInclude || modes.get(value) === 'include'
+  }
+
+  // `foo` requires, `-foo` forbids. Whitespace-separated so several compose,
+  // matched over type + detail + passport id — the three things you'd search for.
+  function matchesText(e: FeedEvent, q: string) {
+    const tokens = q.trim().toLowerCase().split(/\s+/).filter(t => t && t !== '-')
+    if (!tokens.length) return true
+    const hay = `${e.type} ${e.detail || ''} ${e.passport_id || ''}`.toLowerCase()
+    for (const t of tokens) {
+      if (t.startsWith('-')) { if (hay.includes(t.slice(1))) return false }
+      else if (!hay.includes(t)) return false
+    }
+    return true
+  }
+
+  const visibleFeed = computed(() => feed.value.filter(e =>
+    axisMatch(e.direction, feedDirModes.value) &&
+    axisMatch(e.channel, feedChanModes.value) &&
+    matchesText(e, feedQuery.value)))
+
+  // Counts are of what the OTHER axes already allow, so a chip's number says what
+  // toggling it would actually yield rather than a window total that disagrees
+  // with the list under it.
+  const directionCounts = computed(() => {
+    const out: Record<string, number> = { in: 0, out: 0, internal: 0, unknown: 0 }
+    for (const e of feed.value) {
+      if (axisMatch(e.channel, feedChanModes.value) && matchesText(e, feedQuery.value)) {
+        out[e.direction] = (out[e.direction] || 0) + 1
+      }
+    }
+    return out
+  })
+
+  // Only channels PRESENT in the window, busiest first — plus any explicitly
+  // excluded, so a chip you switched off doesn't vanish the moment it stops
+  // matching and leave you no way to switch it back on.
+  const channelCounts = computed(() => {
+    const tally = new Map<string, number>()
+    for (const e of feed.value) {
+      if (axisMatch(e.direction, feedDirModes.value) && matchesText(e, feedQuery.value)) {
+        tally.set(e.channel, (tally.get(e.channel) || 0) + 1)
+      }
+    }
+    for (const [c, m] of feedChanModes.value) if (m && !tally.has(c)) tally.set(c, 0)
+    return [...tally.entries()].map(([channel, count]) => ({ channel, count })).sort((a, b) => b.count - a.count)
+  })
+
+  const DEFAULT_DIR: [string, Mode][] = [['internal', 'exclude']]
+  const feedFiltered = computed(() => Boolean(feedQuery.value.trim())
+    || feedChanModes.value.size > 0
+    || feedDirModes.value.size !== 1
+    || feedDirModes.value.get('internal') !== 'exclude')
+  const hiddenByFilter = computed(() => feed.value.length - visibleFeed.value.length)
+
+  // neutral → include → exclude → neutral. One control, three states, no modifier
+  // keys: a shift-click affordance is invisible, and this is a view people open
+  // when something is already going wrong.
+  function cycle(modes: Map<string, Mode>, key: string) {
+    const next = new Map(modes)
+    const now = next.get(key)
+    if (!now) next.set(key, 'include')
+    else if (now === 'include') next.set(key, 'exclude')
+    else next.delete(key)
+    return next
+  }
+  function toggleDirection(d: string) { feedDirModes.value = cycle(feedDirModes.value, d) }
+  function toggleChannel(c: string) { feedChanModes.value = cycle(feedChanModes.value, c) }
+  function clearFeedFilters() {
+    feedQuery.value = ''
+    feedChanModes.value = new Map()
+    feedDirModes.value = new Map(DEFAULT_DIR)
+  }
+
+  // ── list vs count ────────────────────────────────────────────────────────
+  //
+  // The feed answers "what just happened"; the count answers "what keeps
+  // happening". Same events, same filters, two questions — so it's a view toggle
+  // on one dataset rather than a second panel.
+  const feedView = ref<'list' | 'count'>('list')
+
+  // Aggregated by type, ordered MOST-RECENTLY-INCREMENTED first, so a type that
+  // just ticked rises to the top and a busy-but-idle one sinks.
+  //
+  // No timestamps and no sort needed: `visibleFeed` is already newest-first, so
+  // the first time a type is encountered walking it IS that type's latest
+  // occurrence. Collecting types in first-encounter order therefore gives exactly
+  // the required ordering for free — and it's stable, where sorting on equal
+  // counts would let rows swap places on every refresh for no reason.
+  const feedCounts = computed(() => {
+    const seen = new Map<string, { type: string; count: number; at: string; direction: string; channel: string }>()
+    for (const e of visibleFeed.value) {
+      const row = seen.get(e.type)
+      if (row) row.count++
+      else seen.set(e.type, { type: e.type, count: 1, at: e.at, direction: e.direction, channel: e.channel })
+    }
+    return [...seen.values()]
+  })
+
+  // Anything a plugin flagged `severity: 'bad'` and that is non-zero. The board no
+  // longer knows that mail has `failed` or voip has `missed` — each plugin says
+  // which of its own numbers is bad news (docs/10-plugin-status.md) and this just
+  // believes it. That's why a new channel's failures reach the header without this
+  // file changing.
+  const failing = computed(() => {
+    const bad = (summary.value?.status || []).flatMap(p =>
+      p.metrics.filter(m => m.severity === 'bad' && m.value > 0)
+        .map(m => ({ label: p.label, key: m.key, value: m.value })))
+    if (!bad.length) return null
+    return { items: bad, total: bad.reduce((a, b) => a + b.value, 0) }
+  })
+
+  // How many bars the strip can draw, measured by the component itself (see
+  // TrafficStrip's ResizeObserver). Null until it has been laid out once, so the
+  // first fetch doesn't wait on a measurement.
+  //
+  // Resolution follows the container, so a resize has to refetch — but only when
+  // the answer actually changes. TrafficStrip already quantises what it reports;
+  // this guard is what stops an unchanged value queueing a redundant request.
+  const points = ref<number | null>(null)
+  function setPoints(n: number) {
+    if (points.value === n) return
+    points.value = n
+    // Nothing to refine until the first load has happened.
+    if (series.value) refreshAggregates()
+  }
+
+  async function load() {
+    loading.value = true
+    try {
+      const [s, t, u, c, r] = await Promise.all([
+        client.summary(window.value),
+        client.timeseries(window.value, points.value ?? undefined),
+        client.utm(window.value),
+        client.content(window.value),
+        // Backfill deliberately smaller than MAX_FEED, so live events have room to
+        // arrive without immediately evicting the history we just fetched.
+        client.recent(window.value, Math.round(MAX_FEED * 0.6)),
+      ])
+      summary.value = s; series.value = t; utm.value = u; content.value = c; feed.value = r.events
+    } catch (e: any) {
+      notifyError(`Couldn't load the live view: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function setWindow(w: WindowKey) { window.value = w; return load() }
+
+  function start() {
+    const auth = useAuthStore()
+    detach?.()
+    detach = connectLive(auth.accessToken || '', (events, drop) => {
+      if (drop) dropped.value += drop
+      // Paused means the operator is reading something; new events keep arriving
+      // into the counter but must not move the rows under them.
+      if (paused.value) { overflowed.value += events.length; return }
+      const next = [...events.reverse(), ...feed.value]
+      if (next.length > MAX_FEED) next.length = MAX_FEED
+      feed.value = next
+    }, (c) => { connected.value = c })
+
+    // The aggregates aren't pushed — they're windowed queries — so they refresh on
+    // a timer. Slower than the feed on purpose: a rate that jitters every 250ms is
+    // unreadable.
+    clearInterval(poll)
+    poll = setInterval(() => { if (!paused.value) refreshAggregates() }, 10_000)
+  }
+
+  async function refreshAggregates() {
+    try {
+      const [s, t, u, c] = await Promise.all([
+        client.summary(window.value),
+        client.timeseries(window.value, points.value ?? undefined),
+        client.utm(window.value),
+        client.content(window.value),
+      ])
+      summary.value = s; series.value = t; utm.value = u; content.value = c
+    } catch { /* a failed refresh keeps the last good numbers rather than blanking them */ }
+  }
+
+  function stop() { detach?.(); detach = null; clearInterval(poll); poll = null }
+
+  function togglePause() {
+    paused.value = !paused.value
+    if (!paused.value) { overflowed.value = 0; load() }   // catch up on resume
+  }
+
+  return {
+    window, summary, series, utm, content, feed, visibleFeed,
+    feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
+    feedView, feedCounts,
+    feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
+    loading, connected, paused, dropped, overflowed,
+    failing, maxFeed: MAX_FEED,
+    load, setWindow, start, stop, togglePause, refreshAggregates, setPoints,
+  }
+})

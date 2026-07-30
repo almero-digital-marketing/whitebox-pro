@@ -133,19 +133,90 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
   display: flex; justify-content: flex-end; border: none; padding-top: 8px;
 }
 
-/* An AutoComplete WITH a dropdown button is one control made of two elements —
-   the input and the toggle, joined by their radii (6px 0 0 6px / 0 6px 6px 0).
-   The theme puts the focus border on the INPUT alone, so the ring stopped dead
-   at the seam and left the button sitting outside it, which reads as a broken
-   box rather than a focused field. Moving it to the wrapper makes the ring
-   follow the control.
-   Doubled class for the usual reason: the theme's own .p-autocomplete-input
-   rules are injected at runtime, after this file. */
-.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown):focus-within {
-  outline: 1px solid var(--accent); outline-offset: 0; border-radius: 6px;
+/* The app's icon-only square button: a 30px bordered box holding one glyph.
+   Three places arrived at this independently and byte-identically — People's
+   search filter, the rail's add action, and Live's pause — so it lives here
+   once. `.on` is the non-default state (filter narrowed, feed paused): an
+   accent border and an accent glyph, never a fill, so a row of them still
+   reads as chrome rather than as buttons demanding attention.
+
+   Kept a plain class rather than a PrimeVue variant because two of the three
+   aren't Buttons at all (one wraps a MultiSelect), and the shared thing is the
+   BOX, not the component inside it. */
+.icon-btn {
+  flex: none; width: 30px; height: 30px; min-width: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
+  border: 1px solid var(--border); border-radius: 8px; background: none; box-shadow: none;
+  color: var(--muted); cursor: pointer; font: inherit;
 }
-.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown) .p-autocomplete-input:focus {
-  border-color: var(--border);
+.icon-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: none; }
+.icon-btn:disabled { opacity: .5; cursor: default; }
+.icon-btn.on { border-color: var(--accent); color: var(--accent); }
+.icon-btn .material-symbols-outlined { font-size: 16px; }
+/* a state marker for the corner — "there is something behind this button" */
+.icon-btn .icon-dot { position: absolute; top: -1px; right: -3px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+/* An AutoComplete WITH a dropdown button is ONE control rendered as two
+   sibling elements — an <input> and a <button>. Aura styles each of them as a
+   thing in its own right: the toggle gets a tinted background
+   (`dropdown.background: {surface.100}`), its own border on every state
+   (`borderColor` / `hoverBorderColor` / `activeBorderColor`) and its own focus
+   ring. So a free-text field — an identity TYPE, a fact KEY — rendered as a
+   white box with a grey tab welded to its side, split by a seam. A plain
+   <select> has none of that.
+
+   Earlier attempts here fought that per state: override the hover background,
+   then the hover border, then the active border, then the focus ring. Each fix
+   held until the next state, because the theme sets the `border-color`
+   SHORTHAND — all four sides — separately on hover, active and focus, and it's
+   injected at runtime so it always lands after this file.
+
+   So: stop patching states, and move the border. It lives on the WRAPPER, and
+   both children have none at all. One box, one border, drawn once — no state
+   can reintroduce a seam because neither child ever has an edge to draw. That's
+   also literally how a <select> is built. */
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown) {
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--p-autocomplete-background, var(--panel));
+  /* the children keep their own 6px radii; without this their square inner
+     corners peek past the wrapper's rounded ones */
+  overflow: hidden;
+}
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown) .p-autocomplete-input,
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown) .p-autocomplete-dropdown {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+/* The toggle is part of the field, so it never lights up on its own — a
+   Select's arrow token is `{ width, color }` and nothing else. Tokens rather
+   than rules, so the theme's own CSS consumes them and there's nothing to
+   out-specify. */
+.p-autocomplete:has(> .p-autocomplete-dropdown) {
+  --p-autocomplete-dropdown-background: transparent;
+  --p-autocomplete-dropdown-hover-background: transparent;
+  --p-autocomplete-dropdown-active-background: transparent;
+  --p-autocomplete-dropdown-color: var(--muted);
+  --p-autocomplete-dropdown-hover-color: var(--muted);
+  --p-autocomplete-dropdown-active-color: var(--muted);
+  --p-autocomplete-dropdown-focus-ring-width: 0;
+  --p-autocomplete-dropdown-focus-ring-shadow: none;
+}
+
+/* Hover and focus act on the CONTROL, once — the same as a Select, and the
+   same as every other input in the app. */
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown):hover:not(:focus-within) {
+  border-color: var(--p-form-field-hover-border-color, var(--border));
+}
+.p-autocomplete.p-autocomplete:has(> .p-autocomplete-dropdown):focus-within {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
 }
 
 /* ADR-0001 action rows (.save-bar / .actions / .b-actions / .qb-actions).

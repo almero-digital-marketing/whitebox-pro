@@ -9,7 +9,7 @@ import { hashEmail, hashPhone, composeManifest } from 'whitebox-pro-adnetworks'
 
 // networks: composed server descriptors — [ meta({…}), google({…}), … ] —
 // each { name, signals, eligible, sendEvent }. No central registry.
-export function createReporter({ networks = [], passports, logger }) {
+export function createReporter({ networks = [], passports, logger, notify }) {
   const adapters = networks
 
   // Hashed PII comes from passport identities (never from awareness text, which
@@ -32,12 +32,33 @@ export function createReporter({ networks = [], passports, logger }) {
   // every eligible network. Returns { meta: 'accepted'|'rejected'|'skipped'|'error', … }.
   async function report(passportId, canonical, opts = {}) {
     const ids = await resolveIds(passportId, opts.signals || {}, opts)
+    const eventName = canonical.standard || canonical.event || null
     const out = {}
     for (const a of adapters) {
       if (!a.eligible) { out[a.name] = 'skipped'; continue }
       const res = await a.sendEvent(canonical, ids).catch(e => ({ status: 'error', error: e.message }))
       out[a.name] = res.status
       if (res.error) logger?.warn?.({ network: a.name, error: res.error }, 'conversions: network rejected event')
+
+      // One event per NETWORK CALL, distinct from the conversion that triggered
+      // it. The conversion is the visitor's action (inbound); this is our own
+      // outbound HTTP to Meta/TikTok/GA4, which succeeds or fails entirely
+      // independently — a rejected CAPI send is an operational problem the
+      // conversion event can't express, because it already counted as a success.
+      // `adnetwork.${status}` mirrors mail/sms's `${channel}.${status}` shape, so
+      // it classifies and reads the same way in the monitoring view.
+      notify?.(`adnetwork.${res.status || 'error'}`, {
+        type: `adnetwork.${res.status || 'error'}`,
+        data: {
+          network: a.name,
+          status: res.status || 'error',
+          event: eventName,
+          event_id: canonical.event_id ?? null,
+          passport_id: passportId,
+          // Present only on a failure — the reason is the whole value of the event.
+          error: res.error ?? null,
+        },
+      })?.catch?.(() => {})
     }
     return out
   }

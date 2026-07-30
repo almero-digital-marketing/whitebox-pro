@@ -350,3 +350,45 @@ describe('phonebook.normalizeLines (config reconciliation)', () => {
     expect(map).toEqual({ demo: ['+15555550100', '+15555550101'], sofia: ['+359000'] })
   })
 })
+
+describe('stats() — live pool state for a monitoring view', () => {
+  // In-memory and per-process on purpose: this IS the current assignment table,
+  // so "how many numbers are free right now" has no other source. Nothing else in
+  // the system can answer it, which is why the plugin now exposes it.
+  it('reports totals, per-tag availability and the visitor count', () => {
+    const ctx = makePool()
+    connect(ctx, 'c1')
+    connect(ctx, 'c2')
+    pick(ctx, 'c1', 'sales')
+
+    const s = ctx.pool.stats()
+    expect(s).toMatchObject({ visitors: 2, waiting: 0 })
+    expect(s.total).toBe(3)                       // 2 sales + 1 support
+    expect(s.assigned).toBe(1)
+    const sales = s.tags.find(t => t.tag === 'sales')
+    expect(sales).toMatchObject({ total: 2, assigned: 1, available: 1, exhausted: false })
+    const support = s.tags.find(t => t.tag === 'support')
+    expect(support).toMatchObject({ total: 1, assigned: 0, available: 1, exhausted: false })
+  })
+
+  // `waiting` is the operationally interesting figure: a visitor asked for a
+  // trackable number, every one in that tag was held, and they were shown the
+  // untracked fallback. A permanently exhausted pool needs more numbers, and this
+  // is the only place that says so.
+  it('flags exhaustion when every number in a tag is held', () => {
+    const ctx = makePool({ solo: ['+35924000009'] })
+    connect(ctx, 'a')
+    pick(ctx, 'a', 'solo')
+
+    const s = ctx.pool.stats()
+    expect(s.tags[0]).toMatchObject({ tag: 'solo', total: 1, assigned: 1, available: 0, exhausted: true })
+  })
+
+  it('drops a visitor from the count on disconnect', () => {
+    const ctx = makePool()
+    connect(ctx, 'c1')
+    expect(ctx.pool.stats().visitors).toBe(1)
+    disconnect(ctx, 'c1')
+    expect(ctx.pool.stats().visitors).toBe(0)
+  })
+})

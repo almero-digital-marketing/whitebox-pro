@@ -24,11 +24,14 @@ const DEFAULT_LIFESPANS = {
 
 let db
 let lock
+let notify
 let lifespans
 
 export async function init(options) {
   db = options.db
   lock = options.lock
+  // Optional: a deployment without it just doesn't emit lifecycle events.
+  notify = options.notify || null
   lifespans = { ...DEFAULT_LIFESPANS, ...options.config?.passports?.lifespans }
 
   const passportsExists = await db.schema.hasTable(PASSPORTS)
@@ -102,6 +105,15 @@ export async function identify(passportId) {
   if (!passportId) {
     passportId = randomUUID()
     await db(PASSPORTS).insert({ id: passportId })
+    // A person WhiteBox had never seen before. Emitted only on a genuine mint,
+    // never when identify() resolves an id it already knew, so the volume is
+    // new-visitors rather than page-views. Without this a visitor who arrives
+    // and just browses is invisible to every observer — the monitoring view
+    // showed an empty board while the passports table filled up.
+    notify?.('passport.created', {
+      type: 'passport.created',
+      data: { passport_id: passportId },
+    })?.catch?.(() => {})
   }
 
   await db(PASSPORTS).where({ id: passportId }).update({ last_seen_at: dayjs().toDate() })
@@ -441,6 +453,14 @@ export async function search({ q = '', fields, includeAnonymous = false, limit =
   const rows = await base
     .select(`${PASSPORTS}.created_at`, `${PASSPORTS}.last_seen_at`)
     .orderByRaw(`${PASSPORTS}.last_seen_at DESC NULLS LAST`)
+    // The tiebreaker that makes LIMIT/OFFSET honest. last_seen_at is NOT unique
+    // — anything that touches a batch of people in one pass (an import, a
+    // campaign send, a merge sweep) stamps them all with the same instant, and
+    // the anonymous tail shares NULL. Without a total order Postgres may split
+    // a tie group differently per query, so the same person appears on two
+    // consecutive pages while someone else is skipped entirely. Measured on dev:
+    // 286 passports over 282 distinct last_seen_at values.
+    .orderBy(`${PASSPORTS}.id`, 'desc')
     .limit(Math.min(Number(limit) || 50, 200))
     .offset(Number(offset) || 0)
 

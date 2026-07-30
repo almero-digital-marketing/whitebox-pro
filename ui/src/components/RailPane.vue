@@ -12,22 +12,23 @@
 // one you already have — which is also why the module's add button lives inside
 // the bar rather than in a header above it: it belongs to the same job.
 //
-// TWO PAGING MODES, and the distinction is real rather than a convenience:
-//   · client — pass `items`, the whole filtered list, and this pages it. The
-//     module already holds every row (audiences, campaigns, journeys, users are
-//     tens of rows, fetched once, filtered in memory).
-//   · server — pass `total` + `page` and handle `update:page`. People searches
-//     the passport table, which is hundreds of thousands of rows and has never
-//     been in the client at all, so only the server can slice it.
-// Passing `items` chooses the first; everything else is the second.
-import { computed, ref, watch } from 'vue'
+// PAGING IS ALWAYS THE SERVER'S. The module passes `total` + `page` and handles
+// `update:page`; this component renders a position and reports clicks, and never
+// holds or slices a list of its own.
+//
+// It briefly also had a client mode that took the whole list and sliced it, for
+// the rails backed by tens of rows. That was a second source of truth for "how
+// many are there" — the count under the rail counted what had been DOWNLOADED
+// rather than what exists — and the two modes disagreed the moment a table grew.
+// Every rail now goes through useRailPage(), so the mode is gone rather than
+// merely unused.
+import { computed } from 'vue'
 import Paginator from 'primevue/paginator'
 import RailSearch from './RailSearch.vue'
 
 const props = withDefaults(defineProps<{
   q: string
   placeholder?: string
-  items?: any[]
   total?: number
   page?: number
   pageSize?: number
@@ -41,27 +42,9 @@ const emit = defineEmits<{
   (e: 'update:page', v: number): void
 }>()
 
-const clientPaged = computed(() => props.items != null)
-const localPage = ref(0)
-const page = computed(() => (clientPaged.value ? localPage.value : props.page || 0))
-const total = computed(() => (clientPaged.value ? props.items!.length : props.total || 0))
+const page = computed(() => props.page || 0)
+const total = computed(() => props.total || 0)
 const plural = computed(() => props.nounPlural || `${props.noun}s`)
-const pageItems = computed(() => (clientPaged.value
-  ? props.items!.slice(page.value * props.pageSize, (page.value + 1) * props.pageSize)
-  : []))
-
-function goToPage(n: number) {
-  if (clientPaged.value) localPage.value = n
-  else emit('update:page', n)
-}
-
-// Narrowing the search can leave you past the end — page 4 of a now-1-page
-// result is an empty list under a full count, which reads as a broken filter.
-// Server mode does the same thing inside its own search().
-watch([() => props.q, total], () => {
-  if (!clientPaged.value) return
-  localPage.value = Math.min(localPage.value, Math.max(0, Math.ceil(total.value / props.pageSize) - 1))
-})
 </script>
 
 <template>
@@ -76,7 +59,7 @@ watch([() => props.q, total], () => {
   </div>
 
   <ul class="rail-list">
-    <slot :items="pageItems" />
+    <slot />
   </ul>
 
   <div class="rail-foot">
@@ -98,7 +81,7 @@ watch([() => props.q, total], () => {
          pager that vanishes leaves you unsure whether the list is complete or
          silently truncated, and most searches fit one page. -->
     <Paginator :first="page * pageSize" :rows="pageSize" :totalRecords="total"
-      @page="goToPage($event.page)"
+      @page="emit('update:page', $event.page)"
       template="PrevPageLink CurrentPageReport NextPageLink"
       currentPageReportTemplate="{currentPage} of {totalPages}" />
   </div>

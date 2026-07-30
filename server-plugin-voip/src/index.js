@@ -145,6 +145,26 @@ export function voip(options = {}) {
       registerMcp(ctx, { db })
 
       logger.info('VoIP plugin ready')
+
+      // A service, so observers can read voip state the way they already read
+      // mail's and sms's. This plugin previously returned nothing, which is why a
+      // monitoring view could report mail/sms delivery but had no way to say
+      // anything at all about calls or the number pool.
+      //
+      // `stats` is windowed history (same shape as mail/sms stats, so one code
+      // path renders all three); `pool` is live in-memory state, deliberately NOT
+      // windowed — "how many numbers are free" is a question about right now, and
+      // this module is the only place that knows.
+      return {
+        service: {
+          stats: (opts) => calls.stats(opts),
+          pool: () => pool.stats(),
+          // The self-describing form monitoring surfaces use. `pool` is threaded
+          // in so calls.js can report the number pool as a gauge without
+          // importing pool state itself.
+          status: (opts) => calls.status({ ...opts, pool: () => pool.stats() }),
+        },
+      }
     },
   }
 }

@@ -96,7 +96,7 @@ export function mail(options = {}) {
       // path — same create()+enqueue()+preflight-check pipeline the HTTP
       // /mail/outbox route uses. Callers sending to an actual customer
       // (e.g. journeys) must use queueSend, never send.
-      return { service: { send: mailer.send, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel } }
+      return { service: { send: mailer.send, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel, stats: outbox.stats, status: outbox.status } }
     },
   }
 }

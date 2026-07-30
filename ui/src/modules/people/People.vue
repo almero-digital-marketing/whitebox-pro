@@ -13,10 +13,10 @@ import { useRoute, useRouter } from 'vue-router'
 // The dialog HOST stays here (one per module) even though nothing in this file
 // calls confirm() any more — IdentitiesPanel does, for unlink — and
 // useConfirm() only queues; something mounted has to render it.
+import FilterMenu from '../../components/FilterMenu.vue'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import RailPane from '../../components/RailPane.vue'
-import MultiSelect from 'primevue/multiselect'
 import Accordion from 'primevue/accordion'
 import AccordionPanel from 'primevue/accordionpanel'
 import AccordionHeader from 'primevue/accordionheader'
@@ -192,21 +192,10 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
                Icon-only, so the dot is the whole state readout: with no label
                there is otherwise nothing to say the list is narrowed. The full
                wording stays in the title, and in the panel itself. -->
-          <MultiSelect :modelValue="filterModel" @update:modelValue="setFilter"
-            :options="FILTER_GROUPS" optionGroupLabel="label" optionGroupChildren="items"
-            optionLabel="label" optionValue="value" :optionDisabled="lastOne"
-            :showToggleAll="false" class="filter-btn" :class="{ on: filterActive }"
-            overlayClass="scope-panel" scrollHeight="22rem"
-            aria-label="Search filters" :title="scopeLabel">
-            <template #value>
-              <span class="material-symbols-outlined">filter_alt</span>
-              <i v-if="filterActive" class="filter-dot" />
-            </template>
-            <template #dropdownicon><span /></template>
-            <template #option="{ option }">
-              <span class="scope-opt"><b>{{ option.label }}</b><small>{{ option.hint }}</small></span>
-            </template>
-          </MultiSelect>
+          <FilterMenu mode="multi" :groups="FILTER_GROUPS"
+            :modelValue="filterModel" @update:modelValue="setFilter"
+            :disabled="lastOne" :active="filterActive"
+            :title="scopeLabel" aria-label="Search filters" />
         </template>
 
         <!-- server-paged, so the rows are the store's page, not a slot slice -->
@@ -550,17 +539,10 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 
 /* real pages, not append-on-scroll: the result set is the whole passport
    table, and "load more" gives no sense of position or a way back */
-/* MultiSelect stripped back to a square icon button — no chevron (its slot is
-   emptied above), no grow, matching .pager's border and height exactly */
-/* a 30px square inside the 52px search bar — bordered so it reads as its own
-   control rather than a third glyph in the input */
-.filter-btn { flex: none; width: 30px; height: 30px; min-width: 30px; border: 1px solid var(--border); border-radius: 8px; background: none; box-shadow: none; }
-.filter-btn.on { border-color: var(--accent); }
-.filter-btn :deep(.p-multiselect-label) { display: flex; align-items: center; justify-content: center; position: relative; padding: 0; height: 100%; color: var(--muted); }
-.filter-btn.on :deep(.p-multiselect-label) { color: var(--accent); }
-.filter-btn :deep(.p-multiselect-label) .material-symbols-outlined { font-size: 15px; }
-.filter-btn :deep(.p-multiselect-dropdown) { display: none; }
-.filter-dot { position: absolute; top: -1px; right: -3px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+/* The filter button lives in components/FilterMenu.vue now — the app's one
+   filter control, shared with Live's feed. The MultiSelect-stripped-to-a-square
+   styles that used to be here are gone with it; keeping a local copy is how the
+   two controls drifted apart. */
 
 
 .enr-row, .act-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }

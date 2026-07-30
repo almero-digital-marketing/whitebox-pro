@@ -1,0 +1,299 @@
+import { describe, it, expect, vi } from 'vitest'
+import * as service from '../src/service.js'
+
+const registry = (counts = [], active = 0, series = []) => ({
+  countsByType: vi.fn(async () => counts),
+  activePassports: vi.fn(async () => active),
+  series: vi.fn(async () => series),
+  recent: vi.fn(async () => []),
+})
+
+describe('summary()', () => {
+  it('folds type counts into directions and channels, and rates per minute', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'mail.sent', count: 60 },
+        { type: 'crm.deal', count: 30 },
+        { type: 'journey.enrolled', count: 10 },
+      ], 7),
+      mail: { stats: vi.fn(async () => ({ total: 60, failed: 3 })) },
+      sms: null, logger: console,
+    })
+
+    const s = await service.summary({ window: '30m' })
+    expect(s.by_direction).toMatchObject({ out: 60, in: 30, internal: 10 })
+    expect(s.by_channel).toMatchObject({ mail: 60, crm: 30, journey: 10 })
+    expect(s.total).toBe(100)
+    // 100 events over 1800s = 3.3/min — normalised per MINUTE whatever the
+    // window, so the headline means the same thing on every setting
+    expect(s.per_minute).toBeCloseTo(3.3, 1)
+    expect(s.active_passports).toBe(7)
+  })
+
+  // The bug this guards: awareness.recorded is ONE type covering both inbound
+  // and outbound touches, told apart only by the direction its producer
+  // recorded. While the registry grouped by type alone, that field was thrown
+  // away by the GROUP BY, every awareness event landed in `unknown`, and the
+  // "coming in / going out" cards read empty while the feed beside them
+  // correctly showed the very same events as inbound.
+  it('splits one awareness type across directions using the recorded facet', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'awareness.recorded', count: 40, recorded_direction: 'observation', recorded_channel: 'crm' },
+        { type: 'awareness.recorded', count: 25, recorded_direction: 'exposure', recorded_channel: 'mail' },
+        { type: 'awareness.recorded', count: 5, recorded_direction: 'expression', recorded_channel: 'web' },
+      ], 3),
+      mail: null, sms: null, logger: console,
+    })
+
+    const s = await service.summary({ window: '30m' })
+    // observation + expression are inbound, exposure is outbound
+    expect(s.by_direction).toMatchObject({ in: 45, out: 25, unknown: 0 })
+    // and the channel comes from the payload too, not from the type prefix —
+    // otherwise all 70 would be filed under a meaningless "awareness"
+    expect(s.by_channel).toMatchObject({ crm: 40, mail: 25, web: 5 })
+    expect(s.by_channel.awareness).toBeUndefined()
+    expect(s.total).toBe(70)
+  })
+
+  it('still classifies by type alone when a row carries no recorded facet', async () => {
+    // Forward compatibility in reverse: an older core returns {type, count}
+    // only, and that must keep working rather than throwing on a missing column.
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 4 }], 0),
+      mail: null, sms: null, logger: console,
+    })
+    const s = await service.summary({})
+    expect(s.by_direction).toMatchObject({ out: 4 })
+    expect(s.by_channel).toMatchObject({ mail: 4 })
+  })
+
+  it('omits a plugin that cannot describe itself, rather than inventing zeros', async () => {
+    // ABSENT and ZERO are different claims: absent means "nobody is watching
+    // this", zero means "nothing happened". Rendering the first as the second is
+    // how a channel nobody monitors looks healthy.
+    service.init({ eventRegistry: registry(), plugins: { mail: { service: {} } }, logger: console })
+    const s = await service.summary({})
+    expect(s.status).toEqual([])
+  })
+
+  it('drops a plugin whose status() throws instead of failing the whole board', async () => {
+    service.init({
+      eventRegistry: registry(),
+      plugins: { mail: { service: { status: async () => { throw new Error('db down') } } } },
+      logger: console,
+    })
+    const s = await service.summary({})
+    expect(s.status).toEqual([])
+  })
+
+  it('falls back to a known window rather than trusting the query string', async () => {
+    service.init({ eventRegistry: registry(), logger: console })
+    expect((await service.summary({ window: '99y' })).window).toBe('30m')
+    expect((await service.summary({ window: '5m' })).window_seconds).toBe(300)
+  })
+})
+
+describe('toFeedRow()', () => {
+  // the backfill and the live stream both go through this, so a replayed event
+  // and a streamed one are indistinguishable to the UI
+  it('produces one shape from a registry row', () => {
+    const r = service.toFeedRow({
+      id: 'e1', type: 'awareness.recorded', occurred_at: '2026-01-01T00:00:00.000Z',
+      passport_id: 'p1', data: { data: { direction: 'expression', channel: 'web' } },
+    })
+    expect(r).toMatchObject({ id: 'e1', type: 'awareness.recorded', direction: 'in', channel: 'web', passport_id: 'p1' })
+  })
+})
+
+describe('timeseries()', () => {
+  // The strip is a fixed-width flex row of one bar per bucket, so a window that
+  // only returns the buckets that HAD events draws a few enormous bars instead
+  // of a mostly-empty strip with a few blips — reading as heavy traffic when
+  // almost nothing happened.
+  it('zero-fills the whole window, not just buckets that had events', async () => {
+    const now = Date.now()
+    const bucketOf = (minsAgo) => new Date(Math.floor((now - minsAgo * 60_000) / 1000 / 60) * 1000 * 60).toISOString()
+    service.init({
+      eventRegistry: registry([], 0, [
+        { bucket: bucketOf(1), type: 'crm.note', count: 2 },
+        { bucket: bucketOf(10), type: 'mail.sent', count: 1 },
+      ]),
+      logger: console,
+    })
+
+    const t = await service.timeseries({ window: '30m' })
+    // 30m / 15s = 120 buckets — dense enough to read as a chart
+    expect(t.bucket_seconds).toBe(15)
+    expect(t.buckets.length).toBeGreaterThanOrEqual(115)
+    // chronological, and the quiet ones are real zeros
+    const stamps = t.buckets.map(b => b.bucket)
+    expect([...stamps].sort()).toEqual(stamps)
+    expect(t.buckets.filter(b => b.in + b.out + b.internal + b.unknown === 0).length).toBeGreaterThan(100)
+    // the events still land, in the right direction
+    expect(t.buckets.reduce((a, b) => a + b.in, 0)).toBe(2)
+    expect(t.buckets.reduce((a, b) => a + b.out, 0)).toBe(1)
+  })
+})
+
+describe('timeseries() resolution follows the caller', () => {
+  const seriesReg = () => registry([], 0, [])
+
+  it('picks a finer bucket when the client can draw more bars', async () => {
+    service.init({ eventRegistry: seriesReg(), logger: console })
+    const narrow = await service.timeseries({ window: '30m', points: 30 })
+    const wide = await service.timeseries({ window: '30m', points: 200 })
+    // same 30 minutes, different resolution — that's the whole point
+    expect(narrow.bucket_seconds).toBeGreaterThan(wide.bucket_seconds)
+    expect(narrow.buckets.length).toBeLessThanOrEqual(31)
+    expect(wide.buckets.length).toBeGreaterThan(narrow.buckets.length)
+  })
+
+  it('never returns more bars than asked for', async () => {
+    service.init({ eventRegistry: seriesReg(), logger: console })
+    for (const points of [20, 50, 120, 300]) {
+      const t = await service.timeseries({ window: '24h', points })
+      // +1 for the inclusive final bucket
+      expect(t.buckets.length).toBeLessThanOrEqual(points + 1)
+    }
+  })
+
+  it('clamps a hostile or absent points value instead of trusting it', async () => {
+    service.init({ eventRegistry: seriesReg(), logger: console })
+    // a query string can say anything; this sizes a table scan
+    const huge = await service.timeseries({ window: '24h', points: 100000 })
+    expect(huge.buckets.length).toBeLessThanOrEqual(601)
+    const zero = await service.timeseries({ window: '30m', points: 0 })
+    expect(zero.buckets.length).toBeGreaterThan(1)
+    const junk = await service.timeseries({ window: '30m', points: 'abc' })
+    expect(junk.buckets.length).toBeGreaterThan(1)
+  })
+})
+
+describe('content()', () => {
+  const reg = (rows) => ({
+    countsByType: vi.fn(async () => []),
+    activePassports: vi.fn(async () => 0),
+    series: vi.fn(async () => []),
+    recent: vi.fn(async () => []),
+    countsByPayloadField: vi.fn(async () => rows),
+  })
+
+  // `source` is not a content-kind enum: engagement writes 'video', conversions
+  // writes 'conversion', CRM writes its own account name. Grouping unfiltered
+  // titled a "Content consumed" card with plugin names.
+  it('keeps only real content kinds, not every plugin that writes a source', async () => {
+    service.init({
+      eventRegistry: reg([
+        { value: 'conversion', count: 6 },
+        { value: 'video', count: 4 },
+        { value: 'live-smoke-test', count: 2 },
+        { value: 'text', count: 9 },
+        { value: 'image', count: 1 },
+      ]),
+      logger: console,
+    })
+    const c = await service.content({ window: '24h' })
+    expect(c.kinds.map(k => k.value).sort()).toEqual(['image', 'text', 'video'])
+    expect(c.total).toBe(14)   // 4 + 9 + 1 — the producer names excluded
+  })
+
+  it('degrades to an empty card on an older core rather than throwing', async () => {
+    const older = reg([]); delete older.countsByPayloadField
+    service.init({ eventRegistry: older, logger: console })
+    await expect(service.content({})).resolves.toMatchObject({ kinds: [], total: 0 })
+  })
+})
+
+describe('summary() types list', () => {
+  // The facet grouping (type + recorded direction/channel) is what lets the
+  // direction cards classify awareness correctly — but it also made
+  // awareness.recorded appear as several rows in "Top event types", each with a
+  // partial count and a duplicate :key.
+  it('reports one row per type, summed, biggest first', async () => {
+    service.init({
+      eventRegistry: registry([
+        { type: 'awareness.recorded', count: 7, recorded_direction: 'exposure', recorded_channel: 'web' },
+        { type: 'awareness.recorded', count: 4, recorded_direction: 'observation', recorded_channel: 'crm' },
+        { type: 'adnetwork.accepted', count: 14 },
+        { type: 'conversion.view_content', count: 7 },
+      ], 0),
+      mail: null, sms: null, logger: console,
+    })
+
+    const s = await service.summary({ window: '30m' })
+    expect(s.types).toEqual([
+      { type: 'adnetwork.accepted', count: 14 },
+      { type: 'awareness.recorded', count: 11 },
+      { type: 'conversion.view_content', count: 7 },
+    ])
+    // and the direction folding still sees the facets it needs
+    expect(s.by_direction).toMatchObject({ out: 21, in: 11 })
+  })
+})
+
+describe('summary() status — collected from whoever can describe themselves', () => {
+  // The board used to name mail/sms/voip and know each one's field names, so a new
+  // channel meant editing this file AND the UI. Now any plugin exposing status()
+  // appears and none has to be announced (docs/10-plugin-status.md).
+  const plugin = (label, metrics, gauges = [], note = null) => ({
+    service: { status: async () => ({ label, metrics, gauges, note }) },
+  })
+
+  it('passes through metrics, gauges and notes verbatim, in config order', async () => {
+    service.init({
+      eventRegistry: registry([], 0),
+      plugins: {
+        mail: plugin('mail', [{ key: 'sent', value: 3 }, { key: 'failed', value: 1, severity: 'bad' }]),
+        voip: plugin('voip',
+          [{ key: 'ringing', value: 1 }, { key: 'missed', value: 2, severity: 'bad' }],
+          [{ label: 'web', used: 3, total: 8, exhausted: false }],
+          '1 visitor waiting for a number'),
+      },
+      logger: console,
+    })
+
+    const s = await service.summary({})
+    expect(s.status.map(p => p.module)).toEqual(['mail', 'voip'])
+    expect(s.status[0].metrics).toEqual([
+      { key: 'sent', value: 3 }, { key: 'failed', value: 1, severity: 'bad' },
+    ])
+    expect(s.status[1].gauges[0]).toMatchObject({ label: 'web', used: 3, total: 8 })
+    expect(s.status[1].note).toBe('1 visitor waiting for a number')
+  })
+
+  it('needs no per-plugin knowledge — an unknown plugin renders like any other', async () => {
+    // The point of the contract: a channel this file has never heard of works.
+    service.init({
+      eventRegistry: registry([], 0),
+      plugins: { carrier_pigeon: plugin('pigeons', [{ key: 'dispatched', value: 4 }]) },
+      logger: console,
+    })
+    const s = await service.summary({})
+    expect(s.status).toEqual([
+      { module: 'carrier_pigeon', label: 'pigeons', metrics: [{ key: 'dispatched', value: 4 }], gauges: [], note: null },
+    ])
+  })
+
+  it('defaults label to the module name and normalises missing fields', async () => {
+    service.init({
+      eventRegistry: registry([], 0),
+      plugins: { sms: { service: { status: async () => ({ metrics: [{ key: 'sent', value: 1 }] }) } } },
+      logger: console,
+    })
+    const [row] = (await service.summary({})).status
+    expect(row).toMatchObject({ module: 'sms', label: 'sms', gauges: [], note: null })
+  })
+
+  // ctx.plugins accumulates as plugins register (server/src/plugins.js), and this
+  // reads it per REQUEST — so a plugin registered after live still appears, which
+  // is what removed live's ordering constraint.
+  it('sees a plugin added to ctx.plugins after init', async () => {
+    const plugins = {}
+    service.init({ eventRegistry: registry([], 0), plugins, logger: console })
+    expect((await service.summary({})).status).toEqual([])
+
+    plugins.late = plugin('late', [{ key: 'ok', value: 1 }])
+    expect((await service.summary({})).status.map(p => p.module)).toEqual(['late'])
+  })
+})

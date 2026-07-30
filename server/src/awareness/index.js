@@ -9,6 +9,11 @@ import * as askCore from './ask.js'
 import createNotify from '../notify.js'
 import { redact } from './pii.js'
 
+// Excerpt length for the `preview` on awareness.recorded. Long enough for a
+// monitoring feed to show a real sentence, short enough that the event stays
+// cheap to publish and to keep for the registry's retention window.
+const PREVIEW_CHARS = 160
+
 function hashContent(text) {
   return crypto.createHash('sha256').update(text).digest('hex')
 }
@@ -102,6 +107,21 @@ export async function record(event) {
       direction: exposure.direction,
       source: exposure.source,
       content_id: exposure.content_id,
+      content_url: exposure.content_url,
+      // Which SUBSYSTEM collected this, as stamped by the plugin loader — the
+      // honest way to tell an engagement touch from a conversion or a CRM note,
+      // where `source` is only a label the plugin chose for itself.
+      plugin: exposure.plugin,
+      // A bounded excerpt of the ALREADY-REDACTED text. An observer showing
+      // `content_id` ("verify-text-1", "para-7") tells you nothing about what
+      // the person actually read, while the text sat one table away — so a
+      // monitoring feed had to either show a useless identifier or go query
+      // awareness itself. Redaction happens upstream of `text`, so nothing new
+      // is exposed here; the cap keeps the event small enough to carry on the
+      // firehose and into the 90-day event registry.
+      preview: typeof text === 'string' && text.trim()
+        ? text.trim().slice(0, PREVIEW_CHARS)
+        : null,
     },
   }).catch(err => logger.warn({ err }, 'awareness.recorded notify failed'))
 

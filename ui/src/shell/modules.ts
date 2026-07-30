@@ -8,6 +8,7 @@ import Audiences from '../modules/audiences/Audiences.vue'
 import Campaigns from '../modules/campaigns/Campaigns.vue'
 import Journeys from '../modules/journeys/Journeys.vue'
 import People from '../modules/people/People.vue'
+import Live from '../modules/live/Live.vue'
 import Users from '../modules/users/Users.vue'
 
 export interface ModuleDef {
@@ -29,6 +30,11 @@ export interface ModuleDef {
 }
 
 export const modules: ModuleDef[] = [
+  // FIRST, and therefore also the landing route — router.ts redirects "/" to
+  // modules[0]. Opening on the monitoring view answers "is anything wrong?"
+  // before you've clicked anything, which is the question you'd otherwise have
+  // to remember to go and ask.
+  { id: 'live', label: 'Live', icon: 'monitoring', component: markRaw(Live), requiresAnyPermission: ['live:read'] },
   { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: markRaw(Analytics), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
   { id: 'audiences', label: 'Audiences', icon: 'group', component: markRaw(Audiences), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
   { id: 'campaigns', label: 'Campaigns', icon: 'send', component: markRaw(Campaigns), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },

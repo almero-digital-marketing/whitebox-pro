@@ -41,6 +41,7 @@ import { mail } from 'whitebox-pro-server-plugin-mail'
 import { sms } from 'whitebox-pro-server-plugin-sms'
 import { journeys } from 'whitebox-pro-server-plugin-journeys'
 import { people } from 'whitebox-pro-server-plugin-people'
+import { live } from 'whitebox-pro-server-plugin-live'
 import { mailgun } from 'whitebox-pro-mail-mailgun'
 import { mobica } from 'whitebox-pro-sms-mobica'
 import { jwt } from 'whitebox-pro-auth-auth0'
@@ -145,6 +146,11 @@ const peoplePlugin = people({
   auth: { ...readWriteAuth('people'), erase: scopeAuth('people:erase') },
 })
 
+// Live — the realtime ops view. One scope, no writes: it observes and never
+// acts. Registered last so mail/sms are already in ctx.plugins for its
+// delivery-health card (both soft — absent just omits that card).
+const livePlugin = live({ auth: scopeAuth('live:read') })
+
 // Aggregate every plugin's declared permission catalog BEFORE oauth
 // registers (it reads ctx.permissions.catalog at register time) — mirrors
 // server/src/plugins.js's load() pre-pass, since this script sequences
@@ -158,7 +164,7 @@ const peoplePlugin = people({
 // read/write split the other three plugins support), so without these entries
 // expandPermissions(['*'], ...) would never grant them.
 ctx.permissions = {
-  catalog: [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin, journeysPlugin, peoplePlugin]
+  catalog: [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin, journeysPlugin, peoplePlugin, livePlugin]
     .filter(p => p.permissions)
     .map(p => ({ module: p.name, ...p.permissions }))
     .concat([{
@@ -205,6 +211,7 @@ ctx.plugins.journeys = await journeysPlugin.register(app, ctx)
 // through ctx.plugins, so both must already be registered for the profile
 // view to include enrollments and suppression status.
 ctx.plugins.people = await peoplePlugin.register(app, ctx)
+ctx.plugins.live = await livePlugin.register(app, ctx)
 
 // MCP — mounted last so every plugin's tools are registered on the McpServer first.
 // Reuses the same built-in OAuth server as the UI's own login (scopeAuth === jwt()

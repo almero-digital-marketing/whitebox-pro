@@ -165,6 +165,38 @@ export function notifyRing(connectionId, context) {
   connect.emit(connectionId, 'voip.ring', { ...context, number: entry.numbers[context.tag] })
 }
 
+// Live pool state, for a monitoring view. In-memory and per-process on purpose —
+// this IS the current assignment table, not a query over history, so "how many
+// numbers are free right now" has no other source.
+//
+// `waiting` is the number that matters operationally: a visitor asked for a
+// trackable number and every one in that tag was already held, so they were shown
+// the untracked fallback. A pool that is permanently exhausted is a pool that
+// needs more numbers, and nothing else in the system says so.
+export function stats() {
+  if (!slots) buildSlots()
+  const tags = Object.entries(slots).map(([tag, slot]) => {
+    const total = (lines[tag] || []).length
+    const available = slot.available.length
+    return {
+      tag,
+      total,
+      available,
+      assigned: total - available,
+      waiting: slot.waiting.length,
+      // What a gauge should colour on: a full pool is fine until someone waits.
+      exhausted: available === 0,
+    }
+  })
+  return {
+    visitors: Object.keys(pool).length,
+    tags,
+    total: tags.reduce((a, t) => a + t.total, 0),
+    assigned: tags.reduce((a, t) => a + t.assigned, 0),
+    waiting: tags.reduce((a, t) => a + t.waiting, 0),
+  }
+}
+
 export function find(number) {
   for (const entry of Object.values(pool)) {
     for (const [tag, n] of Object.entries(entry.numbers)) {

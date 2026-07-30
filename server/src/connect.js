@@ -10,6 +10,7 @@ const CH_SESSION_READY = 'whitebox:connect:session-ready'
 
 let events
 let sessions
+let io
 
 const connections = new Map()
 
@@ -17,7 +18,7 @@ function init(options) {
   events = options.events
   sessions = options.sessions
 
-  const io = new Server(options.server, {
+  io = new Server(options.server, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
   })
 
@@ -100,4 +101,19 @@ function onSessionReady(handler) {
   events.subscribe(CH_SESSION_READY, handler)
 }
 
-export { init, emit, broadcast, find, onMessage, onConnected, onDisconnected, onSessionReady }
+// A private socket audience for a plugin that needs one.
+//
+// This is NOT a convenience wrapper over broadcast(): the default namespace is
+// where every VISITOR's browser connects (see the handshake above — it carries
+// their passport), so broadcast() reaches the public. Anything operational —
+// internal event payloads, passport ids, delivery failures — must go to its own
+// namespace with its own auth, or it ships straight to the people being
+// monitored. server-plugin-live is the first caller.
+//
+// The caller owns authentication: `ns.use(...)` a handshake middleware.
+function namespace(name) {
+  if (!io) throw new Error('connect.namespace() called before connect.init()')
+  return io.of(name)
+}
+
+export { init, emit, broadcast, find, namespace, onMessage, onConnected, onDisconnected, onSessionReady }

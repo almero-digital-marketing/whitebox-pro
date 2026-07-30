@@ -23,6 +23,7 @@ import * as ai from './ai.js'
 import * as templates from './templates.js'
 import * as awareness from './awareness/index.js'
 import * as eventRegistry from './event-registry/index.js'
+import createNotify from './notify.js'
 import * as facts from './facts/index.js'
 import * as selector from './selector/index.js'
 import * as query from './query/index.js'
@@ -58,8 +59,18 @@ async function start() {
   scheduler.init({ queue })
   webhooks.init({ queue, config })
 
-  await passports.init({ db: db.get(), lock, config })
-  await sessions.init({ db: db.get(), passports })
+  // Core's own notify. Every plugin builds its own with a webhooksConfig; core
+  // deliberately passes none, so these events publish to the firehose and the
+  // registry (what the monitoring surfaces read) without ever becoming outbound
+  // HTTP for an existing deployment that never asked for them.
+  //
+  // eventRegistry is initialised further down, but it's a module namespace and
+  // record() only runs on a real request — long after boot — so holding the
+  // reference here is safe and keeps passports/sessions ahead of it as before.
+  const { notify: coreNotify } = createNotify({ events, webhooks, eventRegistry })
+
+  await passports.init({ db: db.get(), lock, config, notify: coreNotify })
+  await sessions.init({ db: db.get(), passports, notify: coreNotify })
   await ai.init({ config })
 
   let template = null

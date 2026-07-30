@@ -1,0 +1,228 @@
+/* Live — the one full-bleed module. Card chrome and type come from the app's
+   shared language (.blk-head, .bs-num/.bs-lbl, count-pill, count-dot); only the
+   board layout is new, because no other module is a dashboard. */
+/* Tighter than the app default: this module is a board of six cards plus a
+   feed, so every px of chrome is a px the data doesn't get. */
+.live-board { height: 100%; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+
+.lv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* One inline row on a single baseline. Sizes stay within ~2x so the baseline
+   actually aligns them — a 34px figure beside 11px text aligns the wrong edges
+   and reads ragged. Stacking figure-over-label aligned well but doubled the
+   header height, which is the wrong trade on a board this dense. */
+.lv-pulse { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+/* A status chip in the control group: same height rhythm as the window picker
+   beside it, so the row reads as one band of controls. */
+.lv-live { font-size: 10.5px; align-self: center; margin-right: 2px; }
+.lv-fig { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+/* Every figure at the same size — the events/min reading isn't a different KIND
+   of number from the ones beside it, and sizing one larger made the row read as
+   a headline with footnotes rather than one set of stats. `tabular-nums` keeps
+   the digits from shifting as values tick. */
+.lv-fig b { font-size: 22px; font-weight: 650; color: var(--text-strong); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.lv-fig.dir, .lv-fig.dir b { color: var(--c); }
+.lv-fig.dim b { color: var(--muted); font-weight: 500; }
+.lv-quiet { font-size: 12px; color: var(--muted); max-width: 44ch; line-height: 1.4; }
+
+.lv-controls { display: flex; align-items: center; gap: 10px; }
+/* The segmented control, used by the window picker, Attribution's dimension
+   switch and the feed's list|count toggle. One rule: `.lv-windows` and
+   `.lv-utm-dims` were byte-identical copies of it, and a third was about to be
+   added — the same duplication that let the two filter buttons drift. */
+.lv-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.lv-win { border: none; background: var(--panel); padding: 5px 10px; font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.lv-win + .lv-win { border-left: 1px solid var(--border); }
+.lv-win.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* Block titles use the app's central-panel heading, verbatim: People's
+   `.ppl-console .blk-head` and Campaigns' `.blk-head` already agree on it, and
+   this module had NO definition at all — there is no global `.blk-head` base, so
+   Live's card titles were rendering as unstyled divs (~14px, normal weight)
+   while every other module's were 16px/650. That mismatch was the whole reason
+   they read as a different tier.
+   `letter-spacing`/`text-transform` are pinned to their defaults on purpose,
+   carried over from the other two copies, so a future uppercase base rule can't
+   silently reach in and change them.
+   Deliberately NOT the 8px bottom margin the others use — spacing isn't
+   typography, and this board is dense enough that 6px is the better trade.
+   (Three identical copies now: this belongs in style.css as a shared token.) */
+.live-board .blk-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 6px; }
+
+.lv-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 14px; }
+/* auto-fit rather than fixed columns: the board is full-bleed and the window
+   width is whatever the operator's screen is */
+/* Six cards, capped at THREE per row so they land as two rows rather than one
+   strip. `auto-fit, minmax(260px, 1fr)` fit all six side by side on a wide
+   board — ~300px each, narrower than the campaign names and channel labels
+   inside them, so every card ellipsised while the board had space to spare.
+   Explicit breakpoints rather than auto-fit because the constraint here is a
+   column COUNT (a readable row), not a minimum card width. */
+.lv-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+@media (min-width: 720px) { .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1180px) { .lv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* horizontal bars: the labels are words (web/mail/sms), and rotating them to
+   fit a vertical axis is the classic unreadable-axis mistake */
+.lv-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.lv-bar { display: grid; grid-template-columns: 84px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; }
+.lv-bar-k { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-bar-track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+/* 4px rounded data-end, anchored to the baseline */
+.lv-bar-track i { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.lv-bar-n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.lv-deliv + .lv-deliv { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+/* Compact delivery: channel label, then the four figures inline. Wraps rather
+   than overflowing when the card is narrow (one of three columns). */
+.lv-dl-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 11.5px; }
+/* Secondary tier, matching People's `.ppl-console .sub-title` — including its
+   --text-strong colour, where this had drifted to --muted. */
+.lv-dl-ch { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-strong); min-width: 36px; }
+.lv-dl-figs { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; color: var(--muted); }
+.lv-dl-fig b { font-weight: 650; font-size: 13px; color: var(--text-strong); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.lv-dl-fig.bad, .lv-dl-fig.bad b { color: var(--danger); }
+.lv-dl-fig.bad .material-symbols-outlined { font-size: 14px; vertical-align: -2px; }
+/* status, reserved — and it ships with an icon and the word "failed", never
+   colour on its own */
+
+/* The "Top event types" card is gone — the feed's `count` view is the same
+   breakdown, live and filterable, so keeping both meant maintaining two answers
+   to one question. Its styles went with it rather than sitting here waiting to be
+   reused by something that isn't a list of types. */
+
+
+.lv-empty { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 4px 0 0; }
+.lv-flag { margin-left: 10px; font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.lv-flag.warn { color: #d97706; }
+
+.lv-feed-card { flex: 1 1 auto; min-height: 220px; display: flex; flex-direction: column; }
+.lv-feed { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1 1 auto; min-height: 0; }
+/* ONE grid for the whole list, rows on `subgrid` — the only way columns line up
+   across rows. Each <li> being its own grid meant `max-content` was computed PER
+   ROW, so the type column was as wide as that row's own type and every bar and
+   detail started at a different x. Declaring the tracks on the <ul> and having
+   rows inherit them makes `max-content` mean "the longest type in the list",
+   which is what it was always meant to say.
+   The detail/bar column still takes every pixel the fixed ones don't need. */
+.lv-feed.is-list { display: grid; grid-template-columns: 16px 74px minmax(90px, max-content) minmax(0, 1fr) 66px 76px; align-content: start; }
+.lv-feed.is-count { display: grid; grid-template-columns: 16px minmax(90px, max-content) minmax(0, 1fr) 66px 56px; align-content: start; }
+.lv-ev, .lv-agg { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1;
+  align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+/* an empty state is a sentence, not a row of columns */
+.lv-feed > .lv-empty { grid-column: 1 / -1; }
+.lv-ev:last-child { border-bottom: none; }
+.lv-ev-dir { font-weight: 700; text-align: center; }
+.lv-ev-at { color: var(--muted); font-variant-numeric: tabular-nums; }
+.lv-ev-type { font-family: ui-monospace, monospace; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-ev-detail { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-ev-detail.muted { color: var(--muted); }
+.lv-ev-ch { color: var(--muted); }
+.lv-ev-who { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none; }
+.lv-ev-who:hover { text-decoration: underline; }
+.lv-ev-who.muted { color: var(--muted); }
+
+/* The pool sits under the three channel rows, separated like they are, and
+   reuses the .lv-bar track from the direction cards — a gauge is a gauge. */
+.lv-pool { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.lv-pool-tags { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.lv-pool-tags .lv-bar { grid-template-columns: 54px 1fr 46px; font-size: 11px; }
+
+/* COUNT view rows. Fewer columns than the list — no time, no detail — so it gets
+   its own template on the <ul> above rather than reusing the list's and leaving
+   two tracks empty. The bar makes the distribution readable at a glance, which is
+   the reason to switch to this view rather than read numbers. */
+.lv-agg:last-child { border-bottom: none; }
+.lv-agg-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.lv-agg-bar i { display: block; height: 100%; border-radius: 0 3px 3px 0; }
+.lv-agg-n { text-align: right; font-weight: 600; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+
+/* ── the strip ─────────────────────────────────────────────────────────── */
+.ts-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ts-legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted); }
+.ts-key { display: inline-flex; align-items: center; gap: 5px; }
+.ts-key i { width: 9px; height: 9px; border-radius: 2px; }
+.ts-peak { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* 72px, not 96: the strip's job is the SHAPE of traffic, which reads fine
+   shorter, and the height was pushing the first card row below the fold. */
+/* `overflow: hidden` is LOAD-BEARING, not cosmetic. Bars are `flex: 1 1 0` with a
+   2px min-width, so N bars demand ~4N px; past that they overflow, and
+   `.live-board`'s `overflow: auto` answers by adding a horizontal scrollbar. That
+   changes the plot's own width, which the ResizeObserver reports, which changes
+   the requested bar count, which toggles the scrollbar again — a resize feedback
+   loop that spins the tab with no network traffic to show for it. Clipping here
+   means the strip can never influence the layout that measures it.
+   `min-width: 0` for the same reason: a flex child must be allowed to shrink
+   below its content, or it widens its parent instead. */
+.ts-plot { display: flex; align-items: flex-end; gap: 2px; height: 72px; margin-top: 8px; overflow: hidden; min-width: 0;
+  position: relative; }
+
+/* Gridlines sit BEHIND the bars (bars are in flow, this is absolute with no
+   z-index of its own) and don't participate in the flex row, so they can't affect
+   the bar widths the ResizeObserver measures — the loop that froze the tab
+   started exactly that way. */
+.ts-grid { position: absolute; inset: 0; pointer-events: none; }
+.ts-tick { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--border); }
+/* The value rides ON the line, right-aligned, so it needs no gutter — a left axis
+   would cost horizontal space the bars are using. */
+.ts-tick b { position: absolute; right: 0; bottom: 1px; padding-left: 4px; background: var(--panel);
+  font-size: 9.5px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ts-bar { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+/* thin marks, 4px rounded data-end at the top of the stack, 2px surface gap
+   between the two segments (the `gap` above) */
+.ts-seg { display: block; width: 100%; }
+.ts-bar .ts-seg:first-child { border-radius: 3px 3px 0 0; }
+.ts-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ts-empty { align-self: center; margin: 0 auto; }
+
+/* the feed's own header: title on the left, its filter on the right */
+.lv-feed-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* Filter bar. Wraps rather than overflowing — the channel chips are generated
+   from the window, so their count isn't knowable in advance. Kept on the header
+   row (not a second band) so filtering costs no vertical space. */
+.lv-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* Typography is the board's one control convention, set by `.lv-win` and reused
+   by the window picker AND Attribution's source/medium/campaign switch: 11.5px,
+   --muted at rest, weight 600 when selected. These filters had drifted to
+   10.5px/11px, which read as a smaller, lesser tier of control than the
+   identical-purpose switch two cards up. Same size, same colours, same selected
+   weight — only the SHAPE differs (pills here, a segmented control there),
+   because these are independent multi-selects rather than one-of-N. */
+/* The box owns the border so the clear button can sit inside it, same structure
+   as RailSearch (bordered container, borderless input, explicit clear). */
+/* 30px tall, matching the filter button beside it. This is what made that button
+   "look smaller than People's" despite being pixel-identical (30x30, same border,
+   same box-sizing): People's sits in a 52px search bar and reads as settled,
+   while here it towered over a 23px input, so the PAIR looked wrong and the
+   button took the blame. Costs no vertical space — the button already sets the
+   header row's height. */
+.lv-searchbox { display: inline-flex; align-items: center; gap: 2px; height: 30px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 0 5px 0 9px; }
+.lv-searchbox:focus-within { border-color: var(--accent); }
+.lv-search { border: none; background: transparent; outline: none; color: var(--text);
+  font: inherit; font-size: 11.5px; padding: 3px 0; width: 150px; }
+.lv-search::placeholder { color: var(--muted); }
+/* Native search decorations off — the clear button is ours, so a second one from
+   the UA would be both redundant and styled differently. */
+.lv-search::-webkit-search-cancel-button, .lv-search::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+.lv-search-clear { display: inline-flex; align-items: center; border: none; background: none; padding: 0;
+  color: var(--muted); cursor: pointer; }
+.lv-search-clear:hover { color: var(--accent); }
+.lv-search-clear .material-symbols-outlined { font-size: 14px; }
+
+/* The filter button and its panel live in components/FilterMenu.vue now — the
+   app's one filter control, shared with People's rail. Nothing module-specific
+   was left to keep here, and a local copy is exactly how the two drifted apart
+   in the first place. */
+
+/* An inline text action inside an empty state — not a button-looking control,
+   because the empty state is a sentence. */
+.lv-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+/* Attribution card. The dimension switch reuses .lv-win (the window picker's
+   button) rather than a new control — same shape, same affordance, one style. */
+.lv-utm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* (segmented container: see .lv-seg) */
+/* Unattributed traffic is real but not a campaign — muted so the eye reads the
+   named rows first, without hiding it. */
+.lv-utm-direct .lv-bar-k { color: var(--muted); }
+.lv-utm-direct .lv-bar-track i { background: var(--muted); opacity: .5; }

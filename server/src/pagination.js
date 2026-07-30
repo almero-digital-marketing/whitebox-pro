@@ -41,7 +41,17 @@ export function pageSlice(all, { limit, offset, total = all.length }) {
 //
 // `query` must be a fresh knex builder — it's cloned for the count and again
 // for the rows, so the caller keeps theirs intact.
-export async function pagedList(query, { q, fields = [], limit = 25, offset = 0, orderBy = 'created_at', direction = 'desc' } = {}) {
+//
+// `tiebreak` is a UNIQUE column, and it is not optional decoration. LIMIT/OFFSET
+// paging is only coherent if the sort is a total order: when two rows share the
+// `orderBy` value, Postgres may return them in either order, and it is free to
+// choose differently for the page-1 query than for the page-2 query. The row it
+// puts last on page 1 can then also come first on page 2 — you see it twice, and
+// whatever it displaced you never see at all. Nothing errors; the rail just
+// quietly lies. Adding the primary key breaks every tie deterministically, which
+// costs nothing (it is already indexed) and makes the pages a partition of the
+// result set instead of two independent samples of it.
+export async function pagedList(query, { q, fields = [], limit = 25, offset = 0, orderBy = 'created_at', direction = 'desc', tiebreak = 'id' } = {}) {
   const term = String(q ?? '').trim()
   const base = term && fields.length
     ? query.where(b => { for (const f of fields) b.orWhere(f, 'ilike', `%${term}%`) })
@@ -50,6 +60,9 @@ export async function pagedList(query, { q, fields = [], limit = 25, offset = 0,
   // Postgres rejects it outright when the column isn't in the projection.
   const [{ count }] = await base.clone().clearSelect().clearOrder().count('* as count')
   const rows = await base.clone().orderBy(orderBy, direction)
+    // Skipped when the caller already sorts by the unique column — a repeated
+    // ORDER BY term is harmless in SQL but reads as though it means something.
+    .modify(qb => { if (tiebreak && tiebreak !== orderBy) qb.orderBy(tiebreak, direction) })
     .limit(Math.min(Number(limit) || 25, 200))
     .offset(Math.max(0, Number(offset) || 0))
   return { total: Number(count), rows }

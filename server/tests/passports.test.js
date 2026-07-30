@@ -543,6 +543,41 @@ describe('search', () => {
     const res = await search({ q: p.slice(0, 8), includeAnonymous: true })
     expect(res.people.map(x => x.id)).toContain(p)
   })
+
+  // Paging is sorted by last_seen_at, which is NOT unique — a bulk import or a
+  // campaign send stamps a whole batch with one instant, and the anonymous tail
+  // shares NULL. Without a unique tiebreaker the sort is only a PARTIAL order,
+  // and Postgres is free to break a tie differently for the page-1 query than
+  // for the page-2 query: one person shows up twice, another never appears.
+  //
+  // Asserting "no duplicates, nothing missing" is NOT enough to catch this —
+  // verified by removing the tiebreaker, and at nine rows Postgres returns a
+  // stable order anyway, so that test passes either way. What discriminates is
+  // asserting the EXACT order: with every timestamp equal, the id tiebreaker is
+  // the only thing deciding, so the result must be strictly id-descending.
+  // Ids are random uuids, so unsorted heap order will not accidentally match.
+  it('pages a tied sort column in a total order', async () => {
+    const ids = []
+    for (let i = 0; i < 9; i++) {
+      const p = await identify(null)
+      await link(p, [{ type: 'email', name: 'email', value: `tie-${i}@y.com` }])
+      ids.push(p)
+    }
+    // every row tied on the sort column — the worst case, not a rare one
+    await db('whitebox_passports').whereIn('id', ids)
+      .update({ last_seen_at: new Date('2026-01-01T00:00:00Z') })
+
+    const walked = []
+    for (let offset = 0; offset < 9; offset += 3) {
+      const { people } = await search({ q: 'tie-', limit: 3, offset })
+      walked.push(...people.map(p => p.id))
+    }
+
+    // Postgres orders uuid by byte value, which for canonical lowercase text
+    // is the same as a plain string sort.
+    expect(walked).toEqual([...ids].sort().reverse())
+    expect(new Set(walked).size).toBe(9)   // and therefore nobody twice, nobody missed
+  })
 })
 
 // `fields` narrows where the term is looked for. The three sources overlap in

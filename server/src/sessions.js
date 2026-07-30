@@ -6,6 +6,7 @@ const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm
 
 let db
 let passports
+let notify
 const resolveHooks = []
 
 // Register a callback to run on every /sessions/resolve, merging its returned
@@ -23,6 +24,8 @@ export function onResolve(fn) {
 export async function init(options) {
   db = options.db
   passports = options.passports
+  // Optional: a deployment without it just doesn't emit lifecycle events.
+  notify = options.notify || null
   resolveHooks.length = 0   // fresh boot ⇒ no hooks registered yet; plugins re-add theirs during their own init
   const exists = await db.schema.hasTable(TABLE)
   if (!exists) {
@@ -55,6 +58,21 @@ export async function start(passportId, utms = {}) {
   }
   if (utms.referrer) data.referrer = utms.referrer
   const [session] = await db(TABLE).insert(data).returning('*')
+  // Only fires from resolve() when there was no active session to reuse, so this
+  // counts SESSIONS, not requests — /sessions/resolve runs on every page load.
+  // The UTMs ride along because "a new session arrived, attributed to this
+  // campaign" is the whole question an operator watching traffic is asking.
+  notify?.('session.started', {
+    type: 'session.started',
+    data: {
+      session_id: session.id,
+      passport_id: session.passport_id,
+      utm_source: session.utm_source ?? null,
+      utm_medium: session.utm_medium ?? null,
+      utm_campaign: session.utm_campaign ?? null,
+      referrer: session.referrer ?? null,
+    },
+  })?.catch?.(() => {})
   return session
 }
 

@@ -69,7 +69,7 @@ export function sms(options = {}) {
       // worker's preflightBlock (suppression/invalid) gate runs same as any
       // other queued send. `send` is an alias of the same function; there is
       // no separate raw/ungated path in this plugin (unlike mail's mailer.send).
-      return { service: { send: outbox.queueSend, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel } }
+      return { service: { send: outbox.queueSend, queueSend: outbox.queueSend, bulkSend: bulk.send, funnel: outbox.funnel , stats: outbox.stats, status: outbox.status } }
     },
   }
 }

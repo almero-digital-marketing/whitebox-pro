@@ -450,6 +450,49 @@ export async function funnel({ campaignId, journeyId } = {}) {
   return row
 }
 
+// Delivery health for a TIME WINDOW rather than one campaign — what the Live
+// dashboard's egress card reads. Same columns as funnel() above, and
+// deliberately the same shape, so the two can't drift into disagreeing about
+// what "delivered" counts.
+//
+// Windowed on queued_at — this table has no created_at; queued_at IS when the
+// row was made. The question is "what did we try to send recently", so a
+// message queued inside the window belongs to it even if it hasn't resolved
+// yet: that pending gap is exactly what the card is for.
+// Self-describing health, for any monitoring surface (see docs/10-plugin-status.md).
+// The board used to know this shape; now it doesn't have to — this plugin names
+// its own numbers and says which one is bad news, so adding a channel never means
+// editing the dashboard.
+export async function status({ since } = {}) {
+  const s = await stats({ since })
+  return {
+    label: 'mail',
+    metrics: [
+      { key: 'queued', value: s.queued },
+      { key: 'sent', value: s.sent },
+      { key: 'delivered', value: s.delivered },
+      // non-zero here is a problem, and the surface shows it with an icon and the
+      // word — never colour alone
+      { key: 'failed', value: s.failed, severity: 'bad' },
+      { key: 'bounced', value: s.bounced, severity: 'bad' },
+    ],
+  }
+}
+
+export async function stats({ since } = {}) {
+  const q = db(TABLE)
+  if (since) q.where('queued_at', '>=', since instanceof Date ? since : new Date(since))
+  const [row] = await q.select(
+    db.raw(`count(*)::int                                          AS total`),
+    db.raw(`count(*) FILTER (WHERE status = 'queued')::int         AS queued`),
+    db.raw(`count(sent_at)::int                                    AS sent`),
+    db.raw(`count(delivered_at)::int                               AS delivered`),
+    db.raw(`count(failed_at)::int                                  AS failed`),
+    db.raw(`count(*) FILTER (WHERE status = 'bounced')::int        AS bounced`),
+  )
+  return row
+}
+
 export async function sent(id, providerMessageId) {
   const [row] = await db(TABLE).where({ id }).update({
     provider_message_id: providerMessageId,

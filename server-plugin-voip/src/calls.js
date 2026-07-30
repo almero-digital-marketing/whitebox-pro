@@ -42,6 +42,56 @@ export async function end({ vaultId, duration, record, link, transcription, date
   return updated
 }
 
+// Windowed counts by status, shaped like mail/sms `stats()` so the monitoring
+// view can render all three channels through one code path.
+//
+// `missed` is the point of this card: calls.end() writes 'missed' when a call
+// ended without ever being picked up, and that is the one voip number an operator
+// would act on. `ringing`/`active` are live right now rather than historical.
+export async function stats({ since } = {}) {
+  const q = db(TABLE).select('status').count('* as n').groupBy('status')
+  if (since) q.where('started_at', '>=', since instanceof Date ? since : new Date(since))
+  const rows = await q
+  const by = Object.fromEntries(rows.map(r => [r.status, Number(r.n)]))
+  const ringing = by.ringing || 0
+  const active = by.active || 0
+  const ended = by.ended || 0
+  const missed = by.missed || 0
+  return { total: ringing + active + ended + missed, ringing, active, ended, missed }
+}
+
+// Self-describing health (see docs/10-plugin-status.md). Calls AND the number
+// pool in one answer, because they're one question: "is call tracking working".
+//
+// The pool arrives as a GAUGE rather than a metric — it's a bounded resource where
+// the ratio is the point ("3 of 8 held" says what "3" cannot), and it is live
+// state, not windowed: the assignment map IS the current truth and there is no
+// history to query. Reporting it as a windowed count would be a lie about it.
+export async function status({ since, pool } = {}) {
+  const s = await stats({ since })
+  const p = pool ? pool() : null
+  return {
+    label: 'voip',
+    metrics: [
+      { key: 'ringing', value: s.ringing },
+      { key: 'active', value: s.active },
+      { key: 'ended', value: s.ended },
+      // Someone reached out and nobody answered — a failure in the same sense as
+      // a bounced email, and the one voip number an operator would act on.
+      { key: 'missed', value: s.missed, severity: 'bad' },
+    ],
+    gauges: p ? p.tags.map(t => ({
+      label: t.tag, used: t.assigned, total: t.total,
+      // The plugin's own judgement, not `used === total`: full is only a problem
+      // once somebody is actually waiting on it.
+      exhausted: t.exhausted,
+    })) : [],
+    note: p?.waiting
+      ? `${p.waiting} visitor${p.waiting === 1 ? '' : 's'} waiting for a number — they were shown the untracked fallback`
+      : null,
+  }
+}
+
 export async function find(vaultId) {
   const call = await db(TABLE).where({ vault_id: vaultId }).first()
   return call
