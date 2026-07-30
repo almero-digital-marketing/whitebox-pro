@@ -44,9 +44,12 @@
    Above the accordion, which owns no outer padding, so it brings its own. */
 .lv-side-hint { margin: 0; padding: 12px 18px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* The plugin's own caveat, at the top of its opened panel. Same tier as the pane
-   hint — it is the same kind of sentence, one scope down. */
-.lv-side-note { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+/* Undo for the selection, at the foot of the panel. Mirrors FilterMenu's
+   `.fm-clear` — the same control doing the same job in the same place — which is
+   scoped to that component, so the values are copied rather than reached for. */
+.lv-side-reset { display: block; width: 100%; margin-top: 14px; padding-top: 10px;
+  border: none; border-top: 1px solid var(--border); background: none;
+  font: inherit; font-size: 11.5px; color: var(--accent); cursor: pointer; text-align: left; }
 
 /* Claims about the SET of plugins, below every section. Separated by a rule because
    they are not part of the last panel, which is exactly how they'd otherwise read. */

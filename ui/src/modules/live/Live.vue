@@ -505,11 +505,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
          everything on offer and pick, and an accordion would hide most of it
          behind clicks. -->
     <aside class="lv-side">
-      <p class="lv-side-hint">
-        Switch a counter on to show it in the header.
-        <button v-if="!isDefaultPinned" type="button" class="lv-link"
-          @click="store.resetPinned()">reset</button>
-      </p>
+      <p class="lv-side-hint">Switch a counter on to show it in the header.</p>
 
       <!-- ONE "Status" panel holding every plugin as a group, which is what the app's
            right panes are: a small stack of named sections, not thirteen of them.
@@ -567,6 +563,17 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                 <small class="lv-srow-d">{{ f.description }}</small>
               </label>
             </div>
+
+            <!-- At the FOOT of the panel, which is where this app puts an undo for a
+                 selection — FilterMenu's `.fm-clear` ("Clear filters") is the same
+                 control in the same place. It was dangling after the hint sentence at
+                 the top, reading as part of the instruction rather than an action.
+                 Still only rendered once the selection has drifted, so it is never a
+                 control that visibly does nothing. -->
+            <button v-if="!isDefaultPinned" type="button" class="lv-side-reset"
+              @click="store.resetPinned()">
+              Reset to the whole-system counters
+            </button>
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
