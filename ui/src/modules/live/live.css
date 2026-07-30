@@ -17,19 +17,24 @@
 .lv-side { flex: none; width: 340px; min-height: 0; display: flex; flex-direction: column;
   border-left: 1px solid var(--border); background: var(--panel); }
 
-/* The right pane is an Accordion in every module. Geometry copied from People's
-   `.ppl-accordion` so the header height, the between-panel rule and the content
-   padding are one object across the app rather than a lookalike: the ACTIVE panel
-   is the one that grows and scrolls, which is the whole reason for the flex chain
-   (`min-height: 0` at every level, or the pane grows instead of the content
-   scrolling).
-   This works BECAUSE there is one panel. A version with thirteen — one per plugin —
-   needed 34px headers and a scrolling pane just to fit its own chrome, which was the
-   first sign that thirteen sections was the wrong shape. */
+/* The right pane is an Accordion in every module, and this one is JOURNEYS'
+   (`.jrn-accordion` in Journeys.vue), declaration for declaration.
+   Journeys and not People, and the difference is behavioural rather than cosmetic.
+   Two rules diverge across the app:
+     People    `.p-accordionpanel-active { flex: 0 1 auto }`  the active panel is
+               content-sized, so a collapsed panel header sits directly beneath it.
+     Journeys  `.p-accordionpanel-active { flex: 1 1 auto }`  the active panel FILLS
+               the pane, so collapsed headers are pushed to its bottom edge.
+   People's is right for two or three panels of form fields. This pane wants the
+   second: with Live open, Status's header belongs at the foot of the pane rather than
+   floating halfway up under Live's content — which is exactly what copying People
+   produced.
+   `min-height: 0` at every level is what lets the content scroll INSIDE the filled
+   panel instead of the pane growing. */
 .lv-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .lv-accordion .p-accordionpanel { border: none; display: flex; flex-direction: column; }
 .lv-accordion .p-accordionpanel > .p-accordioncontent { min-height: 0; }
-.lv-accordion .p-accordionpanel-active { flex: 0 1 auto; min-height: 0; }
+.lv-accordion .p-accordionpanel-active { flex: 1 1 auto; min-height: 0; }
 .lv-accordion .p-accordionpanel-active .p-accordioncontent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .lv-accordion .p-accordionpanel-active .p-accordioncontent-wrapper { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .lv-accordion .p-accordionheader { box-sizing: border-box; flex: 0 0 52px; height: 52px;
@@ -39,17 +44,7 @@
 .lv-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
 .lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
 .lv-accordion .p-accordioncontent-content { padding: 16px 18px; background: var(--panel); border: none; }
-/* The rule this was MISSING, and every other module has: without it the content box
-   sits at its natural height instead of filling the open panel, so the panel's own
-   background and its bottom edge stop short of where the section ends — which is
-   why this accordion looked unlike the others despite being the same component.
-   `flex: 1 0 auto` is PEOPLE's variant, and the choice is not arbitrary: there are
-   two scroll models in this app. Audiences and Campaigns scroll the CONTENT
-   (`flex: 1 1 auto; min-height: 0; overflow: auto`); People scrolls the WRAPPER,
-   which is the model copied above — so the content must grow and not shrink, or the
-   wrapper has nothing to scroll. Taking Audiences' line instead would give two
-   nested scrollers. */
-.lv-accordion .p-accordionpanel-active .p-accordioncontent-content { flex: 1 0 auto; }
+.lv-accordion .p-accordionpanel-active .p-accordioncontent-content { flex: 1 1 auto; min-height: 0; }
 
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
    Margin, not padding: this sits inside the accordion content, which already brings
