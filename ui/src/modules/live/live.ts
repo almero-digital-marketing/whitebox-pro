@@ -80,6 +80,11 @@ export interface Summary {
   by_direction: Record<Direction, number>
   by_channel: Record<string, number>
   types: { type: string; count: number }[]
+  /**
+   * What the filter lists offer — NOT narrowed by their own axis. See Axes.
+   * `by_direction`/`by_channel` above are the narrowed numbers the cards render.
+   */
+  axes: Axes
   active_passports: number
   // unwindowed — what makes an empty window legible as 'quiet' not 'broken'
   last_event_at: string | null
@@ -105,6 +110,15 @@ export interface Utm {
 }
 
 export interface Content { window: WindowKey; total: number; kinds: UtmRow[] }
+
+/**
+ * What the filter lists offer, and what each option is worth. Counted per axis with
+ * that axis's OWN filter left out — the faceted-search rule — so an option you have
+ * switched off still shows the count it would contribute, and remains switchable
+ * back on. `by_direction`/`by_channel` are the narrowed numbers the cards render;
+ * these are deliberately not narrowed.
+ */
+export interface Axes { direction: Record<string, number>; channel: Record<string, number> }
 
 export interface Series { window: WindowKey; bucket_seconds: number; buckets: { bucket: string; in: number; out: number; internal: number; unknown: number }[] }
 

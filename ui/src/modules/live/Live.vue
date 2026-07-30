@@ -14,6 +14,7 @@ import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
 import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
 import ToggleSwitch from 'primevue/toggleswitch'
+import Checkbox from 'primevue/checkbox'
 import Button from 'primevue/button'
 import Accordion from 'primevue/accordion'
 import AccordionPanel from 'primevue/accordionpanel'
@@ -149,23 +150,6 @@ const directionChips = computed(() => {
 // One helper for both axes, so the chips can't drift apart in how they read.
 // `title` spells the cycle out because a tri-state control has no conventional
 // affordance — the next state has to be discoverable without experimenting.
-// Classes ONLY. The title used to be returned alongside them, which meant binding
-// this to `:class` would have turned the whole sentence into a class name.
-function chipState(modes: Map<string, string>, key: string) {
-  const m = modes.get(key)
-  return { on: m === 'include', off: m === 'exclude' }
-}
-
-// Spelled out because a tri-state control has no conventional affordance — the next
-// state has to be discoverable without experimenting. Says "the board", not "the
-// list": these narrow every card now, not only the feed.
-function chipTitle(modes: Map<string, string>, key: string) {
-  const m = modes.get(key)
-  return m === 'include' ? `Board shows only ${key} — click to exclude it instead`
-    : m === 'exclude' ? `Board is excluding ${key} — click to clear`
-    : `Click to show only ${key} across the board`
-}
-
 // Shaped for FilterMenu: groups of { value, label, count }. Channels come from
 // the window rather than a fixed list, so this is a computed, not a constant.
 const filterGroups = computed(() => {
@@ -530,37 +514,62 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               These apply to the whole board — every card and the feed.
             </p>
 
-            <label class="lv-fld-l">Window</label>
-            <div class="lv-seg lv-seg-wide">
-              <button v-for="w in WINDOWS" :key="w" type="button" class="lv-win"
-                :class="{ on: store.window === w }" @click="store.setWindow(w)">{{ w }}</button>
+            <!-- Every group in this pane is `.lv-sgroup` with a `.lv-dl-ch` heading,
+                 and every row is `.lv-srow` — the SAME structures the Status section
+                 uses. Reused rather than restyled: a pane with two row shapes and two
+                 label tiers is how the typography drifts, and these lists are the
+                 same kind of thing as the counter list (a name, a number, a control on
+                 the right). -->
+            <div class="lv-sgroup">
+              <div class="lv-sgroup-head"><span class="lv-dl-ch">Window</span></div>
+              <div class="lv-seg lv-seg-wide">
+                <button v-for="w in WINDOWS" :key="w" type="button" class="lv-win"
+                  :class="{ on: store.window === w }" @click="store.setWindow(w)">{{ w }}</button>
+              </div>
             </div>
 
-            <label class="lv-fld-l">Direction</label>
-            <!-- The same tri-state chips the feed's filter menu offers, laid out in
-                 the pane instead of behind an icon — they narrow every card now, so
-                 hiding them under a control that reads as "filter this list" would
-                 misdescribe what they do. -->
-            <div class="lv-chips">
-              <button v-for="d in directionChips" :key="d" type="button" class="lv-chip"
-                :class="chipState(feedDirModes, d)"
-                :title="chipTitle(feedDirModes, d)"
-                @click="store.toggleDirection(d)">
-                {{ DIRECTION_GLYPH[d] }} {{ d }}
-                <small>{{ directionCounts[d] || 0 }}</small>
-              </button>
+            <div class="lv-sgroup">
+              <div class="lv-sgroup-head"><span class="lv-dl-ch">Direction</span></div>
+              <!-- A ToggleSwitch, the same control the Status rows use — direction is
+                   a fixed set of three or four, so each one reads as a thing you
+                   switch on and off rather than an item you tick in a list.
+                   Two states, not the tri-state cycle it replaced: "switch on what
+                   you want to see" needs no explaining. Switching one OFF writes an
+                   exclude rather than a whitelist of what's left, so a direction that
+                   first appears tomorrow still shows by default. -->
+              <label v-for="d in directionChips" :key="d" class="lv-srow"
+                :title="`Show ${d} across the whole board`">
+                <span class="lv-srow-t">
+                  <span class="lv-srow-top">
+                    <span class="lv-srow-n"><b>{{ directionCounts[d] || 0 }}</b></span>
+                    <span class="lv-srow-k">{{ DIRECTION_GLYPH[d] }} {{ d }}</span>
+                  </span>
+                </span>
+                <ToggleSwitch class="lv-sw" :model-value="store.isDirOn(d)"
+                  @update:model-value="(v: boolean) => store.setDirection(d, v)"
+                  :aria-label="`Show ${d} on the board`" />
+              </label>
             </div>
 
-            <label class="lv-fld-l">Channel</label>
-            <div class="lv-chips">
-              <button v-for="c in channelCounts" :key="c.channel" type="button" class="lv-chip"
-                :class="chipState(feedChanModes, c.channel)"
-                :title="chipTitle(feedChanModes, c.channel)"
-                @click="store.toggleChannel(c.channel)">
-                {{ c.channel }} <small>{{ c.count }}</small>
-              </button>
-              <p v-if="!channelCounts.length" class="lv-side-note">
-                No channels in this window yet.
+            <div class="lv-sgroup">
+              <div class="lv-sgroup-head"><span class="lv-dl-ch">Channel</span></div>
+              <label v-for="c in channelCounts" :key="c.channel" class="lv-srow"
+                :title="`Show ${c.channel} across the whole board`">
+                <span class="lv-srow-t">
+                  <span class="lv-srow-top">
+                    <span class="lv-srow-n"><b>{{ c.count }}</b></span>
+                    <span class="lv-srow-k">{{ c.channel }}</span>
+                  </span>
+                </span>
+                <Checkbox class="lv-sw" binary :model-value="store.isChanOn(c.channel)"
+                  @update:model-value="(v: boolean) => store.setChannel(c.channel, v)"
+                  :aria-label="`Show ${c.channel} on the board`" />
+              </label>
+              <!-- Says WHY it's empty. It reads from the window's own traffic, so a
+                   quiet window genuinely has nothing to offer — which is different
+                   from the list being broken. -->
+              <p v-if="!channelCounts.length" class="lv-srow-d">
+                Nothing has come through in this window yet.
               </p>
             </div>
 

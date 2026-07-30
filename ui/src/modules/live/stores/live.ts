@@ -99,31 +99,29 @@ export const useLiveStore = defineStore('live', () => {
     axisMatch(e.channel, feedChanModes.value) &&
     matchesText(e, feedQuery.value)))
 
-  // Counts are of what the OTHER axes already allow, so a chip's number says what
-  // toggling it would actually yield rather than a window total that disagrees
-  // with the list under it.
-  const directionCounts = computed(() => {
-    const out: Record<string, number> = { in: 0, out: 0, internal: 0, unknown: 0 }
-    for (const e of feed.value) {
-      if (axisMatch(e.channel, feedChanModes.value) && matchesText(e, feedQuery.value)) {
-        out[e.direction] = (out[e.direction] || 0) + 1
-      }
-    }
-    return out
-  })
+  // From the SERVER's facet counts (`summary.axes`), not from the feed rows.
+  //
+  // Deriving them from the feed had two failure modes and the Channel list showed
+  // both: an empty list on a quiet window, because the feed holds nothing even when
+  // the window had traffic it has already evicted; and a capped list on a busy one,
+  // since the feed keeps at most MAX_FEED rows. Now that the filters narrow the
+  // whole board, the options have to come from the same place the board's numbers
+  // do.
+  //
+  // Each axis is counted with its own filter left out (see the server's `axes`), so
+  // an option you switched off still shows what it would contribute and can be
+  // switched back on — the thing a naively-narrowed count destroys.
+  const directionCounts = computed<Record<string, number>>(() =>
+    summary.value?.axes?.direction ?? { in: 0, out: 0, internal: 0, unknown: 0 })
 
-  // Only channels PRESENT in the window, busiest first — plus any explicitly
-  // excluded, so a chip you switched off doesn't vanish the moment it stops
-  // matching and leave you no way to switch it back on.
+  // Busiest first, plus any explicitly excluded so a row you switched off doesn't
+  // vanish from the list you'd use to switch it back on.
   const channelCounts = computed(() => {
-    const tally = new Map<string, number>()
-    for (const e of feed.value) {
-      if (axisMatch(e.direction, feedDirModes.value) && matchesText(e, feedQuery.value)) {
-        tally.set(e.channel, (tally.get(e.channel) || 0) + 1)
-      }
-    }
+    const tally = new Map<string, number>(Object.entries(summary.value?.axes?.channel ?? {}))
     for (const [c, m] of feedChanModes.value) if (m && !tally.has(c)) tally.set(c, 0)
-    return [...tally.entries()].map(([channel, count]) => ({ channel, count })).sort((a, b) => b.count - a.count)
+    return [...tally.entries()]
+      .map(([channel, count]) => ({ channel, count }))
+      .sort((a, b) => b.count - a.count || a.channel.localeCompare(b.channel))
   })
 
   // The filters as the SERVER takes them. They started as a feed-only, client-side
@@ -162,6 +160,27 @@ export const useLiveStore = defineStore('live', () => {
   }
   function toggleDirection(d: string) { feedDirModes.value = cycle(feedDirModes.value, d) }
   function toggleChannel(c: string) { feedChanModes.value = cycle(feedChanModes.value, c) }
+
+  // ── binary view of the same state, for the pane's checkbox lists ───────────
+  //
+  // A checkbox has two states and the model has three, so the mapping is: checked
+  // means "not excluded". Unchecking writes an EXCLUDE rather than rewriting the
+  // axis as an include-list of everything still ticked — which matters, because an
+  // include-list is a whitelist: a channel that first appears tomorrow would be
+  // silently filtered out of a board someone ticked today. Excludes name only what
+  // you turned off, so anything new shows up by default.
+  const axisOn = (modes: Map<string, Mode>, key: string) => modes.get(key) !== 'exclude'
+
+  function setAxis(modes: Map<string, Mode>, key: string, on: boolean) {
+    const next = new Map(modes)
+    if (on) next.delete(key)
+    else next.set(key, 'exclude')
+    return next
+  }
+  const isDirOn = (d: string) => axisOn(feedDirModes.value, d)
+  const isChanOn = (c: string) => axisOn(feedChanModes.value, c)
+  function setDirection(d: string, on: boolean) { feedDirModes.value = setAxis(feedDirModes.value, d, on) }
+  function setChannel(c: string, on: boolean) { feedChanModes.value = setAxis(feedChanModes.value, c, on) }
 
   // A filter change now has to REFETCH, because it narrows server-computed
   // aggregates as well as the client-held feed. Watching the encoded strings rather
@@ -376,6 +395,7 @@ export const useLiveStore = defineStore('live', () => {
     feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
+    isDirOn, isChanOn, setDirection, setChannel,
     loading, connected, paused, dropped, overflowed,
     failing, maxFeed: MAX_FEED,
     pinned, pinnedFigs, isPinned, togglePinned, resetPinned,

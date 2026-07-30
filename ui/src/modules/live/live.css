@@ -402,27 +402,13 @@
 .lv-utm-direct .lv-bar-k { color: var(--muted); }
 .lv-utm-direct .lv-bar-track i { background: var(--muted); opacity: .5; }
 
-/* ── Live pane: the board-wide controls ──────────────────────────────────────
-   A field label above each control, at People's `.fld-l` tier (11px/700/.04em/
-   uppercase/muted) so the pane reads like every other form in the app. */
-.lv-fld-l { display: block; margin: 12px 0 5px; font-size: 11px; font-weight: 700;
-  letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-.lv-fld-l:first-of-type { margin-top: 0; }
-
-/* The window picker, full width in the pane rather than the compact inline strip it
-   was in the header — there's room here, and equal-width segments make it read as
-   one control instead of four buttons. */
+/* ── Live pane ───────────────────────────────────────────────────────────────
+   No new type tiers and no new row shape. The Direction and Channel lists reuse
+   `.lv-sgroup` / `.lv-dl-ch` / `.lv-srow` from the Status section above — same
+   heading, same row, a Checkbox where the ToggleSwitch goes. An earlier version
+   invented `.lv-fld-l` labels and `.lv-chip` pills with their own 10/11px sizes,
+   which is exactly how a pane ends up with two of everything.
+   The only addition: the window picker fills the pane's width, so its four segments
+   read as one control rather than four buttons with a ragged right edge. */
 .lv-seg-wide { display: flex; width: 100%; }
 .lv-seg-wide .lv-win { flex: 1 1 0; text-align: center; }
-
-/* Tri-state chips, wrapping. The `on`/`off` treatment is the segmented control's
-   (`.lv-win.on`) plus a strike-through for exclude, because three states cannot be
-   told apart by shading alone — the same reason FilterMenu draws a mark glyph. */
-.lv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.lv-chip { display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 8px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
-  font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; }
-.lv-chip:hover { border-color: var(--accent); color: var(--accent); }
-.lv-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.lv-chip.off { text-decoration: line-through; opacity: .6; }
-.lv-chip small { font-size: 10px; font-variant-numeric: tabular-nums; opacity: .8; }

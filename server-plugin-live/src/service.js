@@ -173,6 +173,13 @@ export function makeFilter({ dir, chan } = {}) {
   const off = !d.inc.size && !d.exc.size && !c.inc.size && !c.exc.size
   return {
     off,
+    // Per-axis, because the FILTER LISTS need counts with their own axis left out.
+    // Otherwise the options erase themselves: narrow to one channel and every other
+    // channel drops to nothing, so the control you'd use to widen again is gone.
+    // This is the standard faceted-search rule — each facet counted as if only the
+    // OTHER facets were applied.
+    dirPasses: (value) => axisPasses(value, d),
+    chanPasses: (value) => axisPasses(value, c),
     // `payload` is the recorded-facet shape, so this asks the same question the
     // feed row asks.
     passes: (type, payload) => off
@@ -308,6 +315,14 @@ export async function summary({ window: w, dir, chan } = {}) {
   // Fold type counts into the three directions, and into channels.
   const byDirection = Object.fromEntries(DIRECTIONS.map(d => [d, 0]))
   const byChannel = {}
+  // FACET counts, for the filter lists in the Live pane: each axis counted as if only
+  // the OTHER axis were filtered. Without this the options erase themselves — tick
+  // one channel and every other channel's count goes to zero, so the control you'd
+  // use to widen again is gone, and the list looked simply "empty".
+  // (It used to be derived in the browser from the feed rows, which had the same
+  // effect for a different reason: a quiet window holds no rows, so there was nothing
+  // to offer even though the window had traffic the feed had already evicted.)
+  const axes = { direction: Object.fromEntries(DIRECTIONS.map(d => [d, 0])), channel: {} }
   let total = 0
   for (const row of counts) {
     const { type, count } = row
@@ -319,10 +334,16 @@ export async function summary({ window: w, dir, chan } = {}) {
     // since it's the highest-volume type in WhiteBox the "coming in / going
     // out" cards read empty while the feed showed inbound traffic.
     const payload = facetPayload(row)
-    if (!filter.passes(type, payload)) continue
     const d = direction(type, payload)
-    byDirection[d] = (byDirection[d] || 0) + count
     const ch = channel(type, payload)
+
+    // Each facet ignores its own axis, so a value you switched off still shows the
+    // count it WOULD contribute — which is what makes it switchable back on.
+    if (filter.chanPasses(ch)) axes.direction[d] = (axes.direction[d] || 0) + count
+    if (filter.dirPasses(d)) axes.channel[ch] = (axes.channel[ch] || 0) + count
+
+    if (!(filter.dirPasses(d) && filter.chanPasses(ch))) continue
+    byDirection[d] = (byDirection[d] || 0) + count
     byChannel[ch] = (byChannel[ch] || 0) + count
     total += count
   }
@@ -337,6 +358,10 @@ export async function summary({ window: w, dir, chan } = {}) {
     per_minute: Math.round((total / secs) * 60 * 10) / 10,
     by_direction: byDirection,
     by_channel: byChannel,
+    // What the filter lists offer, and what each option is worth. Separate from
+    // by_direction/by_channel above, which ARE narrowed — these must not be, or the
+    // control narrows itself out of existence.
+    axes,
     // Collapsed back to ONE row per type. `counts` is now keyed by
     // (type, recorded_direction, recorded_channel) so the folding above can
     // classify each facet correctly — but that made `awareness.recorded` appear

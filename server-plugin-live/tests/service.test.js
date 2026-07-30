@@ -616,3 +616,53 @@ describe('summary()/timeseries() honour the board filter', () => {
     expect(filtered.buckets.reduce((a, b) => a + b.out, 0)).toBe(0)
   })
 })
+
+// The filter lists' own counts. This is what fixes an empty Channel list: the
+// options used to be derived in the browser from feed rows, so a quiet window
+// offered nothing to filter by even when the window itself had traffic.
+describe('summary().axes — what the filter lists offer', () => {
+  const counts = [
+    { type: 'mail.sent', count: 60 },
+    { type: 'crm.deal', count: 30 },
+    { type: 'journey.enrolled', count: 10 },
+  ]
+
+  it('counts every direction and channel present in the window', async () => {
+    service.init({ eventRegistry: registry(counts, 0), logger: console })
+    const s = await service.summary({ window: '30m' })
+    expect(s.axes.direction).toMatchObject({ out: 60, in: 30, internal: 10 })
+    expect(s.axes.channel).toEqual({ mail: 60, crm: 30, journey: 10 })
+  })
+
+  // The rule that keeps a filter usable: each axis is counted as if only the OTHER
+  // axis were applied. Narrow to one channel and the others must still show what
+  // they WOULD contribute, or the control you'd use to widen again has erased itself.
+  it('leaves an axis out of its own count, so switching a value off does not erase it', async () => {
+    service.init({ eventRegistry: registry(counts, 0), logger: console })
+    const s = await service.summary({ window: '30m', chan: 'mail' })
+
+    // The cards ARE narrowed...
+    expect(s.total).toBe(60)
+    expect(s.by_channel).toEqual({ mail: 60 })
+    // ...while the channel list still offers all three, with their full counts.
+    expect(s.axes.channel).toEqual({ mail: 60, crm: 30, journey: 10 })
+    // The direction facet DOES respect the channel filter — it's the other axis.
+    expect(s.axes.direction).toMatchObject({ out: 60, in: 0, internal: 0 })
+  })
+
+  it('does the same in the other direction', async () => {
+    service.init({ eventRegistry: registry(counts, 0), logger: console })
+    const s = await service.summary({ window: '30m', dir: '-internal' })
+    // direction list keeps internal visible, so it can be switched back on
+    expect(s.axes.direction).toMatchObject({ internal: 10, out: 60, in: 30 })
+    // channel list drops the excluded direction's channel
+    expect(s.axes.channel).toEqual({ mail: 60, crm: 30 })
+  })
+
+  it('is an empty channel map when the window genuinely had no traffic', async () => {
+    service.init({ eventRegistry: registry([], 0), logger: console })
+    const s = await service.summary({ window: '30m' })
+    expect(s.axes.channel).toEqual({})
+    expect(s.axes.direction).toMatchObject({ in: 0, out: 0, internal: 0 })
+  })
+})
