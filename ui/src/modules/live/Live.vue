@@ -573,7 +573,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               </p>
             </div>
 
-            <div class="b-actions">
+            <div class="save-bar">
               <Button label="Clear filters" text severity="secondary" size="small"
                 :disabled="!feedFiltered" @click="store.clearFeedFilters()" />
             </div>
@@ -662,11 +662,17 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               {{ summary.status_failing.join(', ') }} failed to report — check the server log.
             </p>
 
-            <!-- The app's right-pane action row — `.b-actions` with a PrimeVue Button,
-                 the same object as People's Discard (docs/adr/0001). DISABLED rather
-                 than hidden when there is nothing to undo: that's the ADR's rule, and
-                 a control that vanishes is one you have to rediscover. -->
-            <div class="b-actions">
+            <!-- The app's right-pane action row with a PrimeVue Button, the same
+                 object as People's Discard (docs/adr/0001). DISABLED rather than
+                 hidden when there is nothing to undo: that's the ADR's rule, and a
+                 control that vanishes is one you have to rediscover.
+                 `.save-bar`, NOT `.b-actions` — rule 6's two variants. `.b-actions`
+                 draws its own border-top for a row that ends a panel; `.save-bar`
+                 draws none, for a row FOLLOWED by something that already draws one.
+                 Inside an accordion that's this case: the next panel's header carries
+                 a border-top immediately below, so a border here doubles the
+                 divider. -->
+            <div class="save-bar">
               <Button label="Reset counters" text severity="secondary" size="small"
                 :disabled="isDefaultPinned" @click="store.resetPinned()" />
             </div>

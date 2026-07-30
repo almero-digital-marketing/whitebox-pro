@@ -38,31 +38,38 @@
   border: none; border-radius: 0; }
 .lv-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
 .lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
-.lv-accordion .p-accordioncontent-content { padding: 14px 18px; background: var(--panel); border: none; }
+.lv-accordion .p-accordioncontent-content { padding: 16px 18px; background: var(--panel); border: none; }
+/* The rule this was MISSING, and every other module has: without it the content box
+   sits at its natural height instead of filling the open panel, so the panel's own
+   background and its bottom edge stop short of where the section ends — which is
+   why this accordion looked unlike the others despite being the same component.
+   `flex: 1 0 auto` is PEOPLE's variant, and the choice is not arbitrary: there are
+   two scroll models in this app. Audiences and Campaigns scroll the CONTENT
+   (`flex: 1 1 auto; min-height: 0; overflow: auto`); People scrolls the WRAPPER,
+   which is the model copied above — so the content must grow and not shrink, or the
+   wrapper has nothing to scroll. Taking Audiences' line instead would give two
+   nested scrollers. */
+.lv-accordion .p-accordionpanel-active .p-accordioncontent-content { flex: 1 0 auto; }
 
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
    Margin, not padding: this sits inside the accordion content, which already brings
-   its own 14px/18px. 12px below it, the same gap the form rhythm puts between
+   its own 16px/18px. 12px below it, the same gap the form rhythm puts between
    fields, so the hint is spaced like the thing it introduces. */
 .lv-side-hint { margin: 0 0 12px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* The right-pane action row, values copied verbatim from People's
-   `.ppl-console .b-actions` (docs/adr/0001-editor-save-discard-pattern.md rule 7):
-   last thing in the panel, so it supplies its own divider.
-   PADDING AND HEIGHT IN FULL, not just the sides we care about — the same trap
-   People's copy documents. Journeys' panels/panel.css defines a GLOBAL `.b-actions`
-   for its centre bar (`height: 52px; padding: 0 16px`); declaring only `padding-top`
-   here let that shorthand keep supplying 16px left/right, which inset the button
-   from the pane edge while every row above it sat flush.
-   `justify-content: flex-end`, which People does NOT declare but does achieve: its
-   bar always contains `.save-note` as the one flexible element, so the buttons end
-   up at the right. This bar has no note, and left-aligned a `text` button's own
-   horizontal padding inset its LABEL ~24px from rows that sit flush — reading as
-   misalignment. Copying the effect rather than the declaration is what matches. */
-.lv-side .b-actions { display: flex; align-items: center; justify-content: flex-end;
-  gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0;
-  border-top: 1px solid var(--border); }
-.lv-side .b-actions > .p-button { flex-shrink: 0; }
+/* The right-pane action row. `.save-bar`, not `.b-actions` — docs/adr/0001 rule 6
+   has two variants and this is the second: `.b-actions` supplies its own border-top
+   for a row that ENDS a panel, `.save-bar` supplies none for a row FOLLOWED by
+   something that already draws one. In an accordion the next panel's header carries a
+   border-top directly beneath this row, so drawing one here doubles the divider —
+   the same reason People uses `.save-bar` above its `.sub-title`.
+   `justify-content: flex-end`, which People does not declare but does achieve: its
+   bar always contains `.save-note` as the one flexible element, so the buttons end up
+   at the right. This bar has no note, and left-aligned a `text` button's own
+   horizontal padding inset its LABEL ~24px from rows that sit flush. */
+.lv-side .save-bar { display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; margin-top: 16px; }
+.lv-side .save-bar > .p-button { flex-shrink: 0; }
 
 
 /* A group inside a pane section: one plugin's counters, or one filter axis.
