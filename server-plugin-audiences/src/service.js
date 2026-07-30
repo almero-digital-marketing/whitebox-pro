@@ -324,6 +324,72 @@ export async function setDelivery(id, { network, enabled }) {
   return audFromRow(row)
 }
 
+// Self-describing health, for any monitoring surface (see
+// docs/10-plugin-status.md). The board holds no audiences knowledge: this names
+// its own numbers and says which one is bad news.
+//
+// `since` is destructured and DELIBERATELY IGNORED — kept in the signature so
+// this reads as the same contract every other status() implements, and so that
+// ignoring the window is visibly a decision rather than an omission. The
+// contract's windowing note is the reason: every number here is CURRENT STATE.
+// An audience is a standing rule, not an event — it has no history table, and
+// this plugin records no per-send delivery log to window (migration 011 dropped
+// the one that existed). Reporting these as windowed counts would claim a
+// `since` they were never measured against.
+//
+// The metric that justifies the card is `not delivering`: an audience with a
+// network switched on whose delivery is stamped dry_run, i.e. no eligible
+// adapter is wired, so it looks activated and reaches nobody. That is a silent
+// failure — nothing logs it, nothing retries it, and the UI shows delivery as on.
+//
+// Never throws: the two reads are independent, so one failing DB call costs only
+// its own metrics and says so in the note. A failed read reports nothing rather
+// than zeros — zero means "there are none", which is a different claim.
+export async function status({ since } = {}) {
+  const [counts, byNetwork] = await Promise.all([
+    store.healthCounts()
+      .catch(err => { logger?.warn?.({ err }, 'audiences: status counts failed'); return null }),
+    store.deliveryByNetwork()
+      .catch(err => { logger?.warn?.({ err }, 'audiences: status delivery counts failed'); return null }),
+  ])
+
+  const metrics = []
+  if (counts) {
+    metrics.push({ key: 'audiences', value: counts.audiences })
+    metrics.push({ key: 'segments', value: counts.segments })
+  }
+  let live = 0, dark = 0
+  if (byNetwork) {
+    for (const n of byNetwork) { live += n.enabled - n.dry_run; dark += n.dry_run }
+    metrics.push({ key: 'delivering', value: live })
+    // Switched on, reaching nobody. Non-zero here means someone activated an
+    // audience and the ad network never heard about it.
+    metrics.push({ key: 'not delivering', value: dark, severity: 'bad' })
+  }
+
+  return {
+    label: 'audiences',
+    metrics,
+    // One gauge per network that any audience is activated for: how many of them
+    // actually reach it. The ratio is the point — "meta 1 of 5" is the whole
+    // story where either number alone is meaningless. `exhausted` is this
+    // plugin's own judgement, as the contract asks, and here it means "every
+    // audience aimed at this network is a no-op", which is the state worth
+    // acting on rather than any particular count.
+    gauges: (byNetwork || []).map(n => ({
+      label: n.network,
+      used: n.enabled - n.dry_run,
+      total: n.enabled,
+      exhausted: n.enabled > 0 && n.dry_run === n.enabled,
+    })),
+    note: !counts || !byNetwork
+      ? 'some audience counts could not be read — see the server log'
+      : dark
+        ? `${dark} activated audience${dark === 1 ? '' : 's'} ${dark === 1 ? 'has' : 'have'} no eligible ad-network adapter — delivery reads as on and nothing is sent`
+        : null,
+  }
+}
+
 // Resolve a saved segment to its LIVE cohort (ids). Dynamic — recomputed every call.
 export async function resolveSegment(id, { limit = 5000 } = {}) {
   const seg = await getSegment(id)

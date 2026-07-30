@@ -19,11 +19,13 @@
 let facts
 let logger
 let notify
+let db      // core's knex — only for reading back what we wrote (see stats())
 
 export function init(deps) {
   facts = deps.facts
   logger = deps.logger
   notify = deps.notify
+  db = deps.db
 }
 
 const isScalar = v => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
@@ -64,4 +66,36 @@ export async function record({ source, kind, external_id, passport_id, status, s
 // the source of truth; this is just the per-passport read CRM exposes.)
 export async function current(passportId) {
   return facts.current(passportId)
+}
+
+// How much structured state landed through this adapter inside the window — the
+// read side of record(), for the health card in ingest.js.
+//
+// Windowed on `recorded_at` (when we learned it), not `observed_at`: a record
+// carries its own `starts_at`, so importing last year's subscriptions writes facts
+// whose observed_at is a year old while the ingest happened a minute ago — and
+// "is CRM ingest working" is a question about the latter.
+//
+// `records` counts DISTINCT entities, `facts` counts rows: one record fans out
+// into one fact per status + scalar field (see record() above), so rows alone
+// would make a two-field record look like twice the traffic. Restating the same
+// entity twice in one window counts once — that's one thing we know about, said
+// twice, which is exactly what the entity key means.
+//
+// ATTRIBUTION: core facts is deliberately channel-agnostic — it has a `source`
+// (the external system: 'stripe', 'hubspot') but no `plugin` column, so unlike
+// awareness nothing in the row says "crm wrote this". What is distinctive is
+// `entity`: this adapter always sets it (`kind:external_id`) and no other writer
+// in the suite does — people, journeys and geolocation all leave it null. So
+// entity-tagged rows are a proxy, not a guarantee, and it can only ever
+// over-count (if some other source starts tagging entities). Hence the metric is
+// named for what it counts rather than claimed as exact.
+export async function stats({ since } = {}) {
+  const q = db('whitebox_facts').whereNotNull('entity')
+  if (since) q.where('recorded_at', '>=', since instanceof Date ? since : new Date(since))
+  const [row] = await q.select(
+    db.raw(`count(*)::int                 AS facts`),
+    db.raw(`count(DISTINCT entity)::int   AS records`),
+  )
+  return row
 }

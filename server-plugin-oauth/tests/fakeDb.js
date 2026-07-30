@@ -1,6 +1,6 @@
 // A minimal in-memory stand-in for the exact slice of knex's query builder
-// this package actually calls (insert/where/andWhere/select/orderBy/first/
-// update/del/returning/onConflict().ignore(), plus the
+// this package actually calls (insert/where/andWhere/whereNotNull/select/
+// orderBy/first/update/del/returning/onConflict().ignore(), plus the
 // clone/clearSelect/clearOrder/count/limit/offset that pagedList() drives)
 // — enough to exercise the real
 // store.js/users.js/keys.js logic without a live Postgres. Not a general
@@ -28,7 +28,8 @@ export function makeFakeDb() {
       const likes = (r) => !state.orTerms.length || state.orTerms.some(([col, , val]) =>
         String(r[col] ?? '').toLowerCase().includes(String(val).replace(/%/g, '').toLowerCase()))
       const applyFilters = () => rows(name).filter(r =>
-        matches(r, state.cond) && state.extra.every(([col, op, val]) => OPS[op](r[col], val)) && likes(r))
+        matches(r, state.cond) && state.extra.every(([col, op, val]) => OPS[op](r[col], val))
+        && state.notNull.every(col => (r[col] ?? null) !== null) && likes(r))
       const project = (list) => state.cols
         ? list.map(r => Object.fromEntries(state.cols.map(c => [c, r[c]])))
         : list.map(r => ({ ...r }))
@@ -59,7 +60,10 @@ export function makeFakeDb() {
 
       return {
         select(cols) { return makeQuery({ ...state, cols }) },
-        where(cond) {
+        where(cond, op, val) {
+          // The 3-arg operator form (status()'s `where('created_at', '>=', d)`)
+          // is the same thing as andWhere below — knex treats them as aliases.
+          if (op !== undefined) return makeQuery({ ...state, extra: [...state.extra, [cond, op, val]] })
           // pagedList() passes a CALLBACK to group its ORed ilike terms. Only
           // that shape is supported, and only orWhere inside it — enough to
           // exercise the real searchUsers(), not a general WHERE compiler.
@@ -71,6 +75,7 @@ export function makeFakeDb() {
           return makeQuery({ ...state, cond: { ...state.cond, ...cond } })
         },
         andWhere(col, op, val) { return makeQuery({ ...state, extra: [...state.extra, [col, op, val]] }) },
+        whereNotNull(col) { return makeQuery({ ...state, notNull: [...state.notNull, col] }) },
         orderBy(col, dir = 'asc') { return makeQuery({ ...state, order: [...state.order, [col, dir]] }) },
         // pagedList() reaches for modify() to add its tiebreaker conditionally.
         // Real knex hands the callback a MUTABLE builder; this fake is
@@ -147,7 +152,7 @@ export function makeFakeDb() {
       return chain
     }
 
-    return { insert, ...makeQuery({ cond: {}, extra: [], orTerms: [], cols: null, order: [], limit: null, offset: 0 }) }
+    return { insert, ...makeQuery({ cond: {}, extra: [], notNull: [], orTerms: [], cols: null, order: [], limit: null, offset: 0 }) }
   }
 
   const db = (name) => table(name)

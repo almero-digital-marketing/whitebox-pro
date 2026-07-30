@@ -194,6 +194,64 @@ export async function getResults(journeyId) {
   }
 }
 
+// A 'waiting' enrollment is only reported as stuck once it's this far past its
+// own next_action_at. The delayed job fires within seconds of the deadline in
+// normal operation; the margin is what keeps ordinary queue lag (or a worker
+// restart) out of a metric that is supposed to mean "nobody is coming for
+// these". Same order of magnitude as mail's markStuck threshold.
+const STUCK_GRACE_MS = 10 * 60 * 1000
+
+// Self-describing health, for any monitoring surface (see
+// docs/10-plugin-status.md). The board holds no journeys knowledge: this names
+// its own numbers and says which ones are bad news.
+//
+// Both shapes of number are here on purpose. `active journeys` and `enrolled`
+// are CURRENT STATE and ignore `since` (there is no other source for "who is
+// mid-journey right now"); `started`/`completed`/`failed` are windowed on their
+// own timestamps. The store comments say which is which.
+//
+// Never throws: the two reads are independent, so one failing DB call costs its
+// own metrics and says so in the note rather than taking the whole board down —
+// and the metrics it can still answer are reported instead of being replaced by
+// zeros, which would read as healthy.
+export async function status({ since } = {}) {
+  const from = since instanceof Date ? since : since ? new Date(since) : new Date(0)
+  const [live, activity] = await Promise.all([
+    store.liveCounts(new Date(Date.now() - STUCK_GRACE_MS))
+      .catch(err => { logger?.warn?.({ err }, 'journeys: status live counts failed'); return null }),
+    store.activityCounts(from)
+      .catch(err => { logger?.warn?.({ err }, 'journeys: status activity counts failed'); return null }),
+  ])
+
+  const metrics = []
+  if (live) {
+    metrics.push({ key: 'active journeys', value: live.active_journeys })
+    metrics.push({ key: 'enrolled', value: live.enrolled })
+  }
+  if (activity) {
+    metrics.push({ key: 'started', value: activity.started })
+    metrics.push({ key: 'completed', value: activity.completed })
+    // An enrollment that failed is abandoned, not retried — the person stops
+    // partway through a journey somebody built for them.
+    metrics.push({ key: 'failed', value: activity.failed, severity: 'bad' })
+  }
+  // Same severity, different failure: nothing marked these, they simply never
+  // woke up. Reported last because it's the one an operator has to go and fix.
+  if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad' })
+
+  return {
+    label: 'journeys',
+    metrics,
+    // No gauges: nothing in journeys is a bounded resource. Enrollments have no
+    // ceiling to hit, so a ratio would invent a limit that doesn't exist.
+    note: !live || !activity
+      ? 'some journey counts could not be read — see the server log'
+      : live.stuck
+        ? `${live.stuck} enrollment${live.stuck === 1 ? '' : 's'} past ${live.stuck === 1 ? 'its' : 'their'} wake-up time — the step queue never resumed ${live.stuck === 1 ? 'it' : 'them'}`
+        : null,
+  }
+}
+
 export async function getEnrollment(id) {
   const row = await store.getEnrollment(id)
   if (!row) return null

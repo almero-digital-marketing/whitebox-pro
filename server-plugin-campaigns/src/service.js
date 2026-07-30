@@ -259,6 +259,55 @@ export async function getResults(id) {
   }
 }
 
+// Self-describing health, for any monitoring surface (see
+// docs/10-plugin-status.md). The board holds no campaigns knowledge: this names
+// its own numbers and says which one is bad news.
+//
+// `sent` and `dry run` are windowed on sent_at; the state counts are not
+// windowed and can't be — see store.healthCounts for which is which and why.
+//
+// A dry-run send is deliberately NOT marked bad. dryRun defaults ON, so on a
+// deployment that hasn't gone live every send is a dry run: flagging it would
+// paint the whole card red for a system behaving exactly as configured. The note
+// says so instead, which is the part an operator actually needs to know.
+//
+// `whitebox_campaign_sends` is not read here. insertSend() has never been
+// called by any path (see getResults, which reads an always-empty table), so
+// counting run rows would report a hard zero as if it were news.
+//
+// Never throws: a failed read reports no metrics and says so, rather than
+// zeros — zero means "nothing happened", which is a different claim.
+export async function status({ since } = {}) {
+  const from = since instanceof Date ? since : since ? new Date(since) : new Date(0)
+  let c
+  try {
+    c = await store.healthCounts(from)
+  } catch (err) {
+    logger?.warn?.({ err }, 'campaigns: status counts failed')
+    return { label: 'campaigns', metrics: [], note: 'campaign counts could not be read — see the server log' }
+  }
+
+  return {
+    label: 'campaigns',
+    metrics: [
+      { key: 'sent', value: c.sent },
+      { key: 'dry run', value: c.dry_run },
+      { key: 'scheduled', value: c.scheduled },
+      { key: 'drafts', value: c.draft },
+      // Committed to a send time that has passed, and still sitting there —
+      // there is no worker that will pick it up.
+      { key: 'overdue', value: c.overdue, severity: 'bad' },
+    ],
+    // No gauges: a campaign isn't a bounded resource, so there's no ceiling for
+    // a ratio to be measured against.
+    note: c.overdue
+      ? `${c.overdue} campaign${c.overdue === 1 ? '' : 's'} past ${c.overdue === 1 ? 'its' : 'their'} send time and still scheduled — nothing will deliver ${c.overdue === 1 ? 'it' : 'them'}`
+      : dryRun
+        ? 'delivery is dry-run — a send records the reach it would have had without leaving the building'
+        : null,
+  }
+}
+
 // link the Analytics report built from this campaign (allowed post-send)
 export async function setReport(id, reportId) {
   await getOr404(id)

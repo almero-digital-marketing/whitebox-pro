@@ -262,6 +262,48 @@ describe('summary() status — collected from whoever can describe themselves', 
     expect(s.status[1].note).toBe('1 visitor waiting for a number')
   })
 
+  // A plugin that THREW is broken; one with no status() is merely unmonitored.
+  // Both are absent from `status`, and collapsing them would either hide a break
+  // or cry wolf over an inventory gap.
+  it('separates a plugin that failed from one that never reports', async () => {
+    service.init({
+      eventRegistry: registry([], 0),
+      plugins: {
+        mail: plugin('mail', [{ key: 'sent', value: 1 }]),
+        crm: { service: { status: async () => { throw new Error('db down') } } },
+        analytics: { service: {} },                 // registered, nothing to say
+        live: { service: {} },                      // an observer — never listed
+        'console-events': { service: {} },          // ditto
+      },
+      logger: console,
+    })
+
+    const s = await service.summary({})
+    expect(s.status.map(p => p.module)).toEqual(['mail'])
+    expect(s.status_failing).toEqual(['crm'])
+    // analytics is named; the two observers are not
+    expect(s.status_silent).toEqual(['analytics'])
+  })
+
+  // The blind spot this closes: core populates ctx.plugins only `if (api)`, so a
+  // plugin returning nothing from register() is absent from it — and was
+  // therefore missing from BOTH lists, which is exactly what the silent list is
+  // supposed to prevent. The registered NAMES are the only complete source.
+  it('names a registered plugin that returned no service at all', async () => {
+    service.init({
+      eventRegistry: registry([], 0),
+      // `geolocation` registered but returned nothing, so it never reaches ctx.plugins
+      plugins: { mail: plugin('mail', [{ key: 'sent', value: 1 }]) },
+      pluginNames: ['mail', 'geolocation', 'analytics', 'live'],
+      logger: console,
+    })
+
+    const s = await service.summary({})
+    expect(s.status.map(p => p.module)).toEqual(['mail'])
+    // both are named despite never appearing in ctx.plugins; `live` is an observer
+    expect(s.status_silent).toEqual(['geolocation', 'analytics'])
+  })
+
   it('needs no per-plugin knowledge — an unknown plugin renders like any other', async () => {
     // The point of the contract: a channel this file has never heard of works.
     service.init({

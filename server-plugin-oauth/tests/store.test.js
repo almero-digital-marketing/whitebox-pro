@@ -204,3 +204,65 @@ describe('store — searchUsers (the paged rail read)', () => {
     expect(after.rows[0].active).toBe(true)
   })
 })
+
+describe('store — status (self-describing health)', () => {
+  const HOUR = 60 * 60 * 1000
+  const since = new Date(Date.now() - 24 * HOUR)
+
+  // recordLogin() leaves created_at to the DB default, which the fake db can't
+  // supply — seed the column explicitly, since the window IS what's under test.
+  const seedLogin = (createdAt) =>
+    db._rows('whitebox_oauth_logins').push({ id: `l-${Math.random()}`, user_id: 'u1', client_id: 'c1', created_at: createdAt })
+
+  it('windows logins by created_at', async () => {
+    seedLogin(new Date(Date.now() - HOUR))
+    seedLogin(new Date(Date.now() - 2 * HOUR))
+    seedLogin(new Date(Date.now() - 40 * 24 * HOUR))   // before the window
+    const s = await store.status({ since })
+    expect(s.label).toBe('oauth')
+    expect(s.metrics.find(m => m.key === 'logins')).toEqual({ key: 'logins', value: 2 })
+  })
+
+  it('counts a live invite as pending and never flags it', async () => {
+    await store.createInvite({ email: 'pending@example.com' })
+    const s = await store.status({ since })
+    expect(s.metrics.find(m => m.key === 'invites pending')).toEqual({ key: 'invites pending', value: 1 })
+    expect(s.metrics.find(m => m.key === 'invites expired').value).toBe(0)
+    expect(s.note).toBeNull()
+  })
+
+  // the one thing here that is actually broken: they can't accept any more
+  // (users.completeInvite requires invite_expires_at > now), and can't fix it
+  it('flags a lapsed invite as bad, with an actionable note', async () => {
+    const stale = await store.createInvite({ email: 'stale@example.com' })
+    await store.createInvite({ email: 'fresh@example.com' })
+    await db('whitebox_oauth_users').where({ id: stale.id }).update({ invite_expires_at: new Date(Date.now() - HOUR) })
+
+    const s = await store.status({ since })
+    expect(s.metrics.find(m => m.key === 'invites expired')).toEqual({ key: 'invites expired', value: 1, severity: 'bad' })
+    expect(s.metrics.find(m => m.key === 'invites pending').value).toBe(1)   // the expired one isn't double-counted
+    expect(s.note).toMatch(/1 invite expired/)
+  })
+
+  it('ignores users who already accepted — an active account is not an outstanding invite', async () => {
+    const invited = await store.createInvite({ email: 'done@example.com' })
+    await db('whitebox_oauth_users').where({ id: invited.id })
+      .update({ password_hash: 'hashed', invite_token: null, invite_expires_at: null })
+    const s = await store.status({ since })
+    expect(s.metrics.find(m => m.key === 'invites pending').value).toBe(0)
+    expect(s.metrics.find(m => m.key === 'invites expired').value).toBe(0)
+  })
+
+  // logins are activity, not health — a busy day must not read as a problem
+  it('marks only expired invites as bad', async () => {
+    seedLogin(new Date())
+    const s = await store.status({ since })
+    expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['invites expired'])
+  })
+
+  it('never throws — a dead db returns a partial answer instead of taking the board down', async () => {
+    store.init({ db: () => { throw new Error('connection terminated') } })
+    const s = await store.status({ since })
+    expect(s).toEqual({ label: 'oauth', metrics: [], note: 'oauth state could not be read' })
+  })
+})

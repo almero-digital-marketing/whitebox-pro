@@ -46,7 +46,11 @@ export function live(options = {}) {
       // service discover whoever implements status() at request time — that's
       // what makes a new channel appear here without this file changing, and why
       // live no longer has to register after the plugins it reports on.
-      service.init({ eventRegistry, plugins: ctx.plugins, logger })
+      // Plugin NAMES come from the config, which is the only complete list:
+      // ctx.plugins holds just those that returned a service, so a plugin that
+      // returns nothing would otherwise be invisible even as "not monitored".
+      const pluginNames = (ctx.config?.plugins || []).map(p => p?.name).filter(Boolean)
+      service.init({ eventRegistry, plugins: ctx.plugins, pluginNames, logger })
       rest.register(app, { service, requireRead: auth.middleware })
 
       // The live half is optional in the sense that it degrades: without a

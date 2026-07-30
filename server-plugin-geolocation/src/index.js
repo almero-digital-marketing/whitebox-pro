@@ -13,11 +13,13 @@
 // ({ filter: { fact: { geo_city: { eq: "Sofia" } } } }) and gets asOf/history
 // for free, no new table.
 //
-// Factory: geolocation({ provider: maxmind({ … }), recordFacts? }).
+// Factory: geolocation({ provider: maxmind({ … }), recordFacts?, staleAfterDays? }).
 // `provider` is a composed geolocation-provider descriptor (e.g.
 // whitebox-geolocation-maxmind) implementing the neutral contract:
 //   { name, lookup(ip) → { country, region, city, lat, lon } | null }
 // The plugin stays provider-agnostic — swap providers without touching this file.
+
+import * as health from './health.js'
 
 const FACT_KEYS = {
   country: 'geo_country',
@@ -63,9 +65,16 @@ export function geolocation(options = {}) {
         for (const [key, humanLabel] of Object.entries(FACT_LABELS)) facts.describe(key, humanLabel)
       }
 
+      // Before the early return below: with no hook there are no lookups to count,
+      // but the provider's database age is still worth reporting — a plugin that
+      // reports nothing is ABSENT from the monitoring surface, which reads as
+      // "nobody is watching this" (docs/10-plugin-status.md).
+      health.init({ provider, logger, staleAfterDays: config.staleAfterDays })
+      const service = { status: health.status }
+
       if (!sessions?.onResolve) {
         logger.warn('geolocation: core sessions.onResolve is unavailable — plugin has nothing to hook into')
-        return
+        return { service }
       }
 
       sessions.onResolve(async ({ passportId, req }) => {
@@ -75,14 +84,22 @@ export function geolocation(options = {}) {
         const ip = req?.ip
         if (!ip) return null
 
+        // Counted here rather than inside the provider: this hook is the only
+        // place that sees every outcome, and counting it here keeps the tally
+        // provider-agnostic (see health.js).
         let geo
         try {
           geo = await provider.lookup(ip)
         } catch (err) {
+          health.recordError()
           logger.warn({ err, ip }, 'geolocation: provider lookup failed')
           return null
         }
-        if (!geo) return null
+        if (!geo) {
+          health.recordMiss()
+          return null
+        }
+        health.recordHit()
 
         if (recordFacts && passportId) {
           const observed_at = new Date()
@@ -98,6 +115,11 @@ export function geolocation(options = {}) {
       })
 
       logger.info('Geolocation plugin ready (provider: %s)', provider.name || 'unknown')
+      // This plugin used to return nothing, which kept it out of ctx.plugins
+      // entirely (core only records a plugin's api if register() returns one) —
+      // so it was invisible to the monitoring board. It exposes exactly one
+      // thing: its own health.
+      return { service }
     },
   }
 }

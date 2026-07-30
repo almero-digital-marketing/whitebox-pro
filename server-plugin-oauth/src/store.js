@@ -110,6 +110,66 @@ export async function listLogins(userId, { limit = 20 } = {}) {
   }))
 }
 
+// ── health ───────────────────────────────────────────────────────────────
+//
+// Self-describing health for monitoring surfaces (see docs/10-plugin-status.md).
+//
+// Deliberately NOT a user count: how many teammates exist is inventory, and a
+// login count on its own says nothing is wrong — people signing in is the
+// system working. The thing that can actually be WRONG here is somebody who
+// should be able to get in and can't:
+//
+//   pending  — invited, invite still live, hasn't set a password yet. Normal for
+//              a day or two, so it's context and never flagged.
+//   expired  — invited, the 7-day token lapsed, still no password. That person
+//              is locked out and cannot fix it themselves: completeInvite()
+//              requires invite_expires_at > now (see users.js), so an admin has
+//              to resend (POST /users/:id/resend-invite). Non-zero means someone
+//              is stuck right now — the one bad metric.
+//
+// FAILED logins are deliberately absent. whitebox_oauth_logins holds one row per
+// SUCCESSFUL authorization-code redemption and nothing else (migration 005) — a
+// wrong password redirects with access_denied and writes no row anywhere, and a
+// replayed code/refresh token only returns invalid_grant. There is no failure
+// count in this schema to report, and deriving one from the successes would be
+// a fabrication.
+export async function status({ since } = {}) {
+  try {
+    // Real logins are history — windowed on created_at.
+    let loginsQ = db('whitebox_oauth_logins')
+    if (since) loginsQ = loginsQ.where('created_at', '>=', since instanceof Date ? since : new Date(since))
+    const [logins] = await loginsQ.count()
+
+    // Invites are CURRENT STATE, not events: "who is locked out right now" has
+    // no window, and password_hash IS NULL is itself the pending state
+    // (migration 002) rather than something with a timestamp. Fetched as rows
+    // and split in JS instead of two more counts — outstanding invites are
+    // team-sized, never a scan worth splitting into extra round trips.
+    const outstanding = await db('whitebox_oauth_users')
+      .select(['invite_expires_at'])
+      .where({ password_hash: null })
+      .whereNotNull('invite_token')
+    const now = Date.now()
+    const expired = outstanding.filter(r => r.invite_expires_at && new Date(r.invite_expires_at).getTime() < now).length
+
+    return {
+      label: 'oauth',
+      metrics: [
+        { key: 'logins', value: Number(logins?.count ?? 0) },
+        { key: 'invites pending', value: outstanding.length - expired },
+        { key: 'invites expired', value: expired, severity: 'bad' },
+      ],
+      note: expired
+        ? `${expired} invite${expired === 1 ? '' : 's'} expired — those teammates can't set a password until someone resends`
+        : null,
+    }
+  } catch {
+    // A broken status() must not take the monitoring board down — a partial
+    // answer beats throwing (docs/10-plugin-status.md).
+    return { label: 'oauth', metrics: [], note: 'oauth state could not be read' }
+  }
+}
+
 // ── users (invite-only registration + per-module permission grants) ──────
 //
 // `permissions` is a flat array of catalog keys (e.g. ["analytics:use"]),

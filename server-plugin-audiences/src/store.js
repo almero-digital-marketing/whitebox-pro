@@ -98,6 +98,50 @@ export const suppress = (passportId, reason) =>
 export const unsuppress = passportId => db(SUPPRESSION).where({ passport_id: passportId }).del()
 export const listSuppression = () => db(SUPPRESSION).orderBy('created_at', 'desc')
 
+// --- health (see ../../docs/10-plugin-status.md) ---
+// How much of the audience layer exists. CURRENT STATE, so no `since`: "how
+// many audiences are there" is not an event that happened at a time, and these
+// tables hold no history to window against — a segment row carries created_at
+// but the number that matters is the one that's there now.
+export const healthCounts = async () => {
+  const [seg] = await db(SEGMENTS).select(db.raw(`count(*)::int AS segments`))
+  const [aud] = await db(AUDIENCES).select(db.raw(`count(*)::int AS audiences`))
+  return { ...seg, ...aud }
+}
+
+// Per-network delivery state, read out of each audience's `delivery` jsonb.
+//
+// That column is the ONLY record of it. Migration 011 dropped
+// whitebox_audience_deliveries along with the standalone rule system it belonged
+// to, so there is no per-event delivery audit trail left to count accepts and
+// rejects from — nothing writes one.
+//
+// What the column does record is the thing that goes wrong silently.
+// service.setDelivery() stamps `dry_run: true` when no ELIGIBLE adapter is wired
+// for the network it was just switched on for: delivery reads as enabled in the
+// UI, and nothing ever reaches the platform. Nobody is told. That's what this
+// counts.
+//
+// jsonb_each() raises on a non-object, so the column is normalised to '{}'
+// inside the lateral rather than filtered in WHERE — a WHERE clause is evaluated
+// after the lateral, which would be too late to stop the error, and status()
+// must not throw.
+export const deliveryByNetwork = async () => {
+  const { rows } = await db.raw(`
+    SELECT d.key                                                     AS network,
+           count(*)::int                                             AS enabled,
+           count(*) FILTER (WHERE d.value->>'dry_run' = 'true')::int AS dry_run
+    FROM ${AUDIENCES} a
+    CROSS JOIN LATERAL jsonb_each(
+      CASE WHEN jsonb_typeof(a.delivery) = 'object' THEN a.delivery ELSE '{}'::jsonb END
+    ) AS d(key, value)
+    WHERE d.value->>'enabled' = 'true'
+    GROUP BY d.key
+    ORDER BY d.key
+  `)
+  return (rows || []).map(r => ({ network: r.network, enabled: Number(r.enabled), dry_run: Number(r.dry_run) }))
+}
+
 // --- browser-collected ad signals (fbp, gclid, ttclid, …) ---
 // Stored one row per signal, but handed to callers as a flat { name: value }
 // object — that's the shape identity.resolve() passes to the ad adapters, and

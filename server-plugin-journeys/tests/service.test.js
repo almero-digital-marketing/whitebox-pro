@@ -180,6 +180,85 @@ describe('service.getStepCounts', () => {
   })
 })
 
+// docs/10-plugin-status.md — the plugin describes its own health; the board
+// holds no journeys knowledge and must not be able to be taken down by it.
+describe('service.status', () => {
+  const LIVE = { active_journeys: 2, enrolled: 9, stuck: 0 }
+  const ACTIVITY = { started: 5, completed: 3, failed: 0 }
+
+  function setup({ live = LIVE, activity = ACTIVITY } = {}) {
+    const store = makeStore({
+      liveCounts: vi.fn(async () => { if (live instanceof Error) throw live; return live }),
+      activityCounts: vi.fn(async () => { if (activity instanceof Error) throw activity; return activity }),
+    })
+    service.init({ store, lock: makeLock(), logger: { warn: vi.fn(), error: vi.fn() }, notifyLifecycle: vi.fn(), onTriggerChange: vi.fn() })
+    return store
+  }
+  const at = (s, key) => s.metrics.find(m => m.key === key)
+
+  it('reports live journey/enrollment state alongside the windowed flow', async () => {
+    setup()
+    const s = await service.status({ since: new Date('2026-07-30T00:00:00.000Z') })
+    expect(s.label).toBe('journeys')
+    expect(s.metrics.map(m => m.key)).toEqual(['active journeys', 'enrolled', 'started', 'completed', 'failed', 'stuck'])
+    expect(at(s, 'active journeys').value).toBe(2)
+    expect(at(s, 'enrolled').value).toBe(9)
+    expect(at(s, 'completed').value).toBe(3)
+  })
+
+  // Only the two that mean a person is stranded mid-journey. `enrolled` is
+  // large-and-fine; a count being big is not a fault.
+  it('marks only failed and stuck as bad', async () => {
+    setup({ live: { ...LIVE, stuck: 4 }, activity: { ...ACTIVITY, failed: 2 } })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['failed', 'stuck'])
+    expect(at(s, 'enrolled').severity).toBeUndefined()
+  })
+
+  it('windows the activity read on `since`, but asks for live state with a grace cutoff in the past', async () => {
+    const since = new Date('2026-07-30T00:00:00.000Z')
+    const store = setup()
+    await service.status({ since })
+    expect(store.activityCounts).toHaveBeenCalledWith(since)
+    // not now(), and not `since` either — the grace margin is what keeps normal
+    // queue lag out of `stuck`
+    const [cutoff] = store.liveCounts.mock.calls[0]
+    expect(cutoff).toBeInstanceOf(Date)
+    expect(cutoff.getTime()).toBeLessThan(Date.now())
+    expect(Date.now() - cutoff.getTime()).toBeGreaterThanOrEqual(10 * 60 * 1000)
+  })
+
+  it('still answers without a `since` — the whole history, not a crash', async () => {
+    const store = setup()
+    const s = await service.status()
+    expect(store.activityCounts).toHaveBeenCalledWith(new Date(0))
+    expect(at(s, 'started').value).toBe(5)
+  })
+
+  it('names the stranded enrollments in the note, and stays quiet when there are none', async () => {
+    setup({ live: { ...LIVE, stuck: 1 } })
+    expect((await service.status({ since: new Date() })).note).toMatch(/1 enrollment past its wake-up time/)
+    setup()
+    expect((await service.status({ since: new Date() })).note).toBeNull()
+  })
+
+  // A failing status() must not take the board down, and the metrics it CAN
+  // still answer are worth more than a uniform zero — zero reads as healthy.
+  it('survives a failing read: reports the half it got, and says the rest is missing', async () => {
+    setup({ live: new Error('db down') })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.map(m => m.key)).toEqual(['started', 'completed', 'failed'])
+    expect(s.note).toMatch(/could not be read/)
+  })
+
+  it('survives both reads failing', async () => {
+    setup({ live: new Error('db down'), activity: new Error('db down') })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics).toEqual([])
+    expect(s.note).toMatch(/could not be read/)
+  })
+})
+
 describe('service.getResults', () => {
   const GOAL = { event: ['booking.created'], window_days: 14 }
   function setup({ goal = null, counts = {}, met = 0, mail, sms } = {}) {

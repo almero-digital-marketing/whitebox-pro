@@ -47,12 +47,13 @@ function buildClaims({ source, email, phone, country, external_id }) {
 // Dependencies captured once via init() — module-level singletons. `state` (the
 // facts adapter) is imported directly above and inits itself in index.js; only
 // non-module values (passports, awareness, logger) come through init.
-let passports, awareness, logger
+let passports, awareness, logger, db
 
 export function init(deps) {
   passports = deps.passports
   awareness = deps.awareness
   logger = deps.logger
+  db = deps.db          // core's knex — only for reading our own rows back (status())
 }
 
 export async function resolvePassport(customer = {}) {
@@ -208,4 +209,75 @@ export async function ingestObservations({ passport_id, source = 'client', obser
   }
 
   return { passport_id, observations: { accepted, dropped: observations.length - accepted } }
+}
+
+const EXPOSURES = 'whitebox_awareness_exposures'
+
+// The notes side of the ingest, inside the window. Attribution here IS exact,
+// unlike the facts side (see state.stats): the plugin loader stamps `plugin` on
+// every awareness row a plugin records (server/src/plugins.js), so a row marked
+// 'crm' is unambiguously one of ours.
+//
+// Client observations are split out rather than folded in: they're low-trust
+// things the browser SDK witnessed, and counting them with the authoritative
+// webhook notes would make a CRM that has stopped pushing look busy. The split
+// keys on `meta->>'client'` — set by ingestObservations() above — rather than on
+// `source`, which is a caller-supplied label on that path.
+//
+// Windowed on `created_at`, not `ts`: a note carries the sender's own timestamp
+// (f.ts), so backfilling a year of history is recent INGEST with old event times.
+export async function noteStats({ since } = {}) {
+  const q = db(EXPOSURES).where({ plugin: 'crm' })
+  if (since) q.where('created_at', '>=', since instanceof Date ? since : new Date(since))
+  const [row] = await q.select(
+    db.raw(`count(*) FILTER (WHERE meta->>'client' IS NULL)::int      AS notes`),
+    db.raw(`count(*) FILTER (WHERE meta->>'client' IS NOT NULL)::int  AS observations`),
+  )
+  return row
+}
+
+// Self-describing health (see docs/10-plugin-status.md). CRM owns no table — its
+// records land in core facts and its notes in awareness (migration 002 retired the
+// records table) — so this reads both of those back, and it is the only status()
+// in the suite that also has to say what it CANNOT see.
+//
+// Nothing here is marked `severity: 'bad'`, and that is not an oversight: every
+// number CRM can count is a success. Its failures are a payload dropped with
+// `202 no_identity` (well-formed, no usable email/phone/external_id — a sender bug
+// that silently loses data) and a per-record facts write that threw. Both exist
+// only in the HTTP response the sender has already discarded and in the log; no
+// counter survives them. A zero would therefore read as "nothing was dropped"
+// when the truth is "nobody is counting", so the note says that instead of
+// inventing the number.
+//
+// Each query is caught on its own — a broken half degrades to a partial answer
+// rather than dropping the plugin off the board.
+export async function status({ since } = {}) {
+  const structured = await state.stats({ since }).catch(err => {
+    logger?.warn?.({ err }, 'CRM: status record counts unavailable')
+    return null
+  })
+  const notes = await noteStats({ since }).catch(err => {
+    logger?.warn?.({ err }, 'CRM: status note counts unavailable')
+    return null
+  })
+
+  const missing = [!structured && 'record counts', !notes && 'note counts'].filter(Boolean)
+  const note = [
+    missing.length ? `${missing.join(' and ')} unavailable — the numbers above are incomplete` : null,
+    'payloads dropped for no identity (202 no_identity) are counted nowhere — only the log has them',
+  ].filter(Boolean).join('; ')
+
+  return {
+    label: 'crm',
+    metrics: [
+      { key: 'records', value: structured?.records ?? 0 },
+      { key: 'state facts', value: structured?.facts ?? 0 },
+      { key: 'notes', value: notes?.notes ?? 0 },
+      // Low-trust, client-reported — kept separate so they can't flatter the
+      // authoritative counts above.
+      { key: 'observations', value: notes?.observations ?? 0 },
+    ],
+    note,
+  }
 }

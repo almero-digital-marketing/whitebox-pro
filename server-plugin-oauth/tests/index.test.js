@@ -92,3 +92,17 @@ describe('oauth().register() — admin auto-bootstrap from ADMIN_EMAIL/ADMIN_PAS
     expect(await store.hasAnyUser()).toBe(false)
   })
 })
+
+describe('oauth().register() — monitoring surface', () => {
+  it('returns store.status as service.status, so a board can discover it (docs/10-plugin-status.md)', async () => {
+    const db = makeFakeDb()
+    const logger = { child: () => logger, info: () => {}, warn: () => {}, error: () => {} }
+    const registered = await oauth({ issuer: 'http://x/oauth', audience: 'a' })
+      .register(express(), { db, logger, permissions: { catalog: [] } })
+
+    expect(registered.service.status).toBe(store.status)
+    const s = await registered.service.status({ since: new Date(0) })
+    expect(s.label).toBe('oauth')
+    expect(s.metrics.map(m => m.key)).toEqual(['logins', 'invites pending', 'invites expired'])
+  })
+})

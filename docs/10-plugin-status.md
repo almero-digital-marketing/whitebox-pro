@@ -80,4 +80,62 @@ means "nothing happened"; absent means "nobody is watching this".
 
 ## Implemented by
 
-`mail`, `sms`, `voip`. Any plugin may add it; nothing needs to be told.
+`mail`, `sms`, `voip`, `shortener`, `geolocation`, `engagement`, `oauth`,
+`conversions`, `crm`, `audiences`, `campaigns`, `journeys`. Any plugin may add
+it; nothing needs to be told.
+
+Some of those are worth reading as examples of the awkward cases:
+
+- **`shortener`** has a gap it can't close — hits on unknown/expired codes leave no
+  row anywhere — and reports that gap as a `note` rather than as a zero metric.
+- **`geolocation`** owns no tables at all. Everything it reports is live state
+  (process-lifetime counts, and the age of the MaxMind database file), so it
+  ignores `since` and says so. The database age is the case that motivated the
+  design: a stale GeoIP file keeps answering plausibly for months without ever
+  raising an error, so the plugin turns its own judgement into a
+  `stale database` metric — a 0/1 count, which is what "non-zero means something
+  is wrong" wants, since the age itself is always non-zero and always fine until
+  it isn't.
+- **`crm`** owns no table either — records land in core facts, notes in awareness —
+  and its one real failure has no counter behind it: a payload dropped with
+  `202 no_identity` exists only in the log. So it reports the counts it can
+  attribute, marks nothing `bad` (every number it can count is a success), and
+  names the blind spot in `note` instead of a zero that would read as "nothing was
+  dropped".
+- **`audiences`** has no history to window at all: an audience is a standing rule,
+  and the per-event delivery log it once had was dropped with the rule system
+  (its migration 011). So every number it reports is current state, and the one
+  that matters is read out of each audience's own `delivery` jsonb — an audience
+  activated for a network with no eligible adapter is stamped `dry_run`, which
+  means delivery reads as ON in the UI and nothing ever reaches the platform.
+  That count is the `bad` one, and the per-network `used of total` is a gauge
+  because the ratio is what an operator acts on.
+- **`campaigns`** is the case for NOT marking something bad: `dryRun` defaults on,
+  so on a deployment that hasn't gone live every send is a dry run. Flagging it
+  would paint the card red for a system doing exactly what it was configured to
+  do, so the count is reported plainly and the `note` explains the mode. What IS
+  bad is a campaign past its `scheduled_at` and still `scheduled` — nothing in
+  the plugin will ever deliver it.
+- **`journeys`** reports both kinds of number side by side (active journeys and
+  in-flight enrollments are live state; started/completed/failed are windowed on
+  their own timestamps), and distinguishes two ways a person gets stranded: an
+  enrollment marked `failed`, and one still `waiting` long past its own
+  `next_action_at` — the delayed step job never fired, and nothing else in the
+  system would ever notice.
+
+## Deliberately not implemented
+
+Adding nothing is a legitimate answer, and sometimes the only honest one. A
+metric that only counts inventory — or that can only ever read zero — dilutes the
+numbers next to it, and the `silent` list already renders "nobody is watching
+this" correctly (see server-plugin-live's `collectStatus`).
+
+- **`analytics`** is a reports/widgets composition store. How many reports exist
+  is inventory. Nothing failable is persisted: a widget whose saved query stopped
+  resolving is discovered at resolve time and returned per request, compose/
+  describe failures 502 and are logged, and there is no error column or attempt
+  counter anywhere in its schema. Re-running every saved query on each poll to
+  find the broken ones would be a job, not a status call.
+- **`people`** owns no tables. It reads core passports/identities/facts and writes
+  through them, so the only numbers available to it are core's inventory — a
+  passport count is not people's health.

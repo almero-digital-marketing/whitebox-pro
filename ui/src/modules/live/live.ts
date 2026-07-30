@@ -48,6 +48,10 @@ export interface Summary {
   // Whoever could describe themselves, in config order. A plugin that can't is
   // ABSENT — never present-with-zeros, which would read as healthy.
   status: PluginStatus[]
+  /** Registered but threw — broken, not merely unmonitored. */
+  status_failing: string[]
+  /** Registered with no status() at all — unmonitored. */
+  status_silent: string[]
 }
 
 export interface UtmRow { value: string; count: number }

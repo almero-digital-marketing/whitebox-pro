@@ -159,6 +159,46 @@ export async function linkStats(code) {
 
 export const listLinks = (opts) => store.listLinks(opts)
 
+// Self-describing health for any monitoring surface (see docs/10-plugin-status.md).
+// The question the card answers is "are the links we hand out still working" —
+// this plugin names its own numbers and says which one is bad news, so the board
+// never has to know what a claim is.
+//
+// `clicks` counts PERSONALIZED redirects only: those are the ones that insert a
+// click row. A campaign link's redirect just increments links.click_count, which
+// is a lifetime total with no timestamp of its own — it cannot be windowed by
+// `since`, so it is left out rather than mixed in and quietly mis-windowed.
+//
+// Deliberately absent: hits on UNKNOWN or expired codes. resolveRedirect returns
+// null for those and routes 404s it — no row is written anywhere, so the spike an
+// operator most wants ("dead links are circulating") is not observable from this
+// plugin's data at all. Reported as a note rather than a zero metric, because
+// zero would read as "no dead links" when it means "nobody is counting".
+export async function status({ since } = {}) {
+  try {
+    const { links, clicks } = await store.healthStats({ since })
+    return {
+      label: 'shortener',
+      metrics: [
+        { key: 'links', value: links.created },
+        { key: 'personalized', value: links.personalized },
+        { key: 'clicks', value: clicks.total },
+        { key: 'claimed', value: clicks.claimed },
+        { key: 'unclaimed', value: clicks.expired_unclaimed },
+        // Non-zero means a single-use ticket was spent and nobody got bound: that
+        // click's attribution is lost for good and the link can't be re-used to
+        // recover it. The one number here worth waking up for.
+        { key: 'unbound claims', value: clicks.unbound, severity: 'bad' },
+      ],
+      note: 'hits on unknown or expired codes are not recorded — dead links still in circulation are invisible here',
+    }
+  } catch (err) {
+    // status() must never take the board down; a partial answer beats throwing.
+    logger?.warn?.({ err }, 'shortener: status() failed')
+    return { label: 'shortener', metrics: [], note: 'link health counts are unavailable' }
+  }
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 // The standard UTM vocabulary (utm_id is GA4's campaign id). Structured input

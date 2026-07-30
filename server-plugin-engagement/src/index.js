@@ -76,6 +76,11 @@ export function engagement(options = {}) {
       registerMcp(ctx, { db, content })
 
       logger.info('Engagement plugin ready')
+
+      // A service purely so monitoring surfaces can find status() — this plugin
+      // is otherwise a write channel with nothing for other plugins to call.
+      // content.js owns the cache, so it owns the answer (see docs/10-plugin-status.md).
+      return { service: { status: content.status } }
     },
   }
 }

@@ -80,3 +80,22 @@ already has a fragment (hash router / anchor), where `#wb=` would collide.
 ## MCP
 
 `shortener.create_link`, `shortener.list_links`, `shortener.link_stats`.
+
+## Monitoring (`status()`)
+
+`service.status({ since })` reports windowed link health to any monitoring surface
+(see `docs/10-plugin-status.md`): `links` and `personalized` created, `clicks`
+(claim tokens minted), `claimed`, `unclaimed`, and `unbound claims` — the only one
+marked bad, because it means a single-use ticket was spent without binding anyone,
+so that click's attribution is lost for good.
+
+Two known gaps, stated rather than faked:
+
+- **Hits on unknown or expired codes are not recorded anywhere.** The redirect
+  route 404s them and writes no row, so "dead links are circulating" — the spike
+  an operator would most want — is not observable from this plugin's data. It is
+  reported as a note instead of a zero, because a zero would read as "no dead
+  links" when it means "nobody is counting".
+- **Campaign-link redirects are not in `clicks`.** They only increment
+  `whitebox_short_links.click_count`, a lifetime total with no timestamp, so they
+  can't be windowed by `since` and are left out rather than mis-windowed.

@@ -349,11 +349,26 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <p v-if="p.note" class="lv-fp-hint">{{ p.note }}</p>
         </div>
 
-        <!-- Absent, not zero: no plugin is reporting, which is a different claim
-             from "everything is at zero". -->
+        <!-- Absent, not zero: no plugin reporting is a different claim from
+             "everything is at zero". -->
         <p v-if="!summary?.status?.length" class="lv-empty">
           No plugin is reporting status. A plugin appears here once it exposes
           <code>status()</code>.
+        </p>
+
+        <!-- A plugin that THREW is broken, and that's urgent — distinct from one
+             that simply has no status() to call. -->
+        <p v-if="summary?.status_failing?.length" class="lv-note-bad">
+          <span class="material-symbols-outlined">error</span>
+          {{ summary.status_failing.join(', ') }} failed to report — check the server log.
+        </p>
+
+        <!-- Named on purpose. These render as absent above, which is correct, but
+             absence is easy to miss: nobody notices that a plugin has NEVER
+             reported. This is the difference between a card that shows what's
+             monitored and one that shows what isn't. -->
+        <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
+          not monitored: {{ summary.status_silent.join(', ') }}
         </p>
       </section>
 

@@ -14,6 +14,8 @@ describe('shortener plugin — register', () => {
     const ctx = { db: {}, passports: {}, awareness: { record: vi.fn() }, mcp, logger }
     const api = await shortener({ baseUrl: 'https://go.clinic.com', auth: { secret: 's' } }).register(express(), ctx)
     expect(api).toHaveProperty('service')
+    // The monitoring board discovers health at service.status (docs/10-plugin-status.md).
+    expect(typeof api.service.status).toBe('function')
     expect([...mcp.tools.keys()].sort()).toEqual([
       'shortener.create_link', 'shortener.link_stats', 'shortener.list_links',
     ])

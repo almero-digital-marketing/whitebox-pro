@@ -39,7 +39,11 @@ this package:
 ```js
 provider.name            // for logging
 provider.lookup(ip)      // → { country, region, city, lat, lon } | null
+provider.health?.()      // OPTIONAL → { dbPath, loaded, loadedAt, mtimeMs, watching }
 ```
+
+`health()` is optional and only feeds `status()` below — a provider that can't
+describe its data source (a network API, say) just omits it.
 
 ## Install
 
@@ -48,14 +52,29 @@ import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
 import { maxmind } from 'whitebox-geolocation-maxmind'
 
 geolocation({
-  provider: maxmind({ dbPath: process.env.GEOIP_DB_PATH }),
+  provider: maxmind({ dbPath: process.env.GEOIP_DB_PATH, watch: true }),
   // recordFacts: true (default) — false to skip writing facts
+  // staleAfterDays: 30 (default) — when status() starts calling the GeoIP DB stale
 })
 ```
 
 Requires `trust proxy` configured at the app level for `req.ip` to reflect
 `X-Forwarded-For` behind a reverse proxy (same requirement the shortener
 plugin's README already flags for `req.hostname`).
+
+## Monitoring (`status()`)
+
+`register()` returns `{ service: { status } }` so any monitoring surface can pick
+this plugin up (see `docs/10-plugin-status.md`). It reports `lookups`, `no data`
+(the provider had nothing for that IP — private/reserved ranges land here, so it
+is not a fault), `failed` (the provider threw — marked bad), and, when the
+provider implements `health()`, `database age (days)` plus a `stale database`
+flag.
+
+Nothing here is windowed by `since`: this plugin owns no tables, so the counts are
+process-lifetime and the database's age is live state. The age is the point —
+a stale GeoIP database keeps answering plausibly for months without ever raising
+an error, and that is precisely the failure nobody notices.
 
 ## Design notes
 

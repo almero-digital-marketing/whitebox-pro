@@ -155,6 +155,51 @@ export const goalMetCount = async (journeyId, goal) => {
   return Number(row.count)
 }
 
+// --- health (see ../../docs/10-plugin-status.md) ---
+// Two reads because there are two KINDS of number here, and conflating them
+// would misreport both.
+//
+// This one is CURRENT STATE and takes no `since`: "how many journeys are
+// switched on" and "how many people are mid-flight right now" are not events
+// that happened at a time, and the enrollment table is the only source for
+// them. Reporting them as if they were windowed would be a lie about them.
+//
+// `stuck` is the one that costs someone something. runWait() parks an
+// enrollment as 'waiting' with `next_action_at` set and a matching delayed job
+// on `journeys:steps`; when that job fires, processStep() flips it back to
+// 'active'. So a row still sitting in 'waiting' well past its own
+// `next_action_at` means the wake-up never arrived (lost job, dead worker) —
+// nothing else in this plugin will ever notice, and that person is stranded
+// mid-journey. `stuckBefore` is the caller's grace cutoff, not `now()`, so
+// ordinary queue lag isn't reported as a fault.
+export const liveCounts = async (stuckBefore) => {
+  const [j] = await db(JOURNEYS).select(
+    db.raw(`count(*) FILTER (WHERE status = 'active')::int AS active_journeys`),
+  )
+  const [e] = await db(ENROLLMENTS).select(
+    db.raw(`count(*) FILTER (WHERE status IN ('active', 'waiting'))::int AS enrolled`),
+    db.raw(`count(*) FILTER (WHERE status = 'waiting' AND next_action_at < ?)::int AS stuck`, [stuckBefore]),
+  )
+  return { ...j, ...e }
+}
+
+// The windowed half: what actually MOVED in the window. Each column is counted
+// off its own timestamp rather than off one shared `where` — an enrollment that
+// started before the window and completed inside it belongs to `completed` and
+// not to `started`, which a single windowed filter could not express.
+//
+// `failed` is executor.fail(): the enrollment hit a step node that isn't in the
+// graph, so it was abandoned rather than retried. It stamps `exited_at`, which
+// is when the failure happened and therefore what it's windowed on.
+export const activityCounts = async (since) => {
+  const [row] = await db(ENROLLMENTS).select(
+    db.raw(`count(*) FILTER (WHERE enrolled_at >= ?)::int AS started`, [since]),
+    db.raw(`count(*) FILTER (WHERE completed_at >= ?)::int AS completed`, [since]),
+    db.raw(`count(*) FILTER (WHERE status = 'failed' AND exited_at >= ?)::int AS failed`, [since]),
+  )
+  return row
+}
+
 // --- step run audit log (append-only) ---
 export async function insertStepRun(fields) {
   const [row] = await db(STEP_RUNS).insert(fields).returning('*')

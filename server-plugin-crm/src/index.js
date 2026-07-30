@@ -28,7 +28,7 @@ export function crm(options = {}) {
     },
 
     async register(app, ctx) {
-      const { connect, passports, facts, awareness, context, events, webhooks, eventRegistry, logger: rootLogger } = ctx
+      const { db, connect, passports, facts, awareness, context, events, webhooks, eventRegistry, logger: rootLogger } = ctx
       const logger = rootLogger.child({ component: 'crm' })
       const crmConfig = options
 
@@ -41,8 +41,11 @@ export function crm(options = {}) {
       // into core facts. Only non-module values come through init.
       const { notify } = createNotify({ webhooksConfig: crmConfig.webhooks, events, webhooks, eventRegistry })
 
-      state.init({ facts, logger, notify })
-      ingest.init({ passports, awareness, logger })
+      // `db` is passed for the health card only: CRM writes exclusively through
+      // ctx.facts / ctx.awareness, but neither exposes a windowed count, so
+      // status() reads those two core tables back directly (as analytics does).
+      state.init({ facts, logger, notify, db })
+      ingest.init({ passports, awareness, logger, db })
 
       mountRoutes(app, { requireAuth, state, ingest, logger })
       registerMcp(ctx, { state, ingest })
@@ -71,7 +74,10 @@ export function crm(options = {}) {
 
       logger.info('CRM plugin ready (facts adapter)')
 
-      return { state, ingest }
+      // `service.status` is the self-describing health form monitoring surfaces
+      // discover (docs/10-plugin-status.md) — nothing has to be told this plugin
+      // exists. `state` and `ingest` stay exposed as they were.
+      return { state, ingest, service: { status: ingest.status } }
     },
   }
 }

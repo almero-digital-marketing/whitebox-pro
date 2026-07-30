@@ -127,6 +127,15 @@
 .lv-pool-tags { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .lv-pool-tags .lv-bar { grid-template-columns: 54px 1fr 46px; font-size: 11px; }
 
+/* Two different claims, two different weights: a plugin that THREW is a problem
+   (danger, icon + words), one that simply has no status() is an inventory gap
+   (muted, no alarm). Collapsing them would either cry wolf or hide a break. */
+.lv-note-bad { display: flex; align-items: center; gap: 4px; margin: 8px 0 0;
+  font-size: 11px; line-height: 1.4; color: var(--danger); }
+.lv-note-bad .material-symbols-outlined { font-size: 14px; }
+.lv-unmonitored { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 10.5px; line-height: 1.4; color: var(--muted); }
+
 /* COUNT view rows. Fewer columns than the list — no time, no detail — so it gets
    its own template on the <ul> above rather than reusing the list's and leaving
    two tracks empty. The bar makes the distribution readable at a glance, which is

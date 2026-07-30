@@ -195,6 +195,73 @@ describe('register — audiences is a hard dependency', () => {
 })
 
 
+// docs/10-plugin-status.md — the plugin names its own numbers and says which one
+// is bad news; the monitoring board holds no campaigns knowledge.
+describe('status', () => {
+  const COUNTS = { sent: 4, dry_run: 4, scheduled: 2, draft: 7, overdue: 0 }
+
+  function setup({ counts = COUNTS, dryRun = true } = {}) {
+    const store = { healthCounts: vi.fn(async () => { if (counts instanceof Error) throw counts; return counts }) }
+    service.init({ store, audiences: {}, deliver: null, dryRun, mail: null, sms: null, passports: {}, logger: { warn: vi.fn() } })
+    return store
+  }
+  const at = (s, key) => s.metrics.find(m => m.key === key)
+
+  it('reports the windowed sends beside the current draft/scheduled state', async () => {
+    setup()
+    const s = await service.status({ since: new Date('2026-07-30T00:00:00.000Z') })
+    expect(s.label).toBe('campaigns')
+    expect(s.metrics.map(m => m.key)).toEqual(['sent', 'dry run', 'scheduled', 'drafts', 'overdue'])
+    expect(at(s, 'sent').value).toBe(4)
+    expect(at(s, 'scheduled').value).toBe(2)
+    expect(at(s, 'drafts').value).toBe(7)
+  })
+
+  // dryRun defaults ON, so on a deployment that hasn't gone live EVERY send is a
+  // dry run. Flagging that would paint the card red for a system doing exactly
+  // what it was configured to do.
+  it('does not mark dry runs bad — only an overdue schedule is', async () => {
+    setup({ counts: { ...COUNTS, dry_run: 4, overdue: 3 } })
+    const s = await service.status({ since: new Date() })
+    expect(at(s, 'dry run').severity).toBeUndefined()
+    expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['overdue'])
+  })
+
+  it('passes `since` through to the counts, and defaults to the whole history without one', async () => {
+    const since = new Date('2026-07-30T00:00:00.000Z')
+    let store = setup()
+    await service.status({ since })
+    expect(store.healthCounts).toHaveBeenCalledWith(since)
+    store = setup()
+    await service.status()
+    expect(store.healthCounts).toHaveBeenCalledWith(new Date(0))
+  })
+
+  // Nothing in this plugin sends a campaign committed for a future time, so a
+  // past-due 'scheduled' row is one that will never go out.
+  it('leads the note with the overdue schedule, which outranks the dry-run mode', async () => {
+    setup({ counts: { ...COUNTS, overdue: 1 }, dryRun: true })
+    expect((await service.status({ since: new Date() })).note)
+      .toMatch(/1 campaign past its send time and still scheduled/)
+  })
+
+  it('explains the dry-run mode when nothing is overdue, and says nothing when live and clean', async () => {
+    setup({ dryRun: true })
+    expect((await service.status({ since: new Date() })).note).toMatch(/dry-run/)
+    setup({ dryRun: false })
+    expect((await service.status({ since: new Date() })).note).toBeNull()
+  })
+
+  // A failing status() must not take the board down — and must not report zeros
+  // either, since a zero reads as "nothing happened" rather than "no idea".
+  it('survives a failing read without throwing, and reports no metrics rather than zeros', async () => {
+    setup({ counts: new Error('db down') })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics).toEqual([])
+    expect(s.note).toMatch(/could not be read/)
+  })
+})
+
 describe('getResults', () => {
   const ZERO = { total: 0, sent: 0, delivered: 0 }
   // sends: [{ dry_run, channel, batch_id, resolved, deliverable, suppressed, no_consent }]

@@ -305,3 +305,53 @@ async function upsert(row) {
 export async function invalidate(url) {
   return db(TABLE).where({ url }).del()
 }
+
+// -------- health --------
+//
+// Self-describing health for monitoring surfaces (see docs/10-plugin-status.md).
+// The only thing this plugin can honestly answer is "is content resolution
+// working": every video/image a visitor engages with is resolved ONCE — Whisper
+// transcript, Vision description — and cached in this table forever, so the
+// table is the entire trace that pipeline leaves.
+//
+// There is no failure row to count, and inventing one would be a lie: when
+// resolveImage/resolveVideo throws, videos.js/images.js log the warning and
+// swallow it, and NOTHING is written here. What is observable is the entry that
+// was written with no usable text — the caller then returns early (no awareness
+// record), and because the row is cached it is never retried either. A failing
+// transcription pipeline that still produces rows looks exactly like that, which
+// is why it's the one metric marked bad.
+export async function status({ since } = {}) {
+  try {
+    // Resolutions ARE history — windowed on generated_at, which is the first
+    // resolution's timestamp (upsert's merge() never carries a new one).
+    const byKindQ = db(TABLE).select('kind').count('* as n').groupBy('kind')
+    if (since) byKindQ.where('generated_at', '>=', since instanceof Date ? since : new Date(since))
+    const byKind = Object.fromEntries((await byKindQ).map(r => [r.kind, Number(r.n)]))
+
+    // NOT windowed, deliberately: this is the current state of the cache, not an
+    // event. An empty entry generated last month still silently drops every view
+    // of that URL today, until someone invalidates it.
+    const [blank] = await db(TABLE)
+      .where(b => b.whereNull('text').orWhere('text', ''))
+      .count()
+    const noText = Number(blank?.count ?? 0)
+
+    return {
+      label: 'engagement',
+      metrics: [
+        { key: 'transcribed', value: byKind.video || 0 },
+        { key: 'described', value: byKind.image || 0 },
+        { key: 'no text', value: noText, severity: 'bad' },
+      ],
+      note: noText
+        ? `${noText} cached entr${noText === 1 ? 'y' : 'ies'} resolved to no text (whole cache, not the window) — every view of those URLs records nothing until they're invalidated`
+        : null,
+    }
+  } catch (err) {
+    // A broken status() must not take the monitoring board down — a partial
+    // answer beats throwing (docs/10-plugin-status.md).
+    logger?.warn?.({ err }, 'engagement.status failed')
+    return { label: 'engagement', metrics: [], note: 'content cache could not be read' }
+  }
+}

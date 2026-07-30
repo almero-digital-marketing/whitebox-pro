@@ -6,10 +6,10 @@
 import { direction, channel, DIRECTIONS } from './classify.js'
 import { describe } from './describe.js'
 
-let eventRegistry, plugins, logger
+let eventRegistry, plugins, pluginNames, logger
 
 export function init(deps) {
-  ({ eventRegistry, plugins, logger } = deps)
+  ({ eventRegistry, plugins, pluginNames, logger } = deps)
 }
 
 // Accepts 5m / 30m / 1h / 24h, defaults to 30m. Parsed rather than free-form
@@ -58,9 +58,14 @@ function collapseTypes(counts) {
 // A plugin that throws is omitted rather than reported as zeros: absent means
 // "nobody is watching this", zero means "nothing happened", and rendering the
 // first as the second is how a broken channel looks healthy.
+// Observers are excluded from the silent list below: this plugin monitoring
+// itself is noise, and console-events is a route shim with no state of its own.
+// Anything else that's registered and silent is worth naming.
+const OBSERVERS = new Set(['live', 'console-events'])
+
 async function collectStatus(since) {
-  const entries = Object.entries(plugins || {})
-    .filter(([, api]) => typeof api?.service?.status === 'function')
+  const all = Object.entries(plugins || {})
+  const entries = all.filter(([, api]) => typeof api?.service?.status === 'function')
 
   const results = await Promise.all(entries.map(async ([module, api]) => {
     try {
@@ -75,10 +80,35 @@ async function collectStatus(since) {
       }
     } catch (err) {
       logger?.warn?.({ err, module }, 'live: %s status() failed — omitting it', module)
-      return null
+      return { module, failed: true }
     }
   }))
-  return results.filter(Boolean)
+
+  const reported = results.filter(Boolean)
+  // Registered but saying nothing. Absent is the CORRECT rendering for a plugin
+  // that can't describe itself — a zero would read as healthy — but absence is
+  // also easy to miss: nobody looking at the card notices that a plugin has never
+  // once reported. Naming them is the difference between a card that shows what's
+  // monitored and one that shows what ISN'T.
+  // Derived from the REGISTERED plugin names, not from ctx.plugins. Core only
+  // populates ctx.plugins `if (api)` (server/src/plugins.js), so a plugin that
+  // returns nothing from register() is absent from it entirely — and was
+  // therefore invisible to this list too, which is precisely the blind spot the
+  // list exists to remove. Four plugins (engagement, geolocation, oauth,
+  // analytics) sat in neither `status` nor `silent` until this used the right
+  // source.
+  const registered = (pluginNames?.length ? pluginNames : all.map(([m]) => m))
+  const silent = registered
+    .filter(m => !OBSERVERS.has(m) && !entries.some(([e]) => e === m))
+
+  return {
+    // A plugin whose status() threw is reported as failing rather than dropped:
+    // "this channel is broken" is a different and more urgent claim than "this
+    // channel isn't monitored", and collapsing the two hides the worse one.
+    reported: reported.filter(p => !p.failed),
+    failing: reported.filter(p => p.failed).map(p => p.module),
+    silent,
+  }
 }
 
 /**
@@ -145,7 +175,13 @@ export async function summary({ window: w } = {}) {
     // An ARRAY, in config order — see collectStatus. Not a keyed object: the
     // surface no longer knows which plugins exist, so it can't ask for them by
     // name.
-    status,
+    status: status.reported,
+    // Registered plugins that reported nothing, split by WHY. `failing` threw and
+    // is a problem; `silent` has no status() at all and is merely unmonitored.
+    // Both are invisible in `status` alone, and the second is exactly the kind of
+    // gap a monitoring card should surface rather than create.
+    status_failing: status.failing,
+    status_silent: status.silent,
   }
 }
 

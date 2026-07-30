@@ -12,6 +12,10 @@ vi.mock('../src/store.js', () => ({
   claimToken: vi.fn(async () => 1),
   setClickPassport: vi.fn(async () => 1),
   clickStats: vi.fn(async () => ({ total: 0, claimed: 0, last_at: null })),
+  healthStats: vi.fn(async () => ({
+    links: { created: 0, personalized: 0 },
+    clicks: { total: 0, claimed: 0, expired_unclaimed: 0, unbound: 0 },
+  })),
 }))
 vi.mock('../src/codes.js', () => ({
   newCode: vi.fn(() => 'CODE1234'),
@@ -47,6 +51,10 @@ beforeEach(() => {
   store.claimToken.mockResolvedValue(1)
   store.insertLink.mockImplementation(async (r) => ({ id: 1, click_count: 0, ...r }))
   store.insertClick.mockImplementation(async (r) => ({ id: 1, ...r }))
+  store.healthStats.mockResolvedValue({
+    links: { created: 0, personalized: 0 },
+    clicks: { total: 0, claimed: 0, expired_unclaimed: 0, unbound: 0 },
+  })
 })
 
 describe('createLink', () => {
@@ -206,5 +214,56 @@ describe('claim', () => {
     expect(await service.claim('nope', null)).toEqual({ bound: false })
     store.getClick.mockResolvedValue({ ...validClick(), expires_at: new Date(Date.now() - 1000) })
     expect(await service.claim('old', null)).toEqual({ bound: false })
+  })
+})
+
+describe('status', () => {
+  const counts = {
+    links: { created: 12, personalized: 9 },
+    clicks: { total: 7, claimed: 5, expired_unclaimed: 2, unbound: 0 },
+  }
+  const byKey = (s) => Object.fromEntries(s.metrics.map(m => [m.key, m.value]))
+
+  it('passes `since` straight through to the windowed query', async () => {
+    setup()
+    const since = new Date('2026-07-01T00:00:00Z')
+    await service.status({ since })
+    expect(store.healthStats).toHaveBeenCalledWith({ since })
+  })
+
+  it('reports links, clicks and claims in a fixed order', async () => {
+    setup()
+    store.healthStats.mockResolvedValue(counts)
+    const s = await service.status({ since: new Date() })
+    expect(s.label).toBe('shortener')
+    expect(s.metrics.map(m => m.key)).toEqual([
+      'links', 'personalized', 'clicks', 'claimed', 'unclaimed', 'unbound claims',
+    ])
+    expect(byKey(s)).toMatchObject({ links: 12, personalized: 9, clicks: 7, claimed: 5, unclaimed: 2 })
+  })
+
+  it('marks ONLY unbound claims as bad — an unclaimed token is a scanner, not a fault', async () => {
+    setup()
+    store.healthStats.mockResolvedValue({
+      links: { created: 1, personalized: 1 },
+      clicks: { total: 4, claimed: 1, expired_unclaimed: 3, unbound: 2 },
+    })
+    const s = await service.status({})
+    expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['unbound claims'])
+    expect(s.metrics.find(m => m.key === 'unbound claims').value).toBe(2)
+  })
+
+  it('says in the note that unknown-code hits are not counted — a zero would read as "no dead links"', async () => {
+    setup()
+    const s = await service.status({})
+    expect(s.note).toMatch(/unknown or expired codes are not recorded/)
+    expect(s.metrics.map(m => m.key)).not.toContain('unknown')
+  })
+
+  it('never throws when the query fails — the board stays up', async () => {
+    setup()
+    store.healthStats.mockRejectedValue(new Error('db down'))
+    const s = await service.status({ since: new Date() })
+    expect(s).toEqual({ label: 'shortener', metrics: [], note: 'link health counts are unavailable' })
   })
 })

@@ -96,6 +96,12 @@ export function oauth(options = {}) {
       })
 
       logger.info('Built-in OAuth 2.1 authorization server ready at %s', basePath)
+
+      // A service purely so monitoring surfaces can find status() — nothing else
+      // in this plugin is meant to be called from another plugin (the OAuth
+      // surface is HTTP). store.js owns both tables it reads, so it owns the
+      // answer (see docs/10-plugin-status.md).
+      return { service: { status: store.status } }
     },
   }
 }

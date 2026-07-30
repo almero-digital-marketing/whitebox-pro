@@ -65,7 +65,7 @@ export function conversions(options = {}) {
       }
 
       // Init singletons in dependency order.
-      store.init({ db })
+      store.init({ db, logger })
       ingest.init({ awareness, reporter, consentOk, logger, resolvePassport: passports.resolve, notify })
 
       mountRoutes(app, { requireAuth, logger })
@@ -74,7 +74,11 @@ export function conversions(options = {}) {
       const eligible = reporter.networks().filter(n => n.eligible).map(n => n.name)
       logger.info('Conversions plugin ready (%s)', eligible.length ? `networks: ${eligible.join(', ')}` : 'awareness-only, no networks configured')
 
-      return { reporter }
+      // `service.status` is the self-describing health form monitoring surfaces
+      // discover (docs/10-plugin-status.md) — nothing has to be told this plugin
+      // exists. It lives on the store because the audit table is where the
+      // per-network verdicts were written; `reporter` stays exactly as it was.
+      return { reporter, service: { status: store.status } }
     },
   }
 }
