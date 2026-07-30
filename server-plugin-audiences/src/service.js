@@ -359,19 +359,19 @@ export async function status({ since } = {}) {
     // per-event delivery log went with the rule system in migration 011), so
     // `since` is ignored and the card must say so rather than imply otherwise.
     metrics.push({ key: 'audiences', value: counts.audiences, live: true,
-      description: 'Audiences that exist right now' })
+      description: 'Audiences you have built' })
     metrics.push({ key: 'segments', value: counts.segments, live: true,
-      description: 'Saved segments that exist right now' })
+      description: 'Saved groups of people' })
   }
   let live = 0, dark = 0
   if (byNetwork) {
     for (const n of byNetwork) { live += n.enabled - n.dry_run; dark += n.dry_run }
     metrics.push({ key: 'delivering', value: live, live: true,
-      description: 'Switched on with an eligible adapter behind it' })
+      description: 'Audiences actually reaching an ad platform' })
     // Switched on, reaching nobody. Non-zero here means someone activated an
     // audience and the ad network never heard about it.
     metrics.push({ key: 'not delivering', value: dark, severity: 'bad', live: true,
-      description: 'Switched on, reaching nobody — stamped dry-run' })
+      description: 'Switched on but reaching nobody — check the setup' })
     // Per-network breakdown of the two totals above, carrying `of` because "meta 1
     // of 5" is the whole story where either number alone is meaningless. These were
     // `gauges` — a separate array for bounded resources — but nothing here is
@@ -390,7 +390,7 @@ export async function status({ since } = {}) {
         value: n.enabled - n.dry_run,
         of: n.enabled,
         live: true,
-        description: `Reaching ${n.network}, of ${n.enabled} activated for it`,
+        description: `Audiences reaching ${n.network}, of ${n.enabled} switched on`,
       })
     }
   }

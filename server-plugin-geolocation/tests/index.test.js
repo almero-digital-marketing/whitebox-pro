@@ -237,8 +237,10 @@ describe('geolocation() — status()', () => {
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
     for (const m of s.metrics) {
-      // Rendered inline in a 340px pane, so length IS the constraint: one line.
-      expect(m.description.length).toBeLessThanOrEqual(56)
+      // Rendered inline in a 340px pane, so length is still the constraint — but
+      // written for the person USING the system, not for whoever built it, which
+      // needs a few more words than a terse engineering label.
+      expect(m.description.length).toBeLessThanOrEqual(72)
       // ...and it must still say more than the key already does.
       expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
       expect(m.description.length).toBeGreaterThan(12)
@@ -252,8 +254,8 @@ describe('geolocation() — status()', () => {
     const api = await geolocation({ provider }).register({}, ctx)
     const s = await api.service.status({})
     const at = k => s.metrics.find(m => m.key === k).description
-    expect(at('no data')).toMatch(/private|unroutable/i)
-    expect(at('failed')).toMatch(/threw|corrupt|missing/i)
+    expect(at('no data')).toMatch(/could not be found/i)
+    expect(at('failed')).toMatch(/broke|no location/i)
   })
 
   it('marks every metric live, since it has no history to window', async () => {

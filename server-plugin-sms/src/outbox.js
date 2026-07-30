@@ -344,17 +344,17 @@ export async function status({ since } = {}) {
     label: 'sms',
     metrics: [
       { key: 'queued', value: s.queued,
-        description: 'Queued in this window, still waiting to send' },
+        description: 'Texts waiting to go out' },
       { key: 'sent', value: s.sent,
-        description: 'Handed to the carrier gateway' },
+        description: 'Texts handed to the phone network' },
       { key: 'delivered', value: s.delivered,
-        description: 'Carrier returned a handset receipt — many never do' },
+        description: 'Texts confirmed on the phone — not all networks confirm' },
       // non-zero here is a problem, and the surface shows it with an icon and the
       // word — never colour alone
       { key: 'failed', value: s.failed, severity: 'bad',
-        description: 'The gateway refused it — nothing was sent' },
+        description: 'Texts that could not be sent at all' },
       { key: 'bounced', value: s.bounced, severity: 'bad',
-        description: 'Accepted, then rejected downstream' },
+        description: 'Texts the phone network rejected — unreachable number' },
     ],
   }
 }

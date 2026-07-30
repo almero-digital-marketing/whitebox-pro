@@ -181,20 +181,20 @@ export async function status({ since } = {}) {
       label: 'shortener',
       metrics: [
         { key: 'links', value: links.created,
-          description: 'Short links created in this window' },
+          description: 'Tracked links created' },
         { key: 'personalized', value: links.personalized,
-          description: 'Links that can bind a person on click' },
+          description: 'Links that can tell you who clicked' },
         { key: 'clicks', value: clicks.total,
-          description: 'Redirects served in this window' },
+          description: 'Times a tracked link was opened' },
         { key: 'claimed', value: clicks.claimed,
-          description: 'Token redeemed — the click is tied to a person' },
+          description: 'Clicks matched to a person' },
         { key: 'unclaimed', value: clicks.expired_unclaimed,
-          description: 'Token expired unused — scanners do this often' },
+          description: 'Clicks nobody claimed — usually bots and email scanners' },
         // Non-zero means a single-use ticket was spent and nobody got bound: that
         // click's attribution is lost for good and the link can't be re-used to
         // recover it. The one number here worth waking up for.
         { key: 'unbound claims', value: clicks.unbound, severity: 'bad',
-          description: 'Token spent, nobody bound — attribution lost' },
+          description: 'Clicks we lost the person for — that visit is unattributed' },
       ],
       note: 'hits on unknown or expired codes are not recorded — dead links still in circulation are invisible here',
     }

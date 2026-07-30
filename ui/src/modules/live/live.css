@@ -41,21 +41,28 @@
 .lv-accordion .p-accordioncontent-content { padding: 14px 18px; background: var(--panel); border: none; }
 
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
-   Above the accordion, which owns no outer padding, so it brings its own. */
-.lv-side-hint { margin: 0; padding: 12px 18px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+   Margin, not padding: this sits inside the accordion content, which already brings
+   its own 14px/18px. */
+.lv-side-hint { margin: 0 0 12px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* Undo for the selection, at the foot of the panel. Mirrors FilterMenu's
-   `.fm-clear` — the same control doing the same job in the same place — which is
-   scoped to that component, so the values are copied rather than reached for. */
-.lv-side-reset { display: block; width: 100%; margin-top: 14px; padding-top: 10px;
-  border: none; border-top: 1px solid var(--border); background: none;
-  font: inherit; font-size: 11.5px; color: var(--accent); cursor: pointer; text-align: left; }
+/* The right-pane action row, values copied verbatim from People's
+   `.ppl-console .b-actions` (docs/adr/0001-editor-save-discard-pattern.md rule 7):
+   last thing in the panel, so it supplies its own divider.
+   PADDING AND HEIGHT IN FULL, not just the sides we care about — the same trap
+   People's copy documents. Journeys' panels/panel.css defines a GLOBAL `.b-actions`
+   for its centre bar (`height: 52px; padding: 0 16px`); declaring only `padding-top`
+   here let that shorthand keep supplying 16px left/right, which inset the button
+   from the pane edge while every row above it sat flush.
+   `justify-content: flex-end`, which People does NOT declare but does achieve: its
+   bar always contains `.save-note` as the one flexible element, so the buttons end
+   up at the right. This bar has no note, and left-aligned a `text` button's own
+   horizontal padding inset its LABEL ~24px from rows that sit flush — reading as
+   misalignment. Copying the effect rather than the declaration is what matches. */
+.lv-side .b-actions { display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0;
+  border-top: 1px solid var(--border); }
+.lv-side .b-actions > .p-button { flex-shrink: 0; }
 
-/* Claims about the SET of plugins, below every section. Separated by a rule because
-   they are not part of the last panel, which is exactly how they'd otherwise read. */
-.lv-side-foot { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); }
-.lv-side-foot > :first-child { margin-top: 0; }
-.lv-side-foot:not(:has(> *)) { display: none; }
 
 /* One plugin's counters inside the Status panel. No rule between groups: the
    uppercase heading already separates them, and thirteen hairlines down a narrow
@@ -290,8 +297,6 @@
 .lv-note-bad { display: flex; align-items: center; gap: 4px; margin: 8px 0 0;
   font-size: 11px; line-height: 1.4; color: var(--danger); }
 .lv-note-bad .material-symbols-outlined { font-size: 14px; }
-.lv-unmonitored { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border);
-  font-size: 10.5px; line-height: 1.4; color: var(--muted); }
 
 /* COUNT view rows. Fewer columns than the list — no time, no detail — so it gets
    its own template on the <ul> above rather than reusing the list's and leaving

@@ -34,7 +34,7 @@ export async function status({ since } = {}) {
     return {
       label: 'live',
       metrics: [{ key: 'streaming', value: 0, severity: 'bad', live: true,
-        description: 'No socket namespace wired — dashboards poll instead' }],
+        description: 'Live updates are off — this board refreshes on a timer' }],
       note: 'not streaming — connect.namespace() was unavailable at registration, so dashboards poll /summary instead of updating live',
     }
   }
@@ -86,28 +86,28 @@ export async function status({ since } = {}) {
       // Per MINUTE regardless of window, so the figure means the same thing on
       // every setting — matching the header it mirrors.
       { key: 'events/min', value: Math.round((traffic.total / secs) * 60 * 10) / 10,
-        description: 'Recorded events per minute, whatever the window' },
+        description: 'How busy the system is, per minute' },
       { key: 'in', value: traffic.byDirection.in,
-        description: 'Something arrived — a view, form, call or record' },
+        description: 'Visitor activity coming in — views, forms, calls' },
       { key: 'out', value: traffic.byDirection.out,
-        description: 'Something left — mail, SMS, an ad-network call' },
+        description: 'Messages going out — email, texts, ad platforms' },
       // Orchestration, not traffic — counted separately so it can't inflate
       // either direction beside it.
       { key: 'internal', value: traffic.byDirection.internal,
-        description: 'Orchestration, not data crossing the boundary' },
+        description: 'Housekeeping the system did on its own' },
       { key: 'people active', value: traffic.active,
-        description: 'Distinct people touched in this window' },
+        description: 'People seen in this period' },
     )
   }
   metrics.push(
     { key: 'dashboards', value: s.subscribers, live: true,
-      description: 'Live boards connected right now' },
+      description: 'People watching this board right now' },
     { key: 'streamed', value: s.received, live: true,
-      description: 'Events off the Redis firehose since boot' },
+      description: 'Events this board has received live' },
     // Over the 200-per-flush ceiling. Non-zero means a dashboard was shown a
     // fraction of the traffic without any way to know which part.
     { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true,
-      description: 'Discarded at the 200-per-flush ceiling' },
+      description: 'Live events not shown — the board fell behind' },
   )
 
   // The cross-check, and the guard that stops it crying wolf.

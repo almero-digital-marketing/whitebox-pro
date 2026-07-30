@@ -285,8 +285,10 @@ describe('store — status descriptions', () => {
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
     for (const m of s.metrics) {
-      // Rendered inline in a 340px pane, so length IS the constraint: one line.
-      expect(m.description.length).toBeLessThanOrEqual(56)
+      // Rendered inline in a 340px pane, so length is still the constraint — but
+      // written for the person USING the system, not for whoever built it, which
+      // needs a few more words than a terse engineering label.
+      expect(m.description.length).toBeLessThanOrEqual(72)
       // ...and it must still say more than the key already does.
       expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
       expect(m.description.length).toBeGreaterThan(12)

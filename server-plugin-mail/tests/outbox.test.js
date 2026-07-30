@@ -386,8 +386,10 @@ describe('status() descriptions', () => {
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
     for (const m of s.metrics) {
-      // Rendered inline in a 340px pane, so length IS the constraint: one line.
-      expect(m.description.length).toBeLessThanOrEqual(56)
+      // Rendered inline in a 340px pane, so length is still the constraint — but
+      // written for the person USING the system, not for whoever built it, which
+      // needs a few more words than a terse engineering label.
+      expect(m.description.length).toBeLessThanOrEqual(72)
       // ...and it must still say more than the key already does.
       expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
       expect(m.description.length).toBeGreaterThan(12)
@@ -401,8 +403,8 @@ describe('status() descriptions', () => {
       notify: vi.fn(), config: { mail: {} }, logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } })
     const s = await outbox.status({ since: new Date() })
     const at = k => s.metrics.find(m => m.key === k).description
-    expect(at('sent')).toMatch(/provider/i)
-    expect(at('delivered')).toMatch(/mailbox/i)
+    expect(at('sent')).toMatch(/on their way|not confirmed/i)
+    expect(at('delivered')).toMatch(/inbox/i)
     expect(at('sent')).not.toBe(at('delivered'))
   })
 })

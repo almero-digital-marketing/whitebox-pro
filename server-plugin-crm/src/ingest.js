@@ -272,15 +272,15 @@ export async function status({ since } = {}) {
     label: 'crm',
     metrics: [
       { key: 'records', value: structured?.records ?? 0,
-        description: 'Distinct CRM entities written through this window' },
+        description: 'Deals and tickets brought in from your CRM' },
       { key: 'state facts', value: structured?.facts ?? 0,
-        description: 'Field values from those records, several each' },
+        description: 'Individual details saved from those records' },
       { key: 'notes', value: notes?.notes ?? 0,
-        description: 'Notes from the CRM itself' },
+        description: 'Notes about people, from your CRM' },
       // Low-trust, client-reported — kept separate so they can't flatter the
       // authoritative counts above.
       { key: 'observations', value: notes?.observations ?? 0,
-        description: 'Notes reported by a client SDK — lower trust' },
+        description: 'Notes sent by your site or app — less reliable' },
     ],
     note,
   }

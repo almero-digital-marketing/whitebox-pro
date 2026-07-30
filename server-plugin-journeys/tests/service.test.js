@@ -340,8 +340,10 @@ describe('status descriptions', () => {
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
     for (const m of s.metrics) {
-      // Rendered inline in a 340px pane, so length IS the constraint: one line.
-      expect(m.description.length).toBeLessThanOrEqual(56)
+      // Rendered inline in a 340px pane, so length is still the constraint — but
+      // written for the person USING the system, not for whoever built it, which
+      // needs a few more words than a terse engineering label.
+      expect(m.description.length).toBeLessThanOrEqual(72)
       // ...and it must still say more than the key already does.
       expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
       expect(m.description.length).toBeGreaterThan(12)
@@ -358,7 +360,7 @@ describe('status descriptions', () => {
     service.init({ store, lock: makeLock(), logger: { warn: vi.fn(), error: vi.fn() }, notifyLifecycle: vi.fn(), onTriggerChange: vi.fn() })
     const s = await service.status({ since: new Date() })
     const at = k => s.metrics.find(m => m.key === k).description
-    expect(at('stuck')).toMatch(/never (fired|woke)/i)
+    expect(at('stuck')).toMatch(/stalled|longer than they should/i)
     expect(at('failed')).not.toBe(at('stuck'))
   })
 })

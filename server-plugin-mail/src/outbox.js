@@ -472,17 +472,17 @@ export async function status({ since } = {}) {
     // dashboard could infer from the keys.
     metrics: [
       { key: 'queued', value: s.queued,
-        description: 'Queued in this window, still waiting to send' },
+        description: 'Emails waiting to go out' },
       { key: 'sent', value: s.sent,
-        description: 'Handed to the provider without error' },
+        description: 'Emails on their way — not confirmed as arrived yet' },
       { key: 'delivered', value: s.delivered,
-        description: 'The provider confirmed the mailbox accepted it' },
+        description: 'Emails confirmed as reaching the inbox' },
       // non-zero here is a problem, and the surface shows it with an icon and the
       // word — never colour alone
       { key: 'failed', value: s.failed, severity: 'bad',
-        description: 'The provider refused it — nothing was delivered' },
+        description: 'Emails that could not be sent at all' },
       { key: 'bounced', value: s.bounced, severity: 'bad',
-        description: 'Accepted, then rejected by the receiving server' },
+        description: 'Emails rejected on arrival — wrong or full mailbox' },
     ],
   }
 }

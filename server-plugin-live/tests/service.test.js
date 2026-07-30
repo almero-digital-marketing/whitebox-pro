@@ -484,8 +484,10 @@ describe('status() descriptions', () => {
     expect(s.metrics.length).toBeGreaterThan(0)
     expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
     for (const m of s.metrics) {
-      // Rendered inline in a 340px pane, so length IS the constraint: one line.
-      expect(m.description.length).toBeLessThanOrEqual(56)
+      // Rendered inline in a 340px pane, so length is still the constraint — but
+      // written for the person USING the system, not for whoever built it, which
+      // needs a few more words than a terse engineering label.
+      expect(m.description.length).toBeLessThanOrEqual(72)
       // ...and it must still say more than the key already does.
       expect(m.description.toLowerCase()).not.toBe(m.key.toLowerCase())
       expect(m.description.length).toBeGreaterThan(12)
@@ -500,13 +502,13 @@ describe('status() descriptions', () => {
       streamStats: () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0 }),
     })
     const s = await service.status({ since: new Date() })
-    expect(s.metrics.find(m => m.key === 'streamed').description).toMatch(/Redis/)
+    expect(s.metrics.find(m => m.key === 'streamed').description).toMatch(/received live/i)
   })
 
   // No stream at all vs an idle one have different fixes, and the prose says which.
   it('says a missing stream is a wiring problem, not a Redis one', async () => {
     service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: () => null })
     const s = await service.status({})
-    expect(s.metrics[0].description).toMatch(/wired/i)
+    expect(s.metrics[0].description).toMatch(/Live updates are off/i)
   })
 })

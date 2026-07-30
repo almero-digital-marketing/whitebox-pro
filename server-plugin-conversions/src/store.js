@@ -133,21 +133,21 @@ export async function status({ since } = {}) {
     label: 'conversions',
     metrics: [
       { key: 'events', value: totals?.events ?? 0,
-        description: 'Conversions recorded first-party in this window' },
+        description: 'Sales and sign-ups recorded here' },
       { key: 'accepted', value: by.accepted || 0,
-        description: 'Ad-network calls the platform accepted' },
+        description: 'Conversions the ad platforms accepted' },
       // Non-zero means conversions the rest of the system believes were reported
       // were not, in fact, reported.
       { key: 'rejected', value: by.rejected || 0, severity: 'bad',
-        description: 'Platform refused the call — the conversion is lost' },
+        description: 'Conversions the ad platforms refused — ads miss them' },
       { key: 'errors', value: by.error || 0, severity: 'bad',
-        description: 'No answer — timeout, bad endpoint or adapter throw' },
+        description: 'Conversions we could not get through to the ad platforms' },
       // Not failures: a network that isn't configured or eligible, and consent
       // withheld, are both the system doing exactly what it was told.
       { key: 'skipped', value: by.skipped || 0,
-        description: 'Network not configured, or the event not eligible' },
+        description: 'Not sent — that ad platform is not set up for this' },
       { key: 'consent withheld', value: totals?.consent_skipped ?? 0,
-        description: 'Recorded, sent nowhere — no ad-tracking consent' },
+        description: 'Kept private — the visitor declined ad tracking' },
     ],
     note: missing.length
       ? `${missing.join(' and ')} unavailable — the numbers above are incomplete`

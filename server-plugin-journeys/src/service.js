@@ -229,24 +229,24 @@ export async function status({ since } = {}) {
   const metrics = []
   if (live) {
     metrics.push({ key: 'active journeys', value: live.active_journeys, live: true,
-      description: 'Switched on and able to enrol' })
+      description: 'Journeys switched on and taking people in' })
     metrics.push({ key: 'enrolled', value: live.enrolled, live: true,
-      description: 'People part-way through a journey now' })
+      description: 'People part-way through a journey' })
   }
   if (activity) {
     metrics.push({ key: 'started', value: activity.started,
-      description: 'Enrolments that began in this window' })
+      description: 'People who entered a journey' })
     metrics.push({ key: 'completed', value: activity.completed,
-      description: 'Enrolments that reached the end' })
+      description: 'People who finished a journey' })
     // An enrollment that failed is abandoned, not retried — the person stops
     // partway through a journey somebody built for them.
     metrics.push({ key: 'failed', value: activity.failed, severity: 'bad',
-      description: 'Abandoned mid-journey — not retried' })
+      description: 'People whose journey broke and stopped part-way' })
   }
   // Same severity, different failure: nothing marked these, they simply never
   // woke up. Reported last because it's the one an operator has to go and fix.
   if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad', live: true,
-    description: 'Past its wake-up time — the step job never fired' })
+    description: 'People waiting far longer than they should — stalled' })
 
   return {
     label: 'journeys',

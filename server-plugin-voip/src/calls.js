@@ -76,21 +76,21 @@ export async function status({ since, pool } = {}) {
     label: 'voip',
     metrics: [
       { key: 'ringing', value: s.ringing,
-        description: 'Started in this window, still ringing' },
+        description: 'Calls ringing right now' },
       { key: 'active', value: s.active,
-        description: 'Connected and talking now' },
+        description: 'Calls in progress right now' },
       { key: 'ended', value: s.ended,
-        description: 'Connected and finished normally' },
+        description: 'Calls answered and completed' },
       // Someone reached out and nobody answered — a failure in the same sense as
       // a bounced email, and the one voip number an operator would act on.
       { key: 'missed', value: s.missed, severity: 'bad',
-        description: 'Somebody called and nobody answered' },
+        description: 'Calls nobody answered — a missed enquiry' },
       ...(p ? p.tags.map(t => ({
         key: t.tag,
         value: t.assigned,
         of: t.total,
         live: true,
-        description: `"${t.tag}" numbers held now, of ${t.total} in the pool`,
+        description: `Tracking numbers in use for "${t.tag}", of ${t.total} available`,
         // This plugin's own judgement, not `used === total`: a full pool is only a
         // problem once somebody is actually waiting on it.
         ...(t.exhausted ? { severity: 'bad' } : {}),

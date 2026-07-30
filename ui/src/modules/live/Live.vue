@@ -14,6 +14,7 @@ import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
 import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
 import ToggleSwitch from 'primevue/toggleswitch'
+import Button from 'primevue/button'
 import Accordion from 'primevue/accordion'
 import AccordionPanel from 'primevue/accordionpanel'
 import AccordionHeader from 'primevue/accordionheader'
@@ -36,10 +37,11 @@ const sidePanel = ref('status')
 // only add a `.value` for the template to unwrap again.
 const isPinned = store.isPinned
 
-// The reset button only appears once the selection has drifted, so it is never a
-// control that visibly does nothing. Compared as a set, not a list — re-pinning the
-// same five in a different order is still "the default", and offering to reset it
-// would be noise.
+// Whether the selection still matches the default — drives the reset button's
+// DISABLED state, not its presence (docs/adr/0001: a right-pane action is always
+// rendered and greyed, never hidden, so it doesn't have to be rediscovered).
+// Compared as a set, not a list: re-pinning the same five in a different order is
+// still the default, and offering to reset it would be noise.
 const isDefaultPinned = computed(() => {
   const d = ['live:events/min', 'live:in', 'live:out', 'live:internal', 'live:people active']
   return pinned.value.length === d.length && d.every(k => pinned.value.includes(k))
@@ -505,7 +507,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
          everything on offer and pick, and an accordion would hide most of it
          behind clicks. -->
     <aside class="lv-side">
-      <p class="lv-side-hint">Switch a counter on to show it in the header.</p>
 
       <!-- ONE "Status" panel holding every plugin as a group, which is what the app's
            right panes are: a small stack of named sections, not thirteen of them.
@@ -523,6 +524,13 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             </span>
           </AccordionHeader>
           <AccordionContent>
+            <!-- Inside the panel, not above the title: it explains what the rows do,
+                 so it belongs with them. Above the accordion it was floating over a
+                 collapsed section, describing an interaction nothing on screen
+                 offered yet. Paired with the reset at the foot, the two bracket the
+                 content they're about. -->
+            <p class="lv-side-hint">Switch a counter on to show it in the header.</p>
+
             <div v-for="p in statusRows" :key="p.module" class="lv-sgroup">
               <div class="lv-sgroup-head">
                 <span class="lv-dl-ch">{{ p.label }}</span>
@@ -564,45 +572,32 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               </label>
             </div>
 
-            <!-- At the FOOT of the panel, which is where this app puts an undo for a
-                 selection — FilterMenu's `.fm-clear` ("Clear filters") is the same
-                 control in the same place. It was dangling after the hint sentence at
-                 the top, reading as part of the instruction rather than an action.
-                 Still only rendered once the selection has drifted, so it is never a
-                 control that visibly does nothing. -->
-            <button v-if="!isDefaultPinned" type="button" class="lv-side-reset"
-              @click="store.resetPinned()">
-              Reset to the whole-system counters
-            </button>
+            <!-- Absent, not zero: no plugin reporting is a different claim from
+                 "everything is at zero". -->
+            <p v-if="!summary?.status?.length" class="lv-empty">
+              No plugin is reporting status. A plugin appears here once it exposes
+              <code>status()</code>.
+            </p>
+
+            <!-- A plugin that THREW is broken, and that's urgent — distinct from one
+                 that simply has no status() to call. -->
+            <p v-if="summary?.status_failing?.length" class="lv-note-bad">
+              <span class="material-symbols-outlined">error</span>
+              {{ summary.status_failing.join(', ') }} failed to report — check the server log.
+            </p>
+
+            <!-- The app's right-pane action row — `.b-actions` with a PrimeVue Button,
+                 the same object as People's Discard (docs/adr/0001). DISABLED rather
+                 than hidden when there is nothing to undo: that's the ADR's rule, and
+                 a control that vanishes is one you have to rediscover. -->
+            <div class="b-actions">
+              <Button label="Reset counters" text severity="secondary" size="small"
+                :disabled="isDefaultPinned" @click="store.resetPinned()" />
+            </div>
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
 
-      <!-- Pane-level, outside the accordion: these are claims about the SET of
-           plugins, so they'd be wrong inside any one section. -->
-      <div class="lv-side-foot">
-        <!-- Absent, not zero: no plugin reporting is a different claim from
-             "everything is at zero". -->
-        <p v-if="!summary?.status?.length" class="lv-empty">
-          No plugin is reporting status. A plugin appears here once it exposes
-          <code>status()</code>.
-        </p>
-
-        <!-- A plugin that THREW is broken, and that's urgent — distinct from one
-             that simply has no status() to call. -->
-        <p v-if="summary?.status_failing?.length" class="lv-note-bad">
-          <span class="material-symbols-outlined">error</span>
-          {{ summary.status_failing.join(', ') }} failed to report — check the server log.
-        </p>
-
-        <!-- Named on purpose. These render as absent above, which is correct, but
-             absence is easy to miss: nobody notices that a plugin has NEVER
-             reported. This is the difference between a pane that shows what's
-             monitored and one that shows what isn't. -->
-        <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
-          not monitored: {{ summary.status_silent.join(', ') }}
-        </p>
-      </div>
     </aside>
   </div>
 </template>

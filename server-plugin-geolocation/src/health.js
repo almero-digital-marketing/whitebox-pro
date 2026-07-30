@@ -54,15 +54,15 @@ export async function status({ since } = {}) {   // `since` unused on purpose �
   // board must not show it under a window selector as though it were.
   const metrics = [
     { key: 'lookups', value: lookups, live: true,
-      description: 'IP lookups answered since boot' },
+      description: 'Visitors we tried to locate' },
     // No data for an IP is normal, not broken: private, reserved and unroutable
     // addresses all land here, and so do addresses MaxMind simply can't place.
     { key: 'no data', value: misses, live: true,
-      description: 'No answer for the IP — usually private or unroutable' },
+      description: 'Visitors whose location could not be found' },
     // The provider threw: a missing, unreadable or corrupt database, or a reader
     // that never opened. Each one is a visitor who got no geo at all.
     { key: 'failed', value: errors, severity: 'bad', live: true,
-      description: 'The provider threw — missing or corrupt database' },
+      description: 'Lookups that broke — those visitors got no location' },
   ]
 
   // Optional by design: health() is not part of the provider contract (that is
@@ -91,12 +91,12 @@ export async function status({ since } = {}) {   // `since` unused on purpose �
     const ageDays = Math.floor((Date.now() - db.mtimeMs) / DAY_MS)
     const stale = ageDays > staleAfterDays
     metrics.push({ key: 'database age (days)', value: ageDays, live: true,
-      description: 'How old the GeoIP file is, in days' })
+      description: 'How old the location database is, in days' })
     // A judgement expressed as a count, which is exactly what the contract's
     // "non-zero means something is wrong" wants: the age itself is always
     // non-zero and always fine until it isn't, so it can't carry the severity.
     metrics.push({ key: 'stale database', value: stale ? 1 : 0, severity: 'bad', live: true,
-      description: `1 when the file is older than ${staleAfterDays} days` })
+      description: `1 if the location data is over ${staleAfterDays} days old` })
     if (stale) {
       note = `${db.dbPath} is ${ageDays} days old — geoipupdate has probably stopped; lookups still answer, from stale allocations`
       if (!db.watching) note += ' (and the file is not watched — pass watch: true)'

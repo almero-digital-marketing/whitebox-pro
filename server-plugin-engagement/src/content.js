@@ -341,14 +341,14 @@ export async function status({ since } = {}) {
       label: 'engagement',
       metrics: [
         { key: 'transcribed', value: byKind.video || 0,
-          description: 'Videos turned into text in this window' },
+          description: 'Videos we read the words from, to track what was watched' },
         { key: 'described', value: byKind.image || 0,
-          description: 'Images described as text in this window' },
+          description: 'Images we read the content of, to track what was seen' },
         // `live`, matching the query above: this counts the whole cache, not the
         // window. Without the flag the board would show it beside the two windowed
         // counts and imply all three moved together when the window changed.
         { key: 'no text', value: noText, severity: 'bad', live: true,
-          description: 'Cached with no text — whole cache, never retried' },
+          description: 'Videos or images we could not read — views go untracked' },
       ],
       note: noText
         ? `${noText} cached entr${noText === 1 ? 'y' : 'ies'} resolved to no text (whole cache, not the window) — every view of those URLs records nothing until they're invalidated`
