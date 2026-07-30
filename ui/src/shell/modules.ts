@@ -14,7 +14,12 @@ import Users from '../modules/users/Users.vue'
 export interface ModuleDef {
   id: string
   label: string
-  icon: string        // Material Symbols Outlined ligature name (rendered via .material-symbols-outlined)
+  // Material Symbols Outlined ligature name (rendered via .material-symbols-outlined).
+  // Pick one that is distinct from its NEIGHBOURS, not just apt on its own: the rail
+  // is a vertical column of 20px glyphs with no labels, so two similar shapes are two
+  // buttons nobody can tell apart. Live was `monitoring`, a chart, sitting directly
+  // above Analytics' `bar_chart` — apt in isolation, indistinguishable in place.
+  icon: string
   component: Component
   // optional route sub-segments appended to the module's path, so deep state lives in
   // the URL (analytics carries the open report + selected widget). Omit for a flat path.
@@ -34,7 +39,7 @@ export const modules: ModuleDef[] = [
   // modules[0]. Opening on the monitoring view answers "is anything wrong?"
   // before you've clicked anything, which is the question you'd otherwise have
   // to remember to go and ask.
-  { id: 'live', label: 'Live', icon: 'monitoring', component: markRaw(Live), requiresAnyPermission: ['live:read'] },
+  { id: 'live', label: 'Live', icon: 'sensors', component: markRaw(Live), requiresAnyPermission: ['live:read'] },
   { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: markRaw(Analytics), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
   { id: 'audiences', label: 'Audiences', icon: 'group', component: markRaw(Audiences), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
   { id: 'campaigns', label: 'Campaigns', icon: 'send', component: markRaw(Campaigns), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },

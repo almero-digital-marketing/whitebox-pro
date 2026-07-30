@@ -535,7 +535,6 @@ async function toggleNetwork(n: any) {
 .act-tip { padding: 0; margin: 0 0 14px; }
 .seg-tip { padding: 0; margin: 0 0 12px; }
 .seg-list { padding: 0; }   /* .side-body already supplies the surround padding */
-.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 
 .rail-item { display: flex; align-items: center; gap: 6px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
 .rail-item:hover { background: var(--panel-2); }

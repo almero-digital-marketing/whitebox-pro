@@ -256,6 +256,23 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 .count-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex: none; }
 .count-dot.zero { background: var(--border-2); }
 
+/* A rail list, and the row that says it is empty.
+ *
+ * Both were defined where they were first used rather than where they are USED:
+ *   `.rail-list`  carried its `list-style: none` only in RailPane's SCOPED style, so
+ *                 Campaigns, Audiences and People's SegmentsPanel — which use the
+ *                 class in their own panes — rendered the browser's default bullet
+ *                 and indent. That is the stray dot beside "No campaign-enabled
+ *                 audiences".
+ *   `.rail-empty` was copied, declaration for declaration, into FIVE files
+ *                 (Audiences, Users, Campaigns, People's panel.css, Journeys').
+ *
+ * Only the RESET is here. The rail's own geometry — the 8/16px padding, the scroll,
+ * the flex — stays in RailPane, because that belongs to the rail column and not to
+ * every list that borrows the class. */
+.rail-list { list-style: none; margin: 0; padding: 0; }
+.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
 /* Segment pill — the palette row used by Audiences (compose a rule) and by
    People (put someone on a list). Global because it's now two modules; the
    drag, rename and editing affordances stay scoped to Audiences, which is the

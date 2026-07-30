@@ -671,11 +671,9 @@ function ago(iso?: string) {
    padding above — zero their own, so it isn't doubled (the .cmp-left campaigns rail below
    is NOT inside the accordion and keeps its normal padding). */
 .cmp-accordion .pane-tip { padding: 0; margin: 0 0 12px; }
-.cmp-accordion .rail-list { padding: 0; }
 
 .pane-head { height: 52px; flex: none; padding: 0 8px 0 18px; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
 .pane-tip { margin: 0; padding: 12px 16px 2px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
-.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 
 .rail-item { display: flex; align-items: center; gap: 6px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
 .rail-item:hover { background: var(--panel-2); }

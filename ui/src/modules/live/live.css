@@ -32,6 +32,14 @@
    `min-height: 0` at every level is what lets the content scroll INSIDE the filled
    panel instead of the pane growing. */
 
+/* The connection dot on the pane's title. `.acc-title` is a flex row with `gap: 8px`,
+   which is sized for the `.count-pill` it was built to carry — too wide for a 7px dot,
+   and the header's uppercase `letter-spacing: .06em` adds a trailing sliver after the
+   final letter on top of it, so "LIVE" and its dot read as two separate things.
+   -2px brings the effective gap to 6px. Scoped to `.count-dot` so the pill beside it
+   keeps the full 8px, which it needs. */
+.acc-title .count-dot { margin-left: -2px; }
+
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
    Margin, not padding: this sits inside the accordion content, which already brings
    its own 16px/18px. 12px below it, the same gap the form rhythm puts between

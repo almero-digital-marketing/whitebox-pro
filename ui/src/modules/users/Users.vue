@@ -465,7 +465,6 @@ function fmtDateTime(iso?: string) {
 .placeholder h2 { margin: 0 0 6px; color: var(--text); }
 
 .pane-head { height: 52px; flex: none; padding: 0 8px 0 18px; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 .rail-item { display: flex; align-items: center; gap: 6px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
 .rail-item:hover { background: var(--panel-2); }
 .rail-item.on { background: var(--accent-soft); }

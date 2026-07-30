@@ -95,7 +95,9 @@ const plural = computed(() => props.nounPlural || `${props.noun}s`)
    parent while another scrolls. Row styling stays with the module: slot content
    is compiled in the PARENT, so a module's own `.rail-item` rules still reach
    the rows it passes in. */
-.rail-list { list-style: none; margin: 0; padding: 8px 8px 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
+/* Geometry only — the list reset lives in style.css, because three other modules use
+   this class outside this component and a scoped reset never reached them. */
+.rail-list { padding: 8px 8px 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 
 /* 52px, matching the centre pane's bottom bar and every other pinned bar in
    the app — they sit side by side across a 1px divider, so a 4px difference

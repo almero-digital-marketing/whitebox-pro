@@ -18,7 +18,6 @@
 /* inside a panel the tip is the leading line, so it loses the top offset and
    gains the gap to the content below instead */
 .jrn-accordion .pane-tip { padding: 0; margin: 0 0 12px; }
-.rail-empty { padding: 14px 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 
 /* ── toggle switch ── */
 .sw { width: 30px; height: 18px; border-radius: 999px; background: var(--border-2); position: relative; flex: none; border: none; padding: 0; cursor: pointer; }
