@@ -12,7 +12,7 @@
 import { onActivated, onDeactivated, computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
-import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey } from './live'
+import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
 import FilterMenu from '../../components/FilterMenu.vue'
 import TrafficStrip from './components/TrafficStrip.vue'
 import './live.css'
@@ -77,29 +77,30 @@ const contentRows = computed(() => {
   return rows.map(r => ({ ...r, pct: Math.round((r.count / total) * 100) }))
 })
 
-// Status rows, with every figure flattened to one display shape so the template
-// doesn't branch on metric-vs-gauge.
+// Status rows, split by whether the window selector above actually governs them.
 //
-// The split is the point. This card sits under a window selector, but roughly half
-// its numbers ignore it — `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web` are all
-// "right now" — and shown undifferentiated beside `0 sent` they read as windowed
-// when they aren't. Switching 30m → 24h and watching half the card not move is how
-// you'd eventually find that out; the marker is how you find out immediately.
+// That split is the point. Roughly half the card's numbers ignore the window —
+// `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web` are all "right now" — and shown
+// undifferentiated beside `0 sent` they read as windowed when they aren't.
+// Switching 30m → 24h and noticing half the card didn't move is how you'd
+// eventually find that out; the NOW marker is how you find out immediately.
 //
-// Gauges need no `live` flag of their own: a ceiling is a current-state fact by
-// definition, so they always join the live group.
+// `of` renders as a ratio because either number alone says nothing: "3 of 8 held"
+// is the claim, not "3". There is no separate gauge shape any more — that array
+// existed only while the board drew a track for it.
 const statusRows = computed(() => (summary.value?.status || []).map(p => {
-  const fig = (key: string, text: string, bad: boolean) => ({ key, text, bad })
-  const isBad = (m: { severity?: string; value: number }) => m.severity === 'bad' && m.value > 0
+  const fig = (m: StatusMetric) => ({
+    key: m.key,
+    text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
+    // "Non-zero is a problem" is what severity means, so a zero never reads as bad.
+    bad: m.severity === 'bad' && m.value > 0,
+  })
   return {
     module: p.module,
     label: p.label,
     note: p.note,
-    windowed: p.metrics.filter(m => !m.live).map(m => fig(m.key, String(m.value), isBad(m))),
-    live: [
-      ...p.metrics.filter(m => m.live).map(m => fig(m.key, String(m.value), isBad(m))),
-      ...p.gauges.map(g => fig(g.label, `${g.used}/${g.total}`, !!g.exhausted)),
-    ],
+    windowed: p.metrics.filter(m => !m.live).map(fig),
+    live: p.metrics.filter(m => m.live).map(fig),
   }
 }))
 
@@ -362,8 +363,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                    exactly where the claim changes, so the distinction is read in
                    the row instead of remembered. Shown even when a plugin has
                    NOTHING windowed (geolocation, audiences) — that's the case you
-                   most need it for. A gauge lands here by definition: a ceiling is
-                   a right-now fact. -->
+                   most need it for. -->
               <span v-if="p.live.length" class="lv-dl-now">now</span>
               <span v-for="f in p.live" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
                 <span v-if="f.bad" class="material-symbols-outlined">error</span>

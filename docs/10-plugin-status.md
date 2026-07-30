@@ -32,12 +32,11 @@ return {
           // `severity: 'bad'` means "when this is non-zero, it's a problem".
           // The surface decides how to show it (icon + word, never colour alone).
           { key: 'failed',    value: 2, severity: 'bad' },
+          // `live` — current state, NOT windowed. `of` — a denominator, when the
+          // ratio is the claim and either number alone says nothing.
+          { key: 'web', value: 3, of: 8, live: true },
         ],
-        // Optional. A bounded resource — something with a ceiling you can hit.
-        gauges: [
-          { label: 'web', used: 3, total: 8, exhausted: false },
-        ],
-        note: null,               // optional one-liner, shown under the row
+        note: null,               // optional one-liner, behind an info icon
       }
     },
   },
@@ -53,21 +52,43 @@ identifier: `'delivered'`, not `'delivered_count'`.
 Mark a metric `severity: 'bad'` when a non-zero value means something is wrong
 (`failed`, `bounced`, `missed`). Don't mark counts that are merely large.
 
-### `gauges`
+### `of`
 
-For a resource with a ceiling, where the ratio is the point rather than the
-count — voip's number pool is the motivating case: "3 of 8 held" says something
-"3" alone doesn't. `exhausted` is the plugin's own judgement, not `used === total`,
-because only the plugin knows whether being full is actually a problem.
+A denominator, for when the ratio is the claim and either number alone says
+nothing: voip's "3 of 8 numbers held", audiences' "meta 1 of 5 delivering".
+
+There used to be a parallel `gauges` array for this — `{label, used, total,
+exhausted}` — on the theory that a bounded resource is a different kind of thing
+from a count. It isn't, or at least not differently enough: the array only existed
+because the board drew a progress track for it, and once the track was dropped a
+gauge and a metric-with-a-denominator rendered identically. `exhausted` collapsed
+into `severity`, which always meant the same thing ("the plugin's own judgement
+that this is a problem"). Two producers ever used it, voip and audiences, and only
+voip's was a bounded resource at all.
+
+One trap when marking a ratio `bad`: `severity` means **non-zero is a problem**, so
+a metric whose failure state is `value === 0` will never fire. Audiences hits this
+— "every audience on this network is dark" means `enabled - dry_run === 0` — and
+the answer is to put the severity on the metric that does go non-zero
+(`not delivering`) rather than to invent an inverted rule.
 
 ## Windowing
 
 `since` is a `Date`. Metrics are expected to be windowed by it.
 
-**Live state may ignore it**, and should say so. The voip pool is the current
-assignment table, not a history — "how many numbers are free" has no `since`, and
-there is no other source for it. Report it as a gauge and don't pretend it was
-windowed.
+**Live state may ignore it, and must then say so with `live: true`.** This is not
+cosmetic. The card sits under a window selector, and roughly half its numbers are
+current state — `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web`. Unmarked, they
+read as windowed counts that happen to be small, and switching 30m → 24h leaves
+them untouched with no explanation. Marked, the surface groups them behind a `now`
+marker.
+
+The voip pool is the clearest case and worth understanding, because the difference
+runs deeper than the flag: the call counts are a SQL aggregate over `started_at`,
+while the pool is a read of that process's in-memory assignment map. There is no
+history of it to query, it does not survive a restart, and it does not extend to a
+second instance. `since` cannot apply to it — not because nobody implemented it,
+but because the data does not exist.
 
 ## Failure
 

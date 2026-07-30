@@ -355,33 +355,39 @@ export async function status({ since } = {}) {
 
   const metrics = []
   if (counts) {
-    metrics.push({ key: 'audiences', value: counts.audiences })
-    metrics.push({ key: 'segments', value: counts.segments })
+    // Every number here is `live`: audiences has no history to window (its
+    // per-event delivery log went with the rule system in migration 011), so
+    // `since` is ignored and the card must say so rather than imply otherwise.
+    metrics.push({ key: 'audiences', value: counts.audiences, live: true })
+    metrics.push({ key: 'segments', value: counts.segments, live: true })
   }
   let live = 0, dark = 0
   if (byNetwork) {
     for (const n of byNetwork) { live += n.enabled - n.dry_run; dark += n.dry_run }
-    metrics.push({ key: 'delivering', value: live })
+    metrics.push({ key: 'delivering', value: live, live: true })
     // Switched on, reaching nobody. Non-zero here means someone activated an
     // audience and the ad network never heard about it.
-    metrics.push({ key: 'not delivering', value: dark, severity: 'bad' })
+    metrics.push({ key: 'not delivering', value: dark, severity: 'bad', live: true })
+    // Per-network breakdown of the two totals above, carrying `of` because "meta 1
+    // of 5" is the whole story where either number alone is meaningless. These were
+    // `gauges` — a separate array for bounded resources — but nothing here is
+    // consumed and there is no ceiling to hit: it's a proportion that works, not a
+    // resource. Once the board stopped drawing a track for gauges there was no
+    // reason for them to be a second shape, so they are metrics with a denominator.
+    //
+    // Deliberately NOT marked `bad`, even when every audience on a network is dark.
+    // `severity: 'bad'` means "non-zero is a problem", and this metric's problem
+    // state is `value === 0` — it would never fire. `not delivering` above is the
+    // number that goes non-zero in exactly that case, so the signal is already
+    // there and these rows stay as the detail telling you WHICH network.
+    for (const n of byNetwork) {
+      metrics.push({ key: n.network, value: n.enabled - n.dry_run, of: n.enabled, live: true })
+    }
   }
 
   return {
     label: 'audiences',
     metrics,
-    // One gauge per network that any audience is activated for: how many of them
-    // actually reach it. The ratio is the point — "meta 1 of 5" is the whole
-    // story where either number alone is meaningless. `exhausted` is this
-    // plugin's own judgement, as the contract asks, and here it means "every
-    // audience aimed at this network is a no-op", which is the state worth
-    // acting on rather than any particular count.
-    gauges: (byNetwork || []).map(n => ({
-      label: n.network,
-      used: n.enabled - n.dry_run,
-      total: n.enabled,
-      exhausted: n.enabled > 0 && n.dry_run === n.enabled,
-    })),
     note: !counts || !byNetwork
       ? 'some audience counts could not be read — see the server log'
       : dark

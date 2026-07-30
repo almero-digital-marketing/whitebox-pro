@@ -34,14 +34,22 @@ export interface StatusMetric {
    * untouched. Plugins that ignore `since` must say so with this.
    */
   live?: boolean
+  /**
+   * A denominator, when the ratio is the point and either number alone says
+   * nothing — voip's "3 of 8 numbers held", audiences' "meta 1 of 5 delivering".
+   *
+   * This replaced a parallel `gauges` array. That array existed only because the
+   * board once drew a track for bounded resources; with the track gone, a gauge
+   * and a metric-with-a-denominator render identically, and one concept beats
+   * two. `severity` covers what `exhausted` used to say — it always meant "the
+   * plugin's own judgement that this is a problem".
+   */
+  of?: number
 }
-export interface StatusGauge { label: string; used: number; total: number; exhausted?: boolean }
 export interface PluginStatus {
   module: string
   label: string
   metrics: StatusMetric[]
-  /** A bounded resource, where the ratio is the point (voip's number pool). */
-  gauges: StatusGauge[]
   note: string | null
 }
 

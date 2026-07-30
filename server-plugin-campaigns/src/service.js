@@ -298,8 +298,8 @@ export async function status({ since } = {}) {
       // there is no worker that will pick it up.
       { key: 'overdue', value: c.overdue, severity: 'bad' },
     ],
-    // No gauges: a campaign isn't a bounded resource, so there's no ceiling for
-    // a ratio to be measured against.
+    // No `of` on any of these: a campaign has no ceiling, so there is nothing for
+    // a ratio to be measured against and a denominator would invent one.
     note: c.overdue
       ? `${c.overdue} campaign${c.overdue === 1 ? '' : 's'} past ${c.overdue === 1 ? 'its' : 'their'} send time and still scheduled — nothing will deliver ${c.overdue === 1 ? 'it' : 'them'}`
       : dryRun

@@ -75,7 +75,6 @@ async function collectStatus(since) {
         module,
         label: s.label || module,
         metrics: Array.isArray(s.metrics) ? s.metrics : [],
-        gauges: Array.isArray(s.gauges) ? s.gauges : [],
         note: s.note ?? null,
       }
     } catch (err) {

@@ -63,10 +63,12 @@ export async function stats({ since } = {}) {
 // Self-describing health (see docs/10-plugin-status.md). Calls AND the number
 // pool in one answer, because they're one question: "is call tracking working".
 //
-// The pool arrives as a GAUGE rather than a metric — it's a bounded resource where
-// the ratio is the point ("3 of 8 held" says what "3" cannot), and it is live
-// state, not windowed: the assignment map IS the current truth and there is no
-// history to query. Reporting it as a windowed count would be a lie about it.
+// The pool numbers carry `of` — the ratio is the point, since "3 of 8 held" says
+// what "3" cannot — and `live`, because they are NOT windowed. That distinction is
+// not cosmetic: the four counts above are a SQL aggregate over `started_at`, while
+// the pool is a read of this process's assignment map. There is no history of it to
+// query, and it does not survive a restart or extend to a second instance, so
+// reporting it under a window selector would be a lie about what it is.
 export async function status({ since, pool } = {}) {
   const s = await stats({ since })
   const p = pool ? pool() : null
@@ -79,13 +81,16 @@ export async function status({ since, pool } = {}) {
       // Someone reached out and nobody answered — a failure in the same sense as
       // a bounced email, and the one voip number an operator would act on.
       { key: 'missed', value: s.missed, severity: 'bad' },
+      ...(p ? p.tags.map(t => ({
+        key: t.tag,
+        value: t.assigned,
+        of: t.total,
+        live: true,
+        // This plugin's own judgement, not `used === total`: a full pool is only a
+        // problem once somebody is actually waiting on it.
+        ...(t.exhausted ? { severity: 'bad' } : {}),
+      })) : []),
     ],
-    gauges: p ? p.tags.map(t => ({
-      label: t.tag, used: t.assigned, total: t.total,
-      // The plugin's own judgement, not `used === total`: full is only a problem
-      // once somebody is actually waiting on it.
-      exhausted: t.exhausted,
-    })) : [],
     note: p?.waiting
       ? `${p.waiting} visitor${p.waiting === 1 ? '' : 's'} waiting for a number — they were shown the untracked fallback`
       : null,

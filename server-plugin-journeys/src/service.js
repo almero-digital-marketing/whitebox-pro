@@ -242,8 +242,8 @@ export async function status({ since } = {}) {
   return {
     label: 'journeys',
     metrics,
-    // No gauges: nothing in journeys is a bounded resource. Enrollments have no
-    // ceiling to hit, so a ratio would invent a limit that doesn't exist.
+    // No `of` on any of these: enrollments have no ceiling to hit, so a
+    // denominator would invent a limit that doesn't exist.
     note: !live || !activity
       ? 'some journey counts could not be read — see the server log'
       : live.stuck

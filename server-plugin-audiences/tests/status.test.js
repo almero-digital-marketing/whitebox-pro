@@ -105,11 +105,21 @@ describe('service.status', () => {
     setup({ networks: [{ network: 'meta', enabled: 5, dry_run: 2 }, { network: 'tiktok', enabled: 2, dry_run: 0 }] })
     const s = await service.status({ since: new Date() })
     expect(s.label).toBe('audiences')
-    expect(s.metrics.map(m => m.key)).toEqual(['audiences', 'segments', 'delivering', 'not delivering'])
+    // Totals first, then the per-network breakdown of those same totals.
+    expect(s.metrics.map(m => m.key))
+      .toEqual(['audiences', 'segments', 'delivering', 'not delivering', 'meta', 'tiktok'])
     expect(at(s, 'audiences').value).toBe(4)
     expect(at(s, 'segments').value).toBe(12)
     expect(at(s, 'delivering').value).toBe(5)        // (5-2) + (2-0)
     expect(at(s, 'not delivering').value).toBe(2)
+  })
+
+  // Nothing in audiences is windowed, so every metric must say so — otherwise the
+  // board shows them under a window selector that doesn't govern them.
+  it('marks every metric live, because none of them are windowed', async () => {
+    setup({ networks: [{ network: 'meta', enabled: 5, dry_run: 2 }] })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.every(m => m.live === true)).toBe(true)
   })
 
   // Switched on, reaching nobody — the silent failure. Nothing else marks it.
@@ -133,27 +143,40 @@ describe('service.status', () => {
     expect((await service.status()).label).toBe('audiences')
   })
 
-  describe('gauges — one per activated network, because the ratio is the point', () => {
+  // These were `gauges`, a parallel array for bounded resources. Nothing here is a
+  // bounded resource — no ceiling is consumed — and once the board stopped drawing
+  // a track for gauges there was no reason for a second shape, so they are metrics
+  // carrying `of`.
+  describe('per-network breakdown — a ratio, because either number alone says nothing', () => {
     it('reports how many of an activated network\'s audiences actually reach it', async () => {
       setup({ networks: [{ network: 'meta', enabled: 5, dry_run: 2 }] })
       const s = await service.status({ since: new Date() })
-      expect(s.gauges).toEqual([{ label: 'meta', used: 3, total: 5, exhausted: false }])
+      expect(at(s, 'meta')).toEqual({ key: 'meta', value: 3, of: 5, live: true })
     })
 
-    // The plugin's own judgement, as the contract asks: `exhausted` here means
-    // every audience aimed at this network is a no-op, not used === total.
-    it('calls a network exhausted when not one of its audiences gets through', async () => {
+    // The severity trap this design has to avoid: "not one of meta's audiences gets
+    // through" means value === 0, and `severity: 'bad'` fires on NON-zero. Marking
+    // it bad here would be a signal that can never appear; `not delivering` is the
+    // metric that goes non-zero in exactly this case, so that's where it lives.
+    it('leaves a wholly dark network unmarked, and lets `not delivering` carry it', async () => {
       setup({ networks: [{ network: 'meta', enabled: 3, dry_run: 3 }, { network: 'google', enabled: 1, dry_run: 0 }] })
       const s = await service.status({ since: new Date() })
-      expect(s.gauges).toEqual([
-        { label: 'meta', used: 0, total: 3, exhausted: true },
-        { label: 'google', used: 1, total: 1, exhausted: false },
-      ])
+      expect(at(s, 'meta')).toEqual({ key: 'meta', value: 0, of: 3, live: true })
+      expect(at(s, 'google')).toEqual({ key: 'google', value: 1, of: 1, live: true })
+      expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['not delivering'])
+      expect(at(s, 'not delivering').value).toBe(3)
     })
 
-    it('has no gauges when no audience is activated anywhere', async () => {
+    it('adds no per-network rows when no audience is activated anywhere', async () => {
       setup({ networks: [] })
-      expect((await service.status({ since: new Date() })).gauges).toEqual([])
+      const s = await service.status({ since: new Date() })
+      expect(s.metrics.map(m => m.key)).toEqual(['audiences', 'segments', 'delivering', 'not delivering'])
+    })
+
+    // The array is gone from the contract, not merely unused.
+    it('no longer returns a gauges array at all', async () => {
+      setup({ networks: [{ network: 'meta', enabled: 5, dry_run: 2 }] })
+      expect((await service.status({ since: new Date() })).gauges).toBeUndefined()
     })
   })
 
@@ -176,7 +199,7 @@ describe('service.status', () => {
     it('reports the half it got when one read fails', async () => {
       setup({ counts: new Error('db down'), networks: [{ network: 'meta', enabled: 1, dry_run: 0 }] })
       const s = await service.status({ since: new Date() })
-      expect(s.metrics.map(m => m.key)).toEqual(['delivering', 'not delivering'])
+      expect(s.metrics.map(m => m.key)).toEqual(['delivering', 'not delivering', 'meta'])
       expect(s.note).toMatch(/could not be read/)
     })
 
@@ -184,7 +207,6 @@ describe('service.status', () => {
       setup({ counts: new Error('db down'), networks: new Error('db down') })
       const s = await service.status({ since: new Date() })
       expect(s.metrics).toEqual([])
-      expect(s.gauges).toEqual([])
       expect(s.note).toMatch(/could not be read/)
     })
   })

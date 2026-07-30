@@ -236,18 +236,17 @@ describe('summary() status — collected from whoever can describe themselves', 
   // The board used to name mail/sms/voip and know each one's field names, so a new
   // channel meant editing this file AND the UI. Now any plugin exposing status()
   // appears and none has to be announced (docs/10-plugin-status.md).
-  const plugin = (label, metrics, gauges = [], note = null) => ({
-    service: { status: async () => ({ label, metrics, gauges, note }) },
+  const plugin = (label, metrics, note = null) => ({
+    service: { status: async () => ({ label, metrics, note }) },
   })
 
-  it('passes through metrics, gauges and notes verbatim, in config order', async () => {
+  it('passes through metrics and notes verbatim, in config order', async () => {
     service.init({
       eventRegistry: registry([], 0),
       plugins: {
         mail: plugin('mail', [{ key: 'sent', value: 3 }, { key: 'failed', value: 1, severity: 'bad' }]),
         voip: plugin('voip',
-          [{ key: 'ringing', value: 1 }, { key: 'missed', value: 2, severity: 'bad' }],
-          [{ label: 'web', used: 3, total: 8, exhausted: false }],
+          [{ key: 'ringing', value: 1 }, { key: 'web', value: 3, of: 8, live: true }],
           '1 visitor waiting for a number'),
       },
       logger: console,
@@ -258,7 +257,9 @@ describe('summary() status — collected from whoever can describe themselves', 
     expect(s.status[0].metrics).toEqual([
       { key: 'sent', value: 3 }, { key: 'failed', value: 1, severity: 'bad' },
     ])
-    expect(s.status[1].gauges[0]).toMatchObject({ label: 'web', used: 3, total: 8 })
+    expect(s.status[1].metrics).toEqual([
+      { key: 'ringing', value: 1 }, { key: 'web', value: 3, of: 8, live: true },
+    ])
     expect(s.status[1].note).toBe('1 visitor waiting for a number')
   })
 
@@ -313,7 +314,7 @@ describe('summary() status — collected from whoever can describe themselves', 
     })
     const s = await service.summary({})
     expect(s.status).toEqual([
-      { module: 'carrier_pigeon', label: 'pigeons', metrics: [{ key: 'dispatched', value: 4 }], gauges: [], note: null },
+      { module: 'carrier_pigeon', label: 'pigeons', metrics: [{ key: 'dispatched', value: 4 }], note: null },
     ])
   })
 
@@ -324,7 +325,7 @@ describe('summary() status — collected from whoever can describe themselves', 
       logger: console,
     })
     const [row] = (await service.summary({})).status
-    expect(row).toMatchObject({ module: 'sms', label: 'sms', gauges: [], note: null })
+    expect(row).toMatchObject({ module: 'sms', label: 'sms', metrics: [{ key: 'sent', value: 1 }], note: null })
   })
 
   // ctx.plugins accumulates as plugins register (server/src/plugins.js), and this
