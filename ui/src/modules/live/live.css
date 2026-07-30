@@ -42,7 +42,8 @@
 
 /* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane.
    Margin, not padding: this sits inside the accordion content, which already brings
-   its own 14px/18px. */
+   its own 14px/18px. 12px below it, the same gap the form rhythm puts between
+   fields, so the hint is spaced like the thing it introduces. */
 .lv-side-hint { margin: 0 0 12px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
 /* The right-pane action row, values copied verbatim from People's
@@ -64,11 +65,16 @@
 .lv-side .b-actions > .p-button { flex-shrink: 0; }
 
 
-/* One plugin's counters inside the Status panel. No rule between groups: the
-   uppercase heading already separates them, and thirteen hairlines down a narrow
-   pane added structure the content didn't need. */
-.lv-sgroup + .lv-sgroup { margin-top: 14px; }
-.lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+/* A group inside a pane section: one plugin's counters, or one filter axis.
+   Spacing is the app's pane-form rhythm, not values picked by eye — People's
+   `.p-form` puts 12px between fields and `.fld` puts 5px between a label and its
+   control, so a group is 12px from the last and its heading sits 5px above its rows.
+   Same two numbers everywhere in the pane, which is what makes the Live and Status
+   sections read as one thing.
+   No rule between groups: the uppercase heading already separates them, and thirteen
+   hairlines down a narrow pane added structure the content didn't need. */
+.lv-sgroup + .lv-sgroup { margin-top: 12px; }
+.lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 
 /* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
    `.cmp-sw` in components/query/qb.css): a <label> whose text sits left and whose
@@ -82,7 +88,7 @@
 /* TWO COLUMNS: the readable half left, the switch right. `align-items: center` puts
    the switch against the middle of the two-line text block rather than its first
    line. */
-.lv-srow { display: flex; align-items: center; gap: 8px; padding: 5px 6px; margin: 0 -6px;
+.lv-srow { display: flex; align-items: center; gap: 8px; padding: 4px 6px; margin: 0 -6px;
   cursor: pointer; }
 .lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
 /* The text column. `min-width: 0` is what makes the description WRAP inside this

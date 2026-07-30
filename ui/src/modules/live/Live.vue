@@ -14,7 +14,6 @@ import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
 import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
 import ToggleSwitch from 'primevue/toggleswitch'
-import Checkbox from 'primevue/checkbox'
 import Button from 'primevue/button'
 import Accordion from 'primevue/accordion'
 import AccordionPanel from 'primevue/accordionpanel'
@@ -530,13 +529,14 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
 
             <div class="lv-sgroup">
               <div class="lv-sgroup-head"><span class="lv-dl-ch">Direction</span></div>
-              <!-- A ToggleSwitch, the same control the Status rows use — direction is
-                   a fixed set of three or four, so each one reads as a thing you
-                   switch on and off rather than an item you tick in a list.
-                   Two states, not the tri-state cycle it replaced: "switch on what
-                   you want to see" needs no explaining. Switching one OFF writes an
-                   exclude rather than a whitelist of what's left, so a direction that
-                   first appears tomorrow still shows by default. -->
+              <!-- ToggleSwitch, the same control the Status rows use, so this pane has
+                   ONE control meaning "show this or don't" — whether the row is a
+                   counter, a direction or a channel. Channel briefly had a checkbox,
+                   which made two controls mean the same thing three rows apart.
+                   Two states, not the tri-state cycle it replaced: "switch on what you
+                   want to see" needs no explaining. Switching one OFF writes an
+                   exclude rather than a whitelist of what remains, so a direction or
+                   channel that first appears tomorrow still shows by default. -->
               <label v-for="d in directionChips" :key="d" class="lv-srow"
                 :title="`Show ${d} across the whole board`">
                 <span class="lv-srow-t">
@@ -561,7 +561,7 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                     <span class="lv-srow-k">{{ c.channel }}</span>
                   </span>
                 </span>
-                <Checkbox class="lv-sw" binary :model-value="store.isChanOn(c.channel)"
+                <ToggleSwitch class="lv-sw" :model-value="store.isChanOn(c.channel)"
                   @update:model-value="(v: boolean) => store.setChannel(c.channel, v)"
                   :aria-label="`Show ${c.channel} on the board`" />
               </label>
