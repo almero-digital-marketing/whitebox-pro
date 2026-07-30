@@ -76,12 +76,22 @@ the answer is to put the severity on the metric that does go non-zero
 
 `since` is a `Date`. Metrics are expected to be windowed by it.
 
-**Live state may ignore it, and must then say so with `live: true`.** This is not
-cosmetic. The card sits under a window selector, and roughly half its numbers are
-current state — `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web`. Unmarked, they
-read as windowed counts that happen to be small, and switching 30m → 24h leaves
-them untouched with no explanation. Marked, the surface groups them behind a `now`
-marker.
+**Live state may ignore it, and must then say so with `live: true`.** Roughly half
+the numbers on the board are current state — `0 drafts`, `1 segments`, `0 enrolled`,
+`0/8 web` — and a plugin that ignores `since` is making a different claim from one
+that windowed and found nothing.
+
+Set it truthfully, but don't expect a surface to draw it. **The Live board
+deliberately renders windowed and current-state figures identically.** Three
+per-figure cues were tried and dropped — a `now` chip, accent colour, then
+bold-vs-regular — each one spending row clarity on a distinction nobody opens the
+card to ask about. What you go there for is whether a number is *wrong*, and
+`severity` answers that. The flag is worth setting anyway: it is cheap, it is
+tested, and working out which of your metrics are windowed is the expensive part.
+
+If a surface does render it one day, note that metric ORDER is the plugin's (see
+`metrics` above) — grouping by `live` overrides that ordering, which is why the
+board stopped doing it.
 
 The voip pool is the clearest case and worth understanding, because the difference
 runs deeper than the flag: the call counts are a SQL aggregate over `started_at`,

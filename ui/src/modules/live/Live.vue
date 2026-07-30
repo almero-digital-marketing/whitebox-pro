@@ -77,32 +77,27 @@ const contentRows = computed(() => {
   return rows.map(r => ({ ...r, pct: Math.round((r.count / total) * 100) }))
 })
 
-// Status rows, split by whether the window selector above actually governs them.
+// Status rows, with each figure flattened to one display shape.
 //
-// That split is the point. Roughly half the card's numbers ignore the window —
-// `0 drafts`, `1 segments`, `0 enrolled`, `0/8 web` are all "right now" — and shown
-// undifferentiated beside `0 sent` they read as windowed when they aren't.
-// Switching 30m → 24h and noticing half the card didn't move is how you'd
-// eventually find that out; the NOW marker is how you find out immediately.
+// Metric order is the PLUGIN's, deliberately — the contract makes it part of the
+// contract ("put the number an operator reads first, first"). An earlier version
+// regrouped them here to separate windowed counts from current state; that
+// overrode the plugin's ordering to serve a distinction the card doesn't draw.
 //
 // `of` renders as a ratio because either number alone says nothing: "3 of 8 held"
 // is the claim, not "3". There is no separate gauge shape any more — that array
 // existed only while the board drew a track for it.
-const statusRows = computed(() => (summary.value?.status || []).map(p => {
-  const fig = (m: StatusMetric) => ({
+const statusRows = computed(() => (summary.value?.status || []).map(p => ({
+  module: p.module,
+  label: p.label,
+  note: p.note,
+  figs: p.metrics.map((m: StatusMetric) => ({
     key: m.key,
     text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
     // "Non-zero is a problem" is what severity means, so a zero never reads as bad.
     bad: m.severity === 'bad' && m.value > 0,
-  })
-  return {
-    module: p.module,
-    label: p.label,
-    note: p.note,
-    windowed: p.metrics.filter(m => !m.live).map(fig),
-    live: p.metrics.filter(m => m.live).map(fig),
-  }
-}))
+  })),
+})))
 
 // in/out/internal always offered; `unknown` only when there is one to look at.
 const directionChips = computed(() => {
@@ -350,23 +345,10 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <div class="lv-dl-row">
             <span class="lv-dl-ch">{{ p.label }}</span>
             <span class="lv-dl-figs">
-              <!-- Windowed first: these are the ones the selector above actually
-                   governs. `bad` is the plugin's own call, shown with an icon and
-                   the word, never colour alone. -->
-              <span v-for="f in p.windowed" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
-                <span v-if="f.bad" class="material-symbols-outlined">error</span>
-                <b>{{ f.text }}</b> {{ f.key }}
-              </span>
-
-              <!-- Then current state, in the accent colour rather than behind an
-                   inline marker. A chip reading "now" spent row width and still had
-                   to be explained; colour costs nothing and, grouped at the end of
-                   every row, the distinction is legible as a pattern across the
-                   card. The legend below says what it means once, and each figure
-                   carries it on hover for anyone reading a single row. -->
-              <span v-for="f in p.live" :key="f.key" class="lv-dl-fig is-now"
-                :class="{ bad: f.bad }"
-                v-tooltip.top="{ value: `${f.key}: current state — the ${store.window} window does not apply to it`, class: 'lv-why-tip' }">
+              <!-- One loop, in the plugin's own order. `bad` is the plugin's own
+                   call too, shown with an icon and the word, never colour alone —
+                   which is now the only thing colour means on this card. -->
+              <span v-for="f in p.figs" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
                 <span v-if="f.bad" class="material-symbols-outlined">error</span>
                 <b>{{ f.text }}</b> {{ f.key }}
               </span>
@@ -406,15 +388,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              absence is easy to miss: nobody notices that a plugin has NEVER
              reported. This is the difference between a card that shows what's
              monitored and one that shows what isn't. -->
-        <!-- Says once what the weight means. Needed because a visual difference is
-             not a message: it tells you two kinds of number are in play but never
-             which is which — that's what got asked. Only rendered when the card
-             actually has one, so it never explains something nobody can see. -->
-        <p v-if="statusRows.some(p => p.live.length)" class="lv-dl-legend">
-          Numbers in normal weight (<b>0</b>) are current state — the
-          {{ store.window }} window doesn't apply to them.
-        </p>
-
         <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
           not monitored: {{ summary.status_silent.join(', ') }}
         </p>

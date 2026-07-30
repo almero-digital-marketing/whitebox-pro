@@ -90,21 +90,14 @@
    every row. No height: it lives inside the flex row it annotates.
    Sized here rather than reusing `.icon-btn`, which is a 30px control built for
    toolbars — five of those would out-weigh the numbers they annotate. */
-/* Current-state figures: the number drops to normal weight. Weight, not colour —
-   it survives greyscale and colourblindness, where teal-vs-black said nothing, and
-   it leaves colour free to mean only one thing on this card (danger).
-   Which way round matters. The BOLD numbers are the ones the window selector
-   governs, so the figures that respond to the control above stay emphasised and
-   the ones that ignore it recede. Weight also can't collide with `.lv-dl-fig.bad`,
-   which sets colour and nothing else — so a failing current-state metric is still
-   unmistakably red, and this needs no `:not(.bad)` guard to stay that way. */
-.lv-dl-fig.is-now b { font-weight: 400; }
-.lv-dl-fig.is-now { cursor: help; }
-
-/* Says once what the weight means, in the weight it's describing. */
-.lv-dl-legend { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border);
-  font-size: 10.5px; line-height: 1.45; color: var(--muted); }
-.lv-dl-legend b { font-weight: 400; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+/* No styling distinguishes windowed figures from current-state ones. Tried and
+   dropped, in this order: a "NOW" chip (spent row width and still had to be asked
+   about), accent colour (invisible in greyscale, and it put a second meaning in the
+   channel that already means danger), then bold-vs-regular. Every version made the
+   row noisier to buy a distinction that isn't what you come to this card for — you
+   come to see whether a number is wrong. `severity` handles that.
+   The `live` flag still travels on the wire and is still true; nothing renders it.
+   Whatever renders it next should not be a per-figure decoration. */
 
 .lv-dl-why { margin-left: auto; display: inline-flex; align-items: center;
   border: 0; background: none; padding: 0; cursor: help; color: var(--muted); }

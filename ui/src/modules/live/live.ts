@@ -29,9 +29,14 @@ export interface StatusMetric {
   /**
    * This number is CURRENT STATE and ignores the window — "how many right now",
    * not "how many in the last 30m". Roughly half the card is like this
-   * (`0 drafts`, `1 segments`, `0 enrolled`), and showing it beside a windowed
-   * count under a window selector reads as a lie: changing 30m → 24h leaves it
-   * untouched. Plugins that ignore `since` must say so with this.
+   * (`0 drafts`, `1 segments`, `0 enrolled`). Plugins that ignore `since` must say
+   * so with this, and every one of them does, verified against its own SQL.
+   *
+   * NOT RENDERED. The Live board shows windowed and current-state figures
+   * identically, on purpose: three attempts at a per-figure cue (a "now" chip,
+   * accent colour, bold-vs-regular) each cost row clarity to answer a question
+   * nobody opens this card to ask. Kept because it is true, cheap and tested — the
+   * analysis behind it is the expensive part and shouldn't have to be redone.
    */
   live?: boolean
   /**
