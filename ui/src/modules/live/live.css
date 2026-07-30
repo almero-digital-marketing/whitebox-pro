@@ -37,12 +37,15 @@
 .lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
 .lv-accordion .p-accordioncontent-content { padding: 14px 18px; background: var(--panel); border: none; }
 
-.lv-side-hint { margin: 0 0 10px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+/* 11.5px/1.45 — People's `.fld-hint`, the app's explanatory tier inside a pane. */
+.lv-side-hint { margin: 0 0 10px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 
-/* One plugin's counters. The separator carries the grouping, so the plugin name
-   doesn't need a heavier weight than `.lv-dl-ch` already gives it. */
-.lv-sgroup + .lv-sgroup { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
-.lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+/* One plugin's counters. The heading is `.lv-dl-ch`, which already matches People's
+   `.ppl-console .sub-title` (11px/700/.04em/uppercase/--text-strong), so the
+   separator matches that too: 4px above, 12px below the rule. It was 6px/6px, which
+   read tighter than every other pane in the app. */
+.lv-sgroup + .lv-sgroup { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+.lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 
 /* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
    `.cmp-sw` in components/query/qb.css): a <label> whose text sits left and whose
@@ -54,19 +57,21 @@
    The value column is fixed and right-aligned so digits line up instead of drifting
    with label length; tabular-nums stops a `12` being narrower than an `88`. */
 .lv-srow { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; margin: 0 -6px;
-  cursor: pointer; font-size: 11.5px; }
+  cursor: pointer; }
 .lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
 .lv-srow-n { font-variant-numeric: tabular-nums; }
-/* The same figure the header leads with — `.lv-fig b`, verbatim. These rows ARE the
-   header's counters, so a counter should not change size depending on which of the
-   two you happen to be looking at.
-   No fixed number column and no right-alignment: the row reads as a sentence
+/* The app's stat tier for a figure inside a PANEL — `.bs-num` / `.bs-lbl`, the same
+   20px/650 + 12px/muted pair Audiences, Campaigns and Journeys' result panels use.
+   Not the header's `.lv-fig b` (22px beside 11.5px), which this borrowed at first:
+   that is the board's headline tier, and nothing else in any right pane in the app
+   goes near it. Same counter, two contexts, each using its own context's tier.
+   No fixed number column and no right-alignment: the row reads as a phrase
    ("0.1 events/min") rather than a table cell, which is what a list of differently
    named things wants. The cost is that the digits no longer form a column — that's
    the trade, and tabular-nums still stops a single value jittering as it ticks. */
-.lv-srow-n b { font-size: 22px; font-weight: 650; color: var(--text-strong);
+.lv-srow-n b { font-size: 20px; font-weight: 650; color: var(--text-strong);
   font-variant-numeric: tabular-nums; }
-.lv-srow-k { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-srow-k { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-srow.bad .lv-srow-n b, .lv-srow.bad .lv-srow-k { color: var(--danger); }
 .lv-srow.bad .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--danger); }
 /* `margin-left: auto` and NOTHING else — exactly what CompareSection's `.cmp-sw`
