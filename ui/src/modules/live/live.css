@@ -185,23 +185,24 @@
    Content alone on a second row, and made every list narrow enough to ellipsise the
    campaign names that are the whole point of the card.
 
-   FIXED BODY HEIGHT, sized for ten rows and scrolling past that. Cards whose height
-   follows their content make the board jump on every poll — a card with two rows this
-   tick and six the next drags everything below it — and a list that can only show
-   three of ten is a list you cannot read. The arithmetic is spelled out rather than
-   baked into one number so that changing the row count is changing `--lv-rows`. */
+   FIXED BODY HEIGHT, sized for five rows and scrolling past that. Cards whose height
+   follows their content make the board jump on every 10s poll — a card with two rows
+   this tick and six the next drags everything below it. Five is the viewport, not the
+   limit: the server still returns ten, so a longer list scrolls rather than being
+   truncated. The arithmetic is spelled out rather than baked into one number, so
+   changing how much shows at once is changing `--lv-rows` and nothing else. */
 .lv-grid {
   display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px;
-  --lv-rows: 10;
+  --lv-rows: 5;
   --lv-row-h: 16px;                                    /* .lv-bar, 12px text beside an 8px track */
   --lv-row-gap: 7px;                                   /* .lv-bars gap */
   --lv-body-h: calc(var(--lv-rows) * var(--lv-row-h) + (var(--lv-rows) - 1) * var(--lv-row-gap));
 }
 @media (min-width: 720px) { .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-/* The list gets exactly that height whether it holds two rows or twenty. `.lv-empty`
+/* The list gets exactly that height whether it holds one row or twenty. `.lv-empty`
    matches it, or an empty card would collapse and its row-mate would stand alone at
-   full height. */
+   full height — grid rows stretch to their tallest cell. */
 .lv-grid .lv-bars { height: var(--lv-body-h); overflow: auto; }
 .lv-grid .lv-empty { min-height: var(--lv-body-h); }
 
