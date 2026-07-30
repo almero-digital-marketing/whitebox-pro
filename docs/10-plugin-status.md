@@ -26,15 +26,18 @@ return {
       return {
         label: 'mail',            // optional; defaults to the plugin name
         metrics: [
-          { key: 'queued',    value: 12 },
-          { key: 'sent',      value: 340 },
-          { key: 'delivered', value: 331 },
+          // `description` is REQUIRED in practice: see below.
+          { key: 'queued',    value: 12,  description: 'Accepted and waiting for the send worker.' },
+          { key: 'sent',      value: 340, description: 'Handed to the provider without error.' },
+          { key: 'delivered', value: 331, description: 'The provider confirmed the mailbox accepted it.' },
           // `severity: 'bad'` means "when this is non-zero, it's a problem".
           // The surface decides how to show it (icon + word, never colour alone).
-          { key: 'failed',    value: 2, severity: 'bad' },
+          { key: 'failed',    value: 2, severity: 'bad',
+            description: 'The provider rejected it outright — nothing was delivered.' },
           // `live` — current state, NOT windowed. `of` — a denominator, when the
           // ratio is the claim and either number alone says nothing.
-          { key: 'web', value: 3, of: 8, live: true },
+          { key: 'web', value: 3, of: 8, live: true,
+            description: 'Tracking numbers currently held by a visitor, of the pool size.' },
         ],
         note: null,               // optional one-liner, behind an info icon
       }
@@ -51,6 +54,35 @@ identifier: `'delivered'`, not `'delivered_count'`.
 
 Mark a metric `severity: 'bad'` when a non-zero value means something is wrong
 (`failed`, `bounced`, `missed`). Don't mark counts that are merely large.
+
+### `description`
+
+**Every metric must carry one.** Nominally optional, so an older plugin still
+renders; treat it as required in anything you write. Each plugin's test suite has a
+case asserting no metric ships without one, which is what stops the next counter
+arriving undocumented.
+
+It answers "what is this number counting?" in one sentence, and it has to come from
+here rather than from the surface, because **only the plugin knows**. `sent` means
+"handed to the provider without error" and `delivered` means "the provider confirmed
+the mailbox took it" — a distinction no dashboard could infer from two words, and
+one an operator has to know before the numbers mean anything. Live's status pane
+shows ~65 counters from 13 plugins side by side; without descriptions, a third of
+those keys are guesses.
+
+Write what the number *counts*, and where it's genuinely surprising, say so:
+
+```js
+// Good — says what's counted, and warns about the trap.
+{ key: 'queued', value: 12,
+  description: 'Queued IN THIS WINDOW and still waiting — widening the window can raise it.' }
+
+// Bad — restates the key.
+{ key: 'queued', value: 12, description: 'The number of queued messages.' }
+```
+
+Keep it to a sentence or two. `note` is still the place for a caveat about the
+plugin as a whole (a gap it can't measure); `description` is about one number.
 
 ### `of`
 

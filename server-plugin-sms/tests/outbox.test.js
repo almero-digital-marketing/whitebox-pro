@@ -90,3 +90,46 @@ describe('outbox.queueSend', () => {
     expect(queue.add.mock.calls[1][2]).toEqual({ jobId: 'journey:enr1:step1' })
   })
 })
+
+// docs/10-plugin-status.md. Previously untested here: `sent` vs `delivered` vs
+// `bounced` is exactly the distinction nobody can infer from three one-word keys,
+// and on SMS `delivered` has a trap of its own — plenty of carriers never return a
+// receipt, so it can trail `sent` forever with nothing wrong.
+describe('outbox.status — self-describing health', () => {
+  const statsDb = () => {
+    const db = () => ({
+      where: () => db(),
+      select: async () => [{ total: 6, queued: 1, sent: 5, delivered: 3, failed: 1, bounced: 2 }],
+    })
+    db.raw = (sql) => sql
+    return db
+  }
+  const boot = () => outbox.init({
+    db: statsDb(),
+    q: { createQueue: () => ({}), createWorker: () => ({ on: () => {} }) },
+    templates: {}, passports: {}, sessions: {}, awareness: { record: vi.fn() },
+    notify: vi.fn(), config: { sms: {} },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  })
+
+  it('names its own numbers and marks only the failures bad', async () => {
+    boot()
+    const s = await outbox.status({ since: new Date(Date.now() - 3600_000) })
+    expect(s.label).toBe('sms')
+    expect(s.metrics.map(m => m.key)).toEqual(['queued', 'sent', 'delivered', 'failed', 'bounced'])
+    expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['failed', 'bounced'])
+  })
+
+  it('gives every metric a description that says more than the key', async () => {
+    boot()
+    const s = await outbox.status({ since: new Date() })
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  it('warns that a missing delivery receipt is not necessarily a fault', async () => {
+    boot()
+    const s = await outbox.status({ since: new Date() })
+    expect(s.metrics.find(m => m.key === 'delivered').description).toMatch(/never send one|without anything being wrong/i)
+  })
+})

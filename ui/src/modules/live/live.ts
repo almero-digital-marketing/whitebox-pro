@@ -50,6 +50,19 @@ export interface StatusMetric {
    * plugin's own judgement that this is a problem".
    */
   of?: number
+  /**
+   * What this number counts, in a sentence, written by the plugin that owns it.
+   *
+   * Declared at the point the metric is built (server-side) because only the
+   * plugin knows: `sent` means "handed to the provider" and `delivered` means "the
+   * provider confirmed the mailbox took it", a distinction no surface could infer
+   * from the keys. The status pane shows ~65 counters from 13 plugins together, so
+   * without these a third of the keys are guesses.
+   *
+   * Optional in the type so an older plugin still renders; every plugin in this
+   * repo sets it on every metric, and each has a test asserting so.
+   */
+  description?: string
 }
 export interface PluginStatus {
   module: string

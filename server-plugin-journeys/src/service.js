@@ -228,19 +228,25 @@ export async function status({ since } = {}) {
   // cutoff, not a window), activityCounts is windowed on its own timestamps.
   const metrics = []
   if (live) {
-    metrics.push({ key: 'active journeys', value: live.active_journeys, live: true })
-    metrics.push({ key: 'enrolled', value: live.enrolled, live: true })
+    metrics.push({ key: 'active journeys', value: live.active_journeys, live: true,
+      description: 'Journeys switched on and able to enrol people right now. Current state, not activity — a journey built months ago still counts.' })
+    metrics.push({ key: 'enrolled', value: live.enrolled, live: true,
+      description: 'People part-way through a journey right now, between steps. Current state: a large number here is normal and not a fault.' })
   }
   if (activity) {
-    metrics.push({ key: 'started', value: activity.started })
-    metrics.push({ key: 'completed', value: activity.completed })
+    metrics.push({ key: 'started', value: activity.started,
+      description: 'Enrolments that began in this window — people who entered a journey.' })
+    metrics.push({ key: 'completed', value: activity.completed,
+      description: 'Enrolments that reached the end of their journey in this window.' })
     // An enrollment that failed is abandoned, not retried — the person stops
     // partway through a journey somebody built for them.
-    metrics.push({ key: 'failed', value: activity.failed, severity: 'bad' })
+    metrics.push({ key: 'failed', value: activity.failed, severity: 'bad',
+      description: 'Enrolments abandoned mid-journey in this window, typically because a step referenced an id no longer in the graph. Not retried: that person simply stops part-way through a journey somebody built for them, and nothing will resume it.' })
   }
   // Same severity, different failure: nothing marked these, they simply never
   // woke up. Reported last because it's the one an operator has to go and fix.
-  if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad', live: true })
+  if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad', live: true,
+    description: 'People still waiting well past the time their next step was due — the delayed-step job never fired. A different failure from `failed`: nothing marked these, they just never woke up, and nothing else in the system would notice. A ten-minute grace period is allowed first, so ordinary queue lag is not reported as a fault.' })
 
   return {
     label: 'journeys',

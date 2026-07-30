@@ -53,13 +53,16 @@ export async function status({ since } = {}) {   // `since` unused on purpose �
   // now. None of it can be windowed because none of it is stored per-event, so the
   // board must not show it under a window selector as though it were.
   const metrics = [
-    { key: 'lookups', value: lookups, live: true },
+    { key: 'lookups', value: lookups, live: true,
+      description: 'IP lookups this process has answered since it booted. Counted in memory, not stored — it resets on restart and covers only this instance.' },
     // No data for an IP is normal, not broken: private, reserved and unroutable
     // addresses all land here, and so do addresses MaxMind simply can't place.
-    { key: 'no data', value: misses, live: true },
+    { key: 'no data', value: misses, live: true,
+      description: 'Lookups the database had no answer for. Normal, not broken: private, reserved and unroutable addresses all land here, along with addresses MaxMind simply cannot place.' },
     // The provider threw: a missing, unreadable or corrupt database, or a reader
     // that never opened. Each one is a visitor who got no geo at all.
-    { key: 'failed', value: errors, severity: 'bad', live: true },
+    { key: 'failed', value: errors, severity: 'bad', live: true,
+      description: 'The provider threw — a missing, unreadable or corrupt database, or a reader that never opened. Each one is a visitor who got no location at all.' },
   ]
 
   // Optional by design: health() is not part of the provider contract (that is
@@ -87,11 +90,13 @@ export async function status({ since } = {}) {   // `since` unused on purpose �
   } else {
     const ageDays = Math.floor((Date.now() - db.mtimeMs) / DAY_MS)
     const stale = ageDays > staleAfterDays
-    metrics.push({ key: 'database age (days)', value: ageDays, live: true })
+    metrics.push({ key: 'database age (days)', value: ageDays, live: true,
+      description: `How long ago ${db.dbPath} was last written, in days. Read off the file now. Always non-zero and usually fine, which is why it carries no severity of its own.` })
     // A judgement expressed as a count, which is exactly what the contract's
     // "non-zero means something is wrong" wants: the age itself is always
     // non-zero and always fine until it isn't, so it can't carry the severity.
-    metrics.push({ key: 'stale database', value: stale ? 1 : 0, severity: 'bad', live: true })
+    metrics.push({ key: 'stale database', value: stale ? 1 : 0, severity: 'bad', live: true,
+      description: `1 when the database is older than ${staleAfterDays} days. This plugin's own judgement, expressed as a count so that non-zero means trouble. It matters because a stale GeoIP file keeps answering plausibly for months without ever raising an error — the answers just quietly drift from where the addresses actually are now.` })
     if (stale) {
       note = `${db.dbPath} is ${ageDays} days old — geoipupdate has probably stopped; lookups still answer, from stale allocations`
       if (!db.watching) note += ' (and the file is not watched — pass watch: true)'

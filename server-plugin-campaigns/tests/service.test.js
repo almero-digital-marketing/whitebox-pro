@@ -349,3 +349,16 @@ describe('getResults', () => {
     expect(r.delivery.email.unavailable).toBe('db down')
   })
 })
+
+// Every counter must say what it counts (docs/10-plugin-status.md) — the guard that
+// stops the next metric shipping as a bare key.
+describe('status descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    const store = { healthCounts: vi.fn(async () => ({ sent: 4, dry_run: 4, scheduled: 2, draft: 7, overdue: 1 })) }
+    service.init({ store, audiences: {}, deliver: null, dryRun: true, mail: null, sms: null, passports: {}, logger: { warn: vi.fn() } })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+})

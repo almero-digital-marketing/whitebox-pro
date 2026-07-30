@@ -343,13 +343,18 @@ export async function status({ since } = {}) {
   return {
     label: 'sms',
     metrics: [
-      { key: 'queued', value: s.queued },
-      { key: 'sent', value: s.sent },
-      { key: 'delivered', value: s.delivered },
+      { key: 'queued', value: s.queued,
+        description: 'Queued in this window and still waiting for the send worker. Widening the window can raise it — these are messages queued later that have not gone yet.' },
+      { key: 'sent', value: s.sent,
+        description: 'Handed to the carrier gateway without error. Not the same as arriving on a handset: the gateway has accepted it, nothing more.' },
+      { key: 'delivered', value: s.delivered,
+        description: 'The carrier returned a delivery receipt for the handset. Some carriers and some countries never send one, so this can trail `sent` permanently without anything being wrong.' },
       // non-zero here is a problem, and the surface shows it with an icon and the
       // word — never colour alone
-      { key: 'failed', value: s.failed, severity: 'bad' },
-      { key: 'bounced', value: s.bounced, severity: 'bad' },
+      { key: 'failed', value: s.failed, severity: 'bad',
+        description: 'The gateway refused it outright, so nothing was sent. Usually an unroutable number, a blocked destination or a credit or credentials problem.' },
+      { key: 'bounced', value: s.bounced, severity: 'bad',
+        description: 'Accepted by the gateway and then rejected downstream — a disconnected number, a handset that cannot receive, or a carrier-level block.' },
     ],
   }
 }

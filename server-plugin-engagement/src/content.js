@@ -340,12 +340,15 @@ export async function status({ since } = {}) {
     return {
       label: 'engagement',
       metrics: [
-        { key: 'transcribed', value: byKind.video || 0 },
-        { key: 'described', value: byKind.image || 0 },
+        { key: 'transcribed', value: byKind.video || 0,
+          description: 'Videos whose audio was turned into text in this window, so that watching one can be recorded as engagement with what it actually said.' },
+        { key: 'described', value: byKind.image || 0,
+          description: 'Images described as text in this window, so that viewing one can be recorded as engagement with its content.' },
         // `live`, matching the query above: this counts the whole cache, not the
         // window. Without the flag the board would show it beside the two windowed
         // counts and imply all three moved together when the window changed.
-        { key: 'no text', value: noText, severity: 'bad', live: true },
+        { key: 'no text', value: noText, severity: 'bad', live: true,
+          description: 'Cached entries that resolved to no usable text — the whole cache, not this window. This is how a broken transcription pipeline shows up here, because a failure writes no row of its own: the entry is cached empty, every view of that URL records nothing, and because it IS cached it is never retried until someone invalidates it.' },
       ],
       note: noText
         ? `${noText} cached entr${noText === 1 ? 'y' : 'ies'} resolved to no text (whole cache, not the window) — every view of those URLs records nothing until they're invalidated`

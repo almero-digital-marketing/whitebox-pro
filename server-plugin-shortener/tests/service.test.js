@@ -224,6 +224,26 @@ describe('status', () => {
   }
   const byKey = (s) => Object.fromEntries(s.metrics.map(m => [m.key, m.value]))
 
+  // Every counter must say what it counts (docs/10-plugin-status.md) — the guard
+  // that stops the next metric shipping as a bare key.
+  it('gives every metric a description that says more than the key', async () => {
+    setup()
+    store.healthStats.mockResolvedValue(counts)
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // `unclaimed` is the one that looks alarming and isn't — scanners and prefetchers
+  // do it constantly. The prose has to say so, or an operator chases a non-problem.
+  it('explains that unclaimed is not on its own a failure', async () => {
+    setup()
+    store.healthStats.mockResolvedValue(counts)
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.find(m => m.key === 'unclaimed').description).toMatch(/not a failure/i)
+  })
+
   it('passes `since` straight through to the windowed query', async () => {
     setup()
     const since = new Date('2026-07-01T00:00:00Z')

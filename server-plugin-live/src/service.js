@@ -33,7 +33,8 @@ export async function status({ since } = {}) {
   if (!s) {
     return {
       label: 'live',
-      metrics: [{ key: 'streaming', value: 0, severity: 'bad', live: true }],
+      metrics: [{ key: 'streaming', value: 0, severity: 'bad', live: true,
+        description: 'Zero because there is no stream at all: the socket namespace was unavailable when this plugin registered. Dashboards fall back to polling, so the board still works but nothing updates on its own. A wiring problem, not a Redis one.' }],
       note: 'not streaming — connect.namespace() was unavailable at registration, so dashboards poll /summary instead of updating live',
     }
   }
@@ -84,21 +85,29 @@ export async function status({ since } = {}) {
     metrics.push(
       // Per MINUTE regardless of window, so the figure means the same thing on
       // every setting — matching the header it mirrors.
-      { key: 'events/min', value: Math.round((traffic.total / secs) * 60 * 10) / 10 },
-      { key: 'in', value: traffic.byDirection.in },
-      { key: 'out', value: traffic.byDirection.out },
+      { key: 'events/min', value: Math.round((traffic.total / secs) * 60 * 10) / 10,
+        description: 'Recorded events per minute across the whole system. Normalised per minute whatever window is selected, so the figure means the same thing on every setting.' },
+      { key: 'in', value: traffic.byDirection.in,
+        description: 'Events where something arrived — a page view, a form, a call, a CRM record. Direction is inferred here from the event type and its payload; the plugins themselves do not report it.' },
+      { key: 'out', value: traffic.byDirection.out,
+        description: 'Events where something left the building — an email, an SMS, an ad-network call.' },
       // Orchestration, not traffic — counted separately so it can't inflate
       // either direction beside it.
-      { key: 'internal', value: traffic.byDirection.internal },
-      { key: 'people active', value: traffic.active },
+      { key: 'internal', value: traffic.byDirection.internal,
+        description: 'Orchestration: enrolments, activations, bookkeeping. Counted apart from in and out on purpose, because it is not data crossing the boundary and folding it into either direction would inflate the figures beside it.' },
+      { key: 'people active', value: traffic.active,
+        description: 'Distinct people touched in this window. Events about the system rather than about a person are not counted.' },
     )
   }
   metrics.push(
-    { key: 'dashboards', value: s.subscribers, live: true },
-    { key: 'streamed', value: s.received, live: true },
+    { key: 'dashboards', value: s.subscribers, live: true,
+      description: 'Live boards connected to the socket right now. Zero means nobody is watching; batches are then discarded rather than buffered, since the event log holds the durable copy anyway.' },
+    { key: 'streamed', value: s.received, live: true,
+      description: 'Events this process has received off the Redis firehose since it booted. Worth watching next to the event counts above: notify() writes down two independent paths, so if this stays at zero while the log fills, the Redis subscription is dead and the feed will stay empty however busy the system is.' },
     // Over the 200-per-flush ceiling. Non-zero means a dashboard was shown a
     // fraction of the traffic without any way to know which part.
-    { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true },
+    { key: 'dropped', value: s.overCeiling, severity: 'bad', live: true,
+      description: 'Events discarded because a single flush exceeded its 200-event ceiling. Non-zero means a dashboard was shown a fraction of the traffic with no way to tell which part was missing. Process-lifetime: the per-batch count sent to the browser resets constantly and dies with the tab, so this is the only durable record.' },
   )
 
   const note = s.overCeiling

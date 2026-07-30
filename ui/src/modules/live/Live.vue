@@ -119,6 +119,10 @@ const statusRows = computed(() => (summary.value?.status || []).map(p => ({
     text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
     // "Non-zero is a problem" is what severity means, so a zero never reads as bad.
     bad: m.severity === 'bad' && m.value > 0,
+    // Straight from the plugin (docs/10-plugin-status.md). Falls back to the key so
+    // a plugin published before `description` existed still gets a tooltip rather
+    // than an empty one.
+    description: m.description || m.key,
   })),
 })))
 
@@ -530,7 +534,12 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              ToggleSwitch, same geometry — the classes there are scoped under `.qb`,
              so the values are mirrored in live.css the way this file already
              mirrors People's `.sub-title`. -->
-        <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }">
+        <!-- The description comes from the plugin, not from here — only it knows
+             that `sent` means "handed to the provider" while `delivered` means "the
+             provider confirmed the mailbox took it". On the whole row, because the
+             row is where you decide whether to pin it. -->
+        <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }"
+          v-tooltip.left="{ value: f.description, class: 'lv-why-tip' }">
           <span class="lv-srow-n">
             <span v-if="f.bad" class="material-symbols-outlined">error</span>
             <b>{{ f.text }}</b>

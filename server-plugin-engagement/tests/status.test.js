@@ -63,6 +63,12 @@ const since = new Date(Date.now() - 24 * HOUR)
 const recent = new Date(Date.now() - HOUR)
 const old = new Date(Date.now() - 40 * 24 * HOUR)
 
+// Shape assertions below stay EXACT — several of them are asserting the absence of
+// a key (no `severity`, no `live`), which toMatchObject would stop checking. So the
+// prose is dropped rather than the strictness; that every metric HAS prose is its
+// own test at the end of this file.
+const shape = (m) => { const { description, ...rest } = m || {}; return rest }
+
 describe('engagement.content.status', () => {
 
   it('windows resolutions by generated_at, split by kind', async () => {
@@ -74,8 +80,8 @@ describe('engagement.content.status', () => {
     ])
     const s = await content.status({ since })
     expect(s.label).toBe('engagement')
-    expect(s.metrics.find(m => m.key === 'transcribed')).toEqual({ key: 'transcribed', value: 2 })
-    expect(s.metrics.find(m => m.key === 'described')).toEqual({ key: 'described', value: 1 })
+    expect(shape(s.metrics.find(m => m.key === 'transcribed'))).toEqual({ key: 'transcribed', value: 2 })
+    expect(shape(s.metrics.find(m => m.key === 'described'))).toEqual({ key: 'described', value: 1 })
     expect(s.note).toBeNull()
   })
 
@@ -88,7 +94,7 @@ describe('engagement.content.status', () => {
     const s = await content.status({ since })
     // `live: true` is load-bearing, not incidental: this one counts the whole cache
     // while the two beside it are windowed, and the board groups on that flag.
-    expect(s.metrics.find(m => m.key === 'no text'))
+    expect(shape(s.metrics.find(m => m.key === 'no text')))
       .toEqual({ key: 'no text', value: 2, severity: 'bad', live: true })
     expect(s.note).toMatch(/2 cached entries resolved to no text/)
   })
@@ -143,5 +149,30 @@ describe('engagement plugin — status wiring', () => {
     expect(registered.service.status).toBe(content.status)
     const s = await registered.service.status({ since })
     expect(s.metrics.map(m => m.key)).toEqual(['transcribed', 'described', 'no text'])
+  })
+})
+
+// Every counter must say what it counts (docs/10-plugin-status.md). This is the
+// guard: without it the next metric added here ships as a bare key, and the Live
+// pane shows ~65 counters from 13 plugins side by side where a bare key is a guess.
+describe('descriptions', () => {
+  const rows = [
+    { url: 'a.mp4', kind: 'video', text: 't', generated_at: recent },
+    { url: 'b.jpg', kind: 'image', text: null, generated_at: recent },
+  ]
+
+  it('gives every metric a description', async () => {
+    const { content } = makeContent(rows)
+    const s = await content.status({ since })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+  })
+
+  // Restating the key teaches nobody anything.
+  it('says more than the key already does', async () => {
+    const { content } = makeContent(rows)
+    for (const m of (await content.status({ since })).metrics) {
+      expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+    }
   })
 })

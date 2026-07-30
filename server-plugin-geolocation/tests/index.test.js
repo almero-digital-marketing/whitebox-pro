@@ -228,6 +228,28 @@ describe('geolocation() — status()', () => {
   // memory and the database facts are read off the file now, so NOTHING here can be
   // windowed — and every metric has to say so, or the board shows the lot under a
   // window selector that doesn't govern any of it.
+  // Every counter must say what it counts (docs/10-plugin-status.md) — the guard
+  // that stops the next metric shipping as a bare key.
+  it('gives every metric a description that says more than the key', async () => {
+    const { ctx, provider } = makeCtx({ healthImpl: freshDb() })
+    const api = await geolocation({ provider }).register({}, ctx)
+    const s = await api.service.status({})
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // `no data` is normal and `failed` is not — two adjacent zero-ish counters whose
+  // difference an operator has to know before either number means anything.
+  it('tells "no data" apart from "failed" in words', async () => {
+    const { ctx, provider } = makeCtx({ healthImpl: freshDb() })
+    const api = await geolocation({ provider }).register({}, ctx)
+    const s = await api.service.status({})
+    const at = k => s.metrics.find(m => m.key === k).description
+    expect(at('no data')).toMatch(/normal/i)
+    expect(at('failed')).toMatch(/threw|corrupt|missing/i)
+  })
+
   it('marks every metric live, since it has no history to window', async () => {
     const { ctx, provider } = makeCtx({ healthImpl: freshDb() })
     const api = await geolocation({ provider }).register({}, ctx)

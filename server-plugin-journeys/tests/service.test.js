@@ -326,3 +326,33 @@ describe('service.getResults', () => {
     expect((await service.getResults('j1')).delivery).toEqual({})
   })
 })
+
+// Every counter must say what it counts (docs/10-plugin-status.md) — the guard that
+// stops the next metric shipping as a bare key.
+describe('status descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    const store = makeStore({
+      liveCounts: vi.fn(async () => ({ active_journeys: 2, enrolled: 9, stuck: 1 })),
+      activityCounts: vi.fn(async () => ({ started: 5, completed: 3, failed: 1 })),
+    })
+    service.init({ store, lock: makeLock(), logger: { warn: vi.fn(), error: vi.fn() }, notifyLifecycle: vi.fn(), onTriggerChange: vi.fn() })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // `failed` and `stuck` are both bad but for different reasons, and the prose has
+  // to carry that — it's the distinction an operator acts on.
+  it('tells failed and stuck apart in words', async () => {
+    const store = makeStore({
+      liveCounts: vi.fn(async () => ({ active_journeys: 1, enrolled: 1, stuck: 1 })),
+      activityCounts: vi.fn(async () => ({ started: 1, completed: 0, failed: 1 })),
+    })
+    service.init({ store, lock: makeLock(), logger: { warn: vi.fn(), error: vi.fn() }, notifyLifecycle: vi.fn(), onTriggerChange: vi.fn() })
+    const s = await service.status({ since: new Date() })
+    const at = k => s.metrics.find(m => m.key === k).description
+    expect(at('stuck')).toMatch(/never (fired|woke)/i)
+    expect(at('failed')).not.toBe(at('stuck'))
+  })
+})

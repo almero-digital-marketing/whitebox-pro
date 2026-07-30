@@ -467,14 +467,22 @@ export async function status({ since } = {}) {
   const s = await stats({ since })
   return {
     label: 'mail',
+    // Every metric carries a `description`: the whole window is scoped by
+    // `queued_at`, and `sent` vs `delivered` vs `bounced` is a distinction no
+    // dashboard could infer from the keys.
     metrics: [
-      { key: 'queued', value: s.queued },
-      { key: 'sent', value: s.sent },
-      { key: 'delivered', value: s.delivered },
+      { key: 'queued', value: s.queued,
+        description: 'Queued in this window and still waiting for the send worker. Widening the window can raise it — these are messages queued later that have not gone yet.' },
+      { key: 'sent', value: s.sent,
+        description: 'Handed to the provider without error. Not the same as arriving: the provider has accepted responsibility, nothing more.' },
+      { key: 'delivered', value: s.delivered,
+        description: 'The provider confirmed the receiving mailbox accepted it. This is the number that means the mail actually landed.' },
       // non-zero here is a problem, and the surface shows it with an icon and the
       // word — never colour alone
-      { key: 'failed', value: s.failed, severity: 'bad' },
-      { key: 'bounced', value: s.bounced, severity: 'bad' },
+      { key: 'failed', value: s.failed, severity: 'bad',
+        description: 'The provider refused it outright, so nothing was delivered. Usually credentials, a malformed address or a rejected payload.' },
+      { key: 'bounced', value: s.bounced, severity: 'bad',
+        description: 'Accepted by the provider and then rejected by the receiving server — a dead address, a full mailbox or a spam verdict. Repeated bounces to the same domain damage your sending reputation.' },
     ],
   }
 }

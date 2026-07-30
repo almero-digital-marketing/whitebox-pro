@@ -362,3 +362,41 @@ describe('outbox.resolveRecipient', () => {
     expect(passports.link).toHaveBeenCalledWith('explicit', [{ type: 'email', name: 'address', value: 'k@x.com' }])
   })
 })
+
+// Every counter must say what it counts (docs/10-plugin-status.md) — the guard that
+// stops the next metric shipping as a bare key. `sent` vs `delivered` vs `bounced`
+// is exactly the distinction nobody can infer from the keys.
+describe('status() descriptions', () => {
+  // Its own db: status() is the only query in this module that uses db.raw(), and
+  // the stubs above don't provide it. The numbers are irrelevant here — what's
+  // under test is that every metric arrives with prose attached.
+  const statsDb = () => {
+    const db = () => ({
+      where: () => db(),
+      select: async () => [{ total: 1, queued: 1, sent: 1, delivered: 1, failed: 1, bounced: 1 }],
+    })
+    db.raw = (sql) => sql
+    return db
+  }
+
+  it('gives every metric a description that says more than the key', async () => {
+    outbox.init({ db: statsDb(), q: { createQueue: () => ({}), createWorker: () => ({ on: () => {} }) },
+      notify: vi.fn(), config: { mail: {} }, logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } })
+    const s = await outbox.status({ since: new Date(Date.now() - 3600_000) })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // The distinction that motivated the whole field: two adjacent keys that mean
+  // materially different things, which no surface could infer.
+  it('distinguishes sent from delivered in words', async () => {
+    outbox.init({ db: statsDb(), q: { createQueue: () => ({}), createWorker: () => ({ on: () => {} }) },
+      notify: vi.fn(), config: { mail: {} }, logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } })
+    const s = await outbox.status({ since: new Date() })
+    const at = k => s.metrics.find(m => m.key === k).description
+    expect(at('sent')).toMatch(/provider/i)
+    expect(at('delivered')).toMatch(/mailbox/i)
+    expect(at('sent')).not.toBe(at('delivered'))
+  })
+})

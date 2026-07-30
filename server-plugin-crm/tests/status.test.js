@@ -92,6 +92,11 @@ describe('crm ingest.noteStats (notes → awareness)', () => {
   })
 })
 
+// Shape assertions here stay EXACT — they assert the absence of `severity` as much
+// as its presence, which toMatchObject would stop checking. So the prose is dropped,
+// not the strictness; that every metric HAS prose is its own test below.
+const shape = (m) => { const { description, ...rest } = m || {}; return rest }
+
 describe('crm ingest.status', () => {
   it('reports both pipelines and names the drop it cannot see', async () => {
     setup({ facts: { records: 4, facts: 11 }, notes: { notes: 6, observations: 2 } })
@@ -99,7 +104,7 @@ describe('crm ingest.status', () => {
     const s = await ingest.status({ since: new Date('2026-07-01T00:00:00Z') })
 
     expect(s.label).toBe('crm')
-    expect(s.metrics).toEqual([
+    expect(s.metrics.map(shape)).toEqual([
       { key: 'records', value: 4 },
       { key: 'state facts', value: 11 },
       { key: 'notes', value: 6 },
@@ -154,5 +159,15 @@ describe('crm register — service.status', () => {
     const s = await api.service.status({ since: new Date() })
     expect(s.label).toBe('crm')
     expect(s.metrics.find(m => m.key === 'records').value).toBe(1)
+  })
+})
+
+describe('descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    setup()
+    const s = await ingest.status({ since: new Date('2026-07-01T00:00:00Z') })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
   })
 })

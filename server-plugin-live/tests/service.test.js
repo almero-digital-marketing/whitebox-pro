@@ -430,7 +430,8 @@ describe('status() — live reporting on itself', () => {
   it('distinguishes no stream at all from an idle one', async () => {
     service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: () => null })
     const s = await service.status({})
-    expect(s.metrics).toEqual([{ key: 'streaming', value: 0, severity: 'bad', live: true }])
+    expect(s.metrics.map(m => { const { description, ...rest } = m; return rest }))
+      .toEqual([{ key: 'streaming', value: 0, severity: 'bad', live: true }])
     expect(s.note).toMatch(/not streaming/)
   })
 
@@ -449,5 +450,40 @@ describe('status() — live reporting on itself', () => {
     const s = await service.summary({})
     expect(s.status.map(p => p.module)).toEqual(['live'])
     expect(s.status_silent).toEqual([])
+  })
+})
+
+// Every counter must say what it counts (docs/10-plugin-status.md) — the guard that
+// stops the next metric shipping as a bare key. live's row is the one with BOTH
+// kinds of number, so it also checks the windowed/current-state split is explained.
+describe('status() descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    service.init({
+      eventRegistry: registry([{ type: 'mail.sent', count: 5 }], 2),
+      plugins: {}, logger: console,
+      streamStats: () => ({ received: 9, overCeiling: 1, unwatched: 0, subscribers: 1 }),
+    })
+    const s = await service.status({ since: new Date(Date.now() - 1800_000) })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // The two-paths cross-check is the reason this status() exists, so `streamed` has
+  // to explain it rather than just naming itself.
+  it('explains what a zero `streamed` would mean', async () => {
+    service.init({
+      eventRegistry: registry([], 0), plugins: {}, logger: console,
+      streamStats: () => ({ received: 0, overCeiling: 0, unwatched: 0, subscribers: 0 }),
+    })
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.find(m => m.key === 'streamed').description).toMatch(/Redis/)
+  })
+
+  // No stream at all vs an idle one have different fixes, and the prose says which.
+  it('says a missing stream is a wiring problem, not a Redis one', async () => {
+    service.init({ eventRegistry: registry([], 0), plugins: {}, logger: console, streamStats: () => null })
+    const s = await service.status({})
+    expect(s.metrics[0].description).toMatch(/wiring/i)
   })
 })

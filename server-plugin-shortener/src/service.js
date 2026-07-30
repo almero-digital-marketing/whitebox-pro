@@ -180,15 +180,21 @@ export async function status({ since } = {}) {
     return {
       label: 'shortener',
       metrics: [
-        { key: 'links', value: links.created },
-        { key: 'personalized', value: links.personalized },
-        { key: 'clicks', value: clicks.total },
-        { key: 'claimed', value: clicks.claimed },
-        { key: 'unclaimed', value: clicks.expired_unclaimed },
+        { key: 'links', value: links.created,
+          description: 'Short links created in this window.' },
+        { key: 'personalized', value: links.personalized,
+          description: 'Of those links, the ones that can bind a person on click — either already tied to a passport, or carrying an `identify` payload to resolve at click time. The rest are plain campaign links that redirect and nothing more.' },
+        { key: 'clicks', value: clicks.total,
+          description: 'Redirects served in this window for links this system knows about.' },
+        { key: 'claimed', value: clicks.claimed,
+          description: 'Clicks whose single-use token was redeemed by the destination page, which is what ties the click to a person. This is the number that means attribution worked.' },
+        { key: 'unclaimed', value: clicks.expired_unclaimed,
+          description: 'Clicks whose token expired without the destination page redeeming it. NOT a failure on its own — link scanners and mail-client prefetchers do this all day. Only "all of them, always" is a problem, which is why it carries no severity and sits next to `claimed`.' },
         // Non-zero means a single-use ticket was spent and nobody got bound: that
         // click's attribution is lost for good and the link can't be re-used to
         // recover it. The one number here worth waking up for.
-        { key: 'unbound claims', value: clicks.unbound, severity: 'bad' },
+        { key: 'unbound claims', value: clicks.unbound, severity: 'bad',
+          description: 'The token was redeemed and yet nobody was bound to the click. The single-use ticket is spent, so that click can never be attributed and the link cannot be reused to recover it — attribution is lost for good. Claims in flight within the last minute are excluded, so this cannot flap on a healthy system.' },
       ],
       note: 'hits on unknown or expired codes are not recorded — dead links still in circulation are invisible here',
     }

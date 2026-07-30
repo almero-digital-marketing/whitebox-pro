@@ -205,6 +205,12 @@ describe('store — searchUsers (the paged rail read)', () => {
   })
 })
 
+// Shape assertions here stay EXACT — two of them assert the ABSENCE of a key
+// ("never flags it" means no `severity`), which toMatchObject would stop checking.
+// So the prose is dropped, not the strictness; that every metric HAS prose is its
+// own test below.
+const shape = (m) => { const { description, ...rest } = m || {}; return rest }
+
 describe('store — status (self-describing health)', () => {
   const HOUR = 60 * 60 * 1000
   const since = new Date(Date.now() - 24 * HOUR)
@@ -220,7 +226,7 @@ describe('store — status (self-describing health)', () => {
     seedLogin(new Date(Date.now() - 40 * 24 * HOUR))   // before the window
     const s = await store.status({ since })
     expect(s.label).toBe('oauth')
-    expect(s.metrics.find(m => m.key === 'logins')).toEqual({ key: 'logins', value: 2 })
+    expect(shape(s.metrics.find(m => m.key === 'logins'))).toEqual({ key: 'logins', value: 2 })
   })
 
   it('counts a live invite as pending and never flags it', async () => {
@@ -228,7 +234,7 @@ describe('store — status (self-describing health)', () => {
     const s = await store.status({ since })
     // `live` because "who is locked out right now" has no window — password_hash
     // IS NULL is a state, not an event with a timestamp.
-    expect(s.metrics.find(m => m.key === 'invites pending'))
+    expect(shape(s.metrics.find(m => m.key === 'invites pending')))
       .toEqual({ key: 'invites pending', value: 1, live: true })
     expect(s.metrics.find(m => m.key === 'invites expired').value).toBe(0)
     expect(s.note).toBeNull()
@@ -242,7 +248,7 @@ describe('store — status (self-describing health)', () => {
     await db('whitebox_oauth_users').where({ id: stale.id }).update({ invite_expires_at: new Date(Date.now() - HOUR) })
 
     const s = await store.status({ since })
-    expect(s.metrics.find(m => m.key === 'invites expired'))
+    expect(shape(s.metrics.find(m => m.key === 'invites expired')))
       .toEqual({ key: 'invites expired', value: 1, severity: 'bad', live: true })
     expect(s.metrics.find(m => m.key === 'invites pending').value).toBe(1)   // the expired one isn't double-counted
     expect(s.note).toMatch(/1 invite expired/)
@@ -268,5 +274,16 @@ describe('store — status (self-describing health)', () => {
     store.init({ db: () => { throw new Error('connection terminated') } })
     const s = await store.status({ since })
     expect(s).toEqual({ label: 'oauth', metrics: [], note: 'oauth state could not be read' })
+  })
+})
+
+// Every counter must say what it counts (docs/10-plugin-status.md). The guard that
+// stops the next metric shipping as a bare key.
+describe('store — status descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    const s = await store.status({ since: new Date(Date.now() - 24 * 60 * 60 * 1000) })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
   })
 })

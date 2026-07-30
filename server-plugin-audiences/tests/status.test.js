@@ -90,6 +90,11 @@ describe('store.deliveryByNetwork — reading activation out of the delivery jso
   })
 })
 
+// Shape assertions here stay EXACT — they assert the absence of `severity` as much
+// as its presence, which toMatchObject would stop checking. So the prose is dropped,
+// not the strictness; that every metric HAS prose is its own test below.
+const shape = (m) => { const { description, ...rest } = m || {}; return rest }
+
 describe('service.status', () => {
   function setup({ counts = { segments: 12, audiences: 4 }, networks = [] } = {}) {
     const store = {
@@ -151,7 +156,7 @@ describe('service.status', () => {
     it('reports how many of an activated network\'s audiences actually reach it', async () => {
       setup({ networks: [{ network: 'meta', enabled: 5, dry_run: 2 }] })
       const s = await service.status({ since: new Date() })
-      expect(at(s, 'meta')).toEqual({ key: 'meta', value: 3, of: 5, live: true })
+      expect(shape(at(s, 'meta'))).toEqual({ key: 'meta', value: 3, of: 5, live: true })
     })
 
     // The severity trap this design has to avoid: "not one of meta's audiences gets
@@ -161,8 +166,8 @@ describe('service.status', () => {
     it('leaves a wholly dark network unmarked, and lets `not delivering` carry it', async () => {
       setup({ networks: [{ network: 'meta', enabled: 3, dry_run: 3 }, { network: 'google', enabled: 1, dry_run: 0 }] })
       const s = await service.status({ since: new Date() })
-      expect(at(s, 'meta')).toEqual({ key: 'meta', value: 0, of: 3, live: true })
-      expect(at(s, 'google')).toEqual({ key: 'google', value: 1, of: 1, live: true })
+      expect(shape(at(s, 'meta'))).toEqual({ key: 'meta', value: 0, of: 3, live: true })
+      expect(shape(at(s, 'google'))).toEqual({ key: 'google', value: 1, of: 1, live: true })
       expect(s.metrics.filter(m => m.severity === 'bad').map(m => m.key)).toEqual(['not delivering'])
       expect(at(s, 'not delivering').value).toBe(3)
     })
@@ -209,5 +214,36 @@ describe('service.status', () => {
       expect(s.metrics).toEqual([])
       expect(s.note).toMatch(/could not be read/)
     })
+  })
+})
+
+describe('descriptions', () => {
+  // Its own setup: the suite's `setup` helper is scoped inside describe('service.status').
+  const init = (networks) => service.init({
+    store: {
+      healthCounts: vi.fn(async () => ({ segments: 12, audiences: 4 })),
+      deliveryByNetwork: vi.fn(async () => networks),
+    },
+    evaluator: {}, adapters: [], identity: {}, consent: {}, passports: {}, logger: { warn: vi.fn() },
+  })
+
+  it('gives every metric a description that says more than the key', async () => {
+    init([{ network: 'meta', enabled: 5, dry_run: 2 }])
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
+  })
+
+  // The per-network rows are generated, so their prose has to be generated too —
+  // a shared constant would say "of 5 audiences" on every network.
+  it('names the network and its totals in the generated per-network prose', async () => {
+    init([{ network: 'meta', enabled: 5, dry_run: 2 }, { network: 'tiktok', enabled: 2, dry_run: 0 }])
+    const s = await service.status({ since: new Date() })
+    const at = k => s.metrics.find(m => m.key === k).description
+    expect(at('meta')).toContain('meta')
+    expect(at('meta')).toContain('5')
+    expect(at('tiktok')).toContain('tiktok')
+    expect(at('meta')).not.toBe(at('tiktok'))
   })
 })

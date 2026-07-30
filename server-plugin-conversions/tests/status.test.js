@@ -46,6 +46,11 @@ function setup(opts) {
   return db
 }
 
+// Shape assertions here stay EXACT — they assert the absence of `severity` as much
+// as its presence, which toMatchObject would stop checking. So the prose is dropped,
+// not the strictness; that every metric HAS prose is its own test below.
+const shape = (m) => { const { description, ...rest } = m || {}; return rest }
+
 describe('conversions store.status', () => {
   it('names its own numbers and marks only the failures bad', async () => {
     setup({
@@ -62,7 +67,7 @@ describe('conversions store.status', () => {
     const s = await store.status({ since: new Date('2026-07-30T00:00:00Z') })
 
     expect(s.label).toBe('conversions')
-    expect(s.metrics).toEqual([
+    expect(s.metrics.map(shape)).toEqual([
       { key: 'events', value: 20 },
       { key: 'accepted', value: 32 },
       { key: 'rejected', value: 2, severity: 'bad' },
@@ -159,5 +164,17 @@ describe('conversions register — service.status', () => {
     expect(api).toHaveProperty('reporter')      // pre-existing surface is untouched
     const s = await api.service.status({ since: new Date() })
     expect(s.label).toBe('conversions')
+  })
+})
+
+// Every counter must say what it counts (docs/10-plugin-status.md) — the guard that
+// stops the next metric shipping as a bare key.
+describe('descriptions', () => {
+  it('gives every metric a description that says more than the key', async () => {
+    setup()
+    const s = await store.status({ since: new Date('2026-07-30T00:00:00Z') })
+    expect(s.metrics.length).toBeGreaterThan(0)
+    expect(s.metrics.filter(m => !m.description).map(m => m.key)).toEqual([])
+    for (const m of s.metrics) expect(m.description.length).toBeGreaterThan(m.key.length + 20)
   })
 })
