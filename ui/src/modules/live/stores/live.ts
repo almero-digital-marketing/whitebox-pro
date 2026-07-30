@@ -190,6 +190,75 @@ export const useLiveStore = defineStore('live', () => {
     return { items: bad, total: bad.reduce((a, b) => a + b.value, 0) }
   })
 
+  // ── pinned counters ──────────────────────────────────────────────────────
+  //
+  // Which of the ~65 counters every plugin reports get promoted to the header.
+  // Identified by `module:key`, because `failed` alone is ambiguous across mail,
+  // sms, journeys and conversions.
+  //
+  // Persisted: this is a choice someone makes once about what they watch, and
+  // re-picking it on every reload would make the feature not worth using. Kept in
+  // localStorage rather than on the server because it is per-person-per-browser
+  // and carries nothing worth a migration.
+  //
+  // The defaults are exactly the five figures the header showed when they were
+  // hard-coded, so an existing user sees no change until they choose one.
+  const PINNED_KEY = 'wb.live.pinned'
+  const DEFAULT_PINNED = ['live:events/min', 'live:in', 'live:out', 'live:internal', 'live:people active']
+
+  function loadPinned(): string[] {
+    try {
+      const raw = localStorage.getItem(PINNED_KEY)
+      if (!raw) return [...DEFAULT_PINNED]
+      const parsed = JSON.parse(raw)
+      // An empty array is a real choice ("show me nothing"), so it is honoured —
+      // only a corrupt or wrong-shaped value falls back to the defaults.
+      return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : [...DEFAULT_PINNED]
+    } catch { return [...DEFAULT_PINNED] }
+  }
+
+  // An ARRAY, not a Set: the order someone pinned things in is the order they
+  // want to read them, and it survives a reload. A Set would also work for
+  // membership but would leave the header's order at the mercy of whatever order
+  // the plugins happen to report in.
+  const pinned = ref<string[]>(loadPinned())
+
+  function persistPinned() {
+    // A private-mode or quota failure must not break the board — the choice just
+    // won't outlive the tab.
+    try { localStorage.setItem(PINNED_KEY, JSON.stringify(pinned.value)) } catch { }
+  }
+
+  function togglePinned(id: string) {
+    const i = pinned.value.indexOf(id)
+    if (i === -1) pinned.value = [...pinned.value, id]
+    else pinned.value = pinned.value.filter(x => x !== id)
+    persistPinned()
+  }
+
+  function resetPinned() { pinned.value = [...DEFAULT_PINNED]; persistPinned() }
+
+  const isPinned = (id: string) => pinned.value.includes(id)
+
+  // Resolved against the current summary, in PINNED order. A pin whose plugin has
+  // stopped reporting is skipped rather than rendered as a zero — the same rule the
+  // Status card follows, because absent and zero are different claims.
+  const pinnedFigs = computed(() => {
+    const byId = new Map<string, { module: string; key: string; text: string; bad: boolean }>()
+    for (const p of summary.value?.status || []) {
+      for (const m of p.metrics) {
+        byId.set(`${p.module}:${m.key}`, {
+          module: p.label,
+          key: m.key,
+          text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
+          bad: m.severity === 'bad' && m.value > 0,
+        })
+      }
+    }
+    return pinned.value.map(id => byId.get(id)).filter(Boolean) as
+      { module: string; key: string; text: string; bad: boolean }[]
+  })
+
   // How many bars the strip can draw, measured by the component itself (see
   // TrafficStrip's ResizeObserver). Null until it has been laid out once, so the
   // first fetch doesn't wait on a measurement.
@@ -273,6 +342,7 @@ export const useLiveStore = defineStore('live', () => {
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
     loading, connected, paused, dropped, overflowed,
     failing, maxFeed: MAX_FEED,
+    pinned, pinnedFigs, isPinned, togglePinned, resetPinned,
     load, setWindow, start, stop, togglePause, refreshAggregates, setPoints,
   }
 })

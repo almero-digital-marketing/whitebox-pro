@@ -3,7 +3,75 @@
    board layout is new, because no other module is a dashboard. */
 /* Tighter than the app default: this module is a board of six cards plus a
    feed, so every px of chrome is a px the data doesn't get. */
-.live-board { height: 100%; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+/* Two panes, the same shape as People's `.ppl-console`: a flex row, main column
+   grows and scrolls, the aside is flex-none with its own scroll. `min-height: 0` on
+   both children is what lets each scroll independently instead of the page growing.
+   340px, not People's 400: these rows are a switch plus two short words, where a
+   profile form needs room for inputs. */
+.live-console { display: flex; height: 100%; min-height: 0; }
+.live-board { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+
+/* No padding of its own: the Accordion's header and content bring their own, the
+   same as People's `.ppl-side`. */
+.lv-side { flex: none; width: 340px; min-height: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--panel); }
+
+/* The right pane is an Accordion in every module. Geometry copied from People's
+   `.ppl-accordion` so the header height, the between-panel rule and the content
+   padding are one object across the app rather than a lookalike: the ACTIVE panel
+   is the one that grows and scrolls, which is the whole reason for the flex chain
+   (`min-height: 0` at every level, or the pane grows instead of the content
+   scrolling). */
+.lv-accordion { border: none; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.lv-accordion .p-accordionpanel { border: none; display: flex; flex-direction: column; }
+.lv-accordion .p-accordionpanel > .p-accordioncontent { min-height: 0; }
+.lv-accordion .p-accordionpanel-active { flex: 0 1 auto; min-height: 0; }
+.lv-accordion .p-accordionpanel-active .p-accordioncontent { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.lv-accordion .p-accordionpanel-active .p-accordioncontent-wrapper { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.lv-accordion .p-accordionheader { box-sizing: border-box; flex: 0 0 52px; height: 52px;
+  min-height: 52px; max-height: 52px; padding: 0 18px; font-size: 12px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--panel);
+  border: none; border-radius: 0; }
+.lv-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
+.lv-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
+.lv-accordion .p-accordioncontent-content { padding: 14px 18px; background: var(--panel); border: none; }
+
+.lv-side-hint { margin: 0 0 10px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+
+/* One plugin's counters. The separator carries the grouping, so the plugin name
+   doesn't need a heavier weight than `.lv-dl-ch` already gives it. */
+.lv-sgroup + .lv-sgroup { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+
+/* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
+   `.cmp-sw` in components/query/qb.css): a <label> whose text sits left and whose
+   ToggleSwitch is pushed right by `margin-left: auto`. Those classes are scoped
+   under `.qb`, so the VALUES are mirrored here — the way this file already mirrors
+   People's `.sub-title` — rather than reaching into another module's stylesheet.
+   A <label>, so the whole row is the switch's hit area: there are 65 of these, and
+   having to hit the switch itself would be the difference between usable and not.
+   The value column is fixed and right-aligned so digits line up instead of drifting
+   with label length; tabular-nums stops a `12` being narrower than an `88`. */
+.lv-srow { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center;
+  gap: 8px; padding: 3px 0; cursor: pointer; font-size: 11.5px; }
+.lv-srow:hover { background: var(--accent-soft); border-radius: 4px; }
+.lv-srow-n { text-align: right; font-variant-numeric: tabular-nums; }
+.lv-srow-n b { font-weight: 650; font-size: 12.5px; color: var(--text-strong); }
+.lv-srow-k { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-srow.bad .lv-srow-n b, .lv-srow.bad .lv-srow-k { color: var(--danger); }
+.lv-srow.bad .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--danger); }
+.lv-sw { margin-left: auto; }
+/* Smaller than PrimeVue's default: at stock size a column of 65 of these outweighs
+   the numbers they select. Deep, because the switch's parts are the component's own
+   DOM and live.css is not scoped to it. */
+.lv-side .p-toggleswitch { width: 30px; height: 17px; }
+.lv-side .p-toggleswitch-handle { width: 13px; height: 13px; }
+
+/* Names the owning plugin on every pinned figure. Muted and smaller — it's a
+   qualifier on the number, not part of it. */
+.lv-fig-mod { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); margin-right: 3px; }
 
 .lv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 /* One inline row on a single baseline. Sizes stay within ~2x so the baseline

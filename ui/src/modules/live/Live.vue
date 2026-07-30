@@ -13,6 +13,11 @@ import { onActivated, onDeactivated, computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
 import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
+import ToggleSwitch from 'primevue/toggleswitch'
+import Accordion from 'primevue/accordion'
+import AccordionPanel from 'primevue/accordionpanel'
+import AccordionHeader from 'primevue/accordionheader'
+import AccordionContent from 'primevue/accordioncontent'
 import FilterMenu from '../../components/FilterMenu.vue'
 import TrafficStrip from './components/TrafficStrip.vue'
 import './live.css'
@@ -21,7 +26,25 @@ const store = useLiveStore()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
   feedChanModes, directionCounts, channelCounts, feedFiltered, hiddenByFilter,
   feedView, feedCounts,
-  connected, paused, dropped, overflowed, failing } = storeToRefs(store)
+  connected, paused, dropped, overflowed, failing, pinned, pinnedFigs } = storeToRefs(store)
+
+// Which right-pane section is open. One today, so it starts open — the app's other
+// panes open their first panel too rather than presenting a stack of closed
+// headers.
+const sidePanel = ref('status')
+
+// Not via storeToRefs: a plain function on the store, so wrapping it in a ref would
+// only add a `.value` for the template to unwrap again.
+const isPinned = store.isPinned
+
+// The reset button only appears once the selection has drifted, so it is never a
+// control that visibly does nothing. Compared as a set, not a list — re-pinning the
+// same five in a different order is still "the default", and offering to reset it
+// would be noise.
+const isDefaultPinned = computed(() => {
+  const d = ['live:events/min', 'live:in', 'live:out', 'live:internal', 'live:people active']
+  return pinned.value.length === d.length && d.every(k => pinned.value.includes(k))
+})
 
 const WINDOWS: WindowKey[] = ['5m', '30m', '1h', '24h']
 
@@ -192,7 +215,13 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
 </script>
 
 <template>
-  <div class="live-board">
+  <!-- Two panes, matching People/Campaigns/Audiences: a scrolling main column and
+       a fixed-width right aside (`.ppl-side` is the same 400px flex-none pattern).
+       Status moved into the aside because it stopped being a reading and became a
+       CONTROL — it picks what the header shows — and a control that governs the
+       whole board belongs beside it, not sixth in a grid of cards. -->
+  <div class="live-console">
+    <div class="live-board">
     <!-- ── header: the pulse ─────────────────────────────────────────────
          Figures, not charts: each of these is a single current value, and a
          chart of one number is decoration. -->
@@ -208,26 +237,25 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
            People-active sits here rather than in a card: it's a pulse reading,
            and it was the one headline number you had to scroll past six cards
            to find. -->
+      <!-- WHICHEVER counters were pinned in the Status pane, in the order they
+           were pinned. This used to be five hard-coded figures from live's own
+           aggregates, which meant the most prominent row on the board was the one
+           thing nobody could change — while mail's `failed` and journeys' `stuck`,
+           the numbers people actually watch for, sat two scrolls down.
+           The module is named on every figure rather than only on non-live ones:
+           `failed` alone is ambiguous across mail, sms, journeys and conversions,
+           and a conditional qualifier is worse than a consistent one. -->
       <div class="lv-pulse">
-        <span class="lv-fig"><b>{{ summary?.per_minute ?? '—' }}</b> events/min</span>
-        <span class="lv-fig dir" :style="{ '--c': DIRECTION_COLOR.in }">
-          <b>{{ summary?.by_direction?.in ?? 0 }}</b> {{ DIRECTION_GLYPH.in }} in
+        <span v-for="f in pinnedFigs" :key="`${f.module}:${f.key}`"
+          class="lv-fig" :class="{ bad: f.bad }">
+          <span class="lv-fig-mod">{{ f.module }}</span>
+          <b>{{ f.text }}</b> {{ f.key }}
         </span>
-        <span class="lv-fig dir" :style="{ '--c': DIRECTION_COLOR.out }">
-          <b>{{ summary?.by_direction?.out ?? 0 }}</b> {{ DIRECTION_GLYPH.out }} out
-        </span>
-        <!-- orchestration is deliberately NOT a third band in the chart and not a
-             coloured series: it isn't traffic, and counting it as either
-             direction would inflate the figures beside it -->
-        <span class="lv-fig dim"><b>{{ summary?.by_direction?.internal ?? 0 }}</b> internal</span>
-        <!-- v-tooltip, not a native `title`: the Status card below explains itself
-             the same way, and two tooltip mechanisms on one screen look and behave
-             differently (the native one waits about a second and is OS-styled).
-             Native `title` is kept elsewhere in this file only for revealing text
-             the layout has clipped, which is a different job. -->
-        <span class="lv-fig"
-          v-tooltip.bottom="{ value: `Distinct people touched in this window. Events about the system rather than a person aren't counted.`, class: 'lv-why-tip' }">
-          <b>{{ summary?.active_passports ?? 0 }}</b> people active
+
+        <!-- An empty header is a choice someone made, not a broken board — so it
+             says how to undo it rather than showing nothing at all. -->
+        <span v-if="!pinnedFigs.length" class="lv-quiet">
+          No counters pinned — switch some on in the Status pane.
         </span>
 
         <!-- Says why the figures are zeros — "quiet" and "broken" look identical
@@ -333,70 +361,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           </li>
           <li v-if="!contentRows.length" class="lv-empty">Nothing consumed in this window.</li>
         </ul>
-      </section>
-
-      <!-- STATUS: is each channel actually working. Its own card, not a row inside
-           "going out": a spike in failures or an exhausted number pool is the
-           reason someone opens this module, and it must not be something you go
-           looking for.
-           ONE generic template. There used to be a block per channel here — mail
-           and sms sharing one, voip another, the number pool a third — which meant
-           a new plugin needed markup nobody would remember to add. Now each plugin
-           describes its own numbers (docs/10-plugin-status.md) and this lays them
-           out without knowing what any of them mean. -->
-      <section class="lv-card">
-        <div class="blk-head">Status</div>
-
-        <div v-for="p in statusRows" :key="p.module" class="lv-deliv">
-          <div class="lv-dl-row">
-            <span class="lv-dl-ch">{{ p.label }}</span>
-            <span class="lv-dl-figs">
-              <!-- One loop, in the plugin's own order. `bad` is the plugin's own
-                   call too, shown with an icon and the word, never colour alone —
-                   which is now the only thing colour means on this card. -->
-              <span v-for="f in p.figs" :key="f.key" class="lv-dl-fig" :class="{ bad: f.bad }">
-                <span v-if="f.bad" class="material-symbols-outlined">error</span>
-                <b>{{ f.text }}</b> {{ f.key }}
-              </span>
-            </span>
-
-            <!-- The note explains what this plugin CAN'T measure. That matters when
-                 you're asking why a number is zero, and never before — so it costs
-                 the row no height and waits behind an icon.
-                 A button, not a span: it's the app's tooltip convention, and the
-                 reason is that a button takes focus, so the note is reachable by
-                 keyboard and by tap, where hover doesn't exist. `info`, not
-                 `warning` — severity is the metrics' job, and a caveat isn't one. -->
-            <button v-if="p.note" type="button" class="lv-dl-why"
-              v-tooltip.top="{ value: p.note, class: 'lv-why-tip' }"
-              :aria-label="`${p.label}: ${p.note}`">
-              <span class="material-symbols-outlined">info</span>
-            </button>
-          </div>
-
-        </div>
-
-        <!-- Absent, not zero: no plugin reporting is a different claim from
-             "everything is at zero". -->
-        <p v-if="!summary?.status?.length" class="lv-empty">
-          No plugin is reporting status. A plugin appears here once it exposes
-          <code>status()</code>.
-        </p>
-
-        <!-- A plugin that THREW is broken, and that's urgent — distinct from one
-             that simply has no status() to call. -->
-        <p v-if="summary?.status_failing?.length" class="lv-note-bad">
-          <span class="material-symbols-outlined">error</span>
-          {{ summary.status_failing.join(', ') }} failed to report — check the server log.
-        </p>
-
-        <!-- Named on purpose. These render as absent above, which is correct, but
-             absence is easy to miss: nobody notices that a plugin has NEVER
-             reported. This is the difference between a card that shows what's
-             monitored and one that shows what isn't. -->
-        <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
-          not monitored: {{ summary.status_silent.join(', ') }}
-        </p>
       </section>
 
     </div>
@@ -514,5 +478,92 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
         </li>
       </ul>
     </section>
+    </div>
+
+    <!-- ── STATUS pane ───────────────────────────────────────────────────────
+         Every counter every plugin reports, one per row, each with a switch that
+         promotes it to the header.
+         One row per counter rather than the inline rows this used to be: a switch
+         needs its own hit area and its own label, and twelve wrapped rows of
+         switches would be unreadable. The trade is height, which is why this is a
+         pane with its own scroll rather than a card in the grid.
+         Grouped by plugin and NOT collapsible: the point of the pane is to scan
+         everything on offer and pick, and an accordion would hide most of it
+         behind clicks. -->
+    <aside class="lv-side">
+      <!-- An Accordion, like every other right pane in the app (People, Campaigns,
+           Audiences): the pane is a stack of named sections, and "Status" is this
+           module's first. One panel today — declared as a section anyway so the
+           next one is an <AccordionPanel> rather than a restructure. -->
+      <Accordion v-model:value="sidePanel" class="lv-accordion">
+        <AccordionPanel value="status">
+          <AccordionHeader>
+            <span class="acc-title">
+              Status
+              <!-- The count on the header, so it reads even collapsed — the same
+                   reason People puts one on every panel. -->
+              <span class="count-pill sm">{{ pinned.length }}</span>
+            </span>
+          </AccordionHeader>
+          <AccordionContent>
+      <p class="lv-side-hint">
+        Switch a counter on to show it in the header.
+        <button v-if="!isDefaultPinned" type="button" class="lv-link"
+          @click="store.resetPinned()">reset</button>
+      </p>
+
+      <div v-for="p in statusRows" :key="p.module" class="lv-sgroup">
+        <div class="lv-sgroup-head">
+          <span class="lv-dl-ch">{{ p.label }}</span>
+          <button v-if="p.note" type="button" class="lv-dl-why"
+            v-tooltip.left="{ value: p.note, class: 'lv-why-tip' }"
+            :aria-label="`${p.label}: ${p.note}`">
+            <span class="material-symbols-outlined">info</span>
+          </button>
+        </div>
+
+        <!-- The app's existing toggle row, copied from analytics' CompareSection:
+             a <label> wrapping its text with the switch pushed right by
+             `margin-left: auto` (its `.lab.row` + `.cmp-sw`). Same PrimeVue
+             ToggleSwitch, same geometry — the classes there are scoped under `.qb`,
+             so the values are mirrored in live.css the way this file already
+             mirrors People's `.sub-title`. -->
+        <label v-for="f in p.figs" :key="f.key" class="lv-srow" :class="{ bad: f.bad }">
+          <span class="lv-srow-n">
+            <span v-if="f.bad" class="material-symbols-outlined">error</span>
+            <b>{{ f.text }}</b>
+          </span>
+          <span class="lv-srow-k">{{ f.key }}</span>
+          <ToggleSwitch class="lv-sw" :model-value="isPinned(`${p.module}:${f.key}`)"
+            @update:model-value="store.togglePinned(`${p.module}:${f.key}`)"
+            :aria-label="`Show ${p.label} ${f.key} in the header`" />
+        </label>
+      </div>
+
+      <!-- Absent, not zero: no plugin reporting is a different claim from
+           "everything is at zero". -->
+      <p v-if="!summary?.status?.length" class="lv-empty">
+        No plugin is reporting status. A plugin appears here once it exposes
+        <code>status()</code>.
+      </p>
+
+      <!-- A plugin that THREW is broken, and that's urgent — distinct from one
+           that simply has no status() to call. -->
+      <p v-if="summary?.status_failing?.length" class="lv-note-bad">
+        <span class="material-symbols-outlined">error</span>
+        {{ summary.status_failing.join(', ') }} failed to report — check the server log.
+      </p>
+
+      <!-- Named on purpose. These render as absent above, which is correct, but
+           absence is easy to miss: nobody notices that a plugin has NEVER
+           reported. This is the difference between a pane that shows what's
+           monitored and one that shows what isn't. -->
+      <p v-if="summary?.status_silent?.length" class="lv-unmonitored">
+        not monitored: {{ summary.status_silent.join(', ') }}
+      </p>
+          </AccordionContent>
+        </AccordionPanel>
+      </Accordion>
+    </aside>
   </div>
 </template>
