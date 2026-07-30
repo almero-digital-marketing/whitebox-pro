@@ -224,6 +224,18 @@ describe('geolocation() — status()', () => {
     expect(s.note).toBeNull()
   })
 
+  // This plugin owns no tables. The three counters are process-lifetime totals in
+  // memory and the database facts are read off the file now, so NOTHING here can be
+  // windowed — and every metric has to say so, or the board shows the lot under a
+  // window selector that doesn't govern any of it.
+  it('marks every metric live, since it has no history to window', async () => {
+    const { ctx, provider } = makeCtx({ healthImpl: freshDb() })
+    const api = await geolocation({ provider }).register({}, ctx)
+    const s = await api.service.status({ since: new Date('2026-07-30T00:00:00.000Z') })
+    expect(s.metrics.length).toBeGreaterThan(3)
+    expect(s.metrics.filter(m => !m.live)).toEqual([])
+  })
+
   it('flags a stale database — the silent-degradation case this card exists for', async () => {
     const { ctx, provider } = makeCtx({ healthImpl: freshDb({ mtimeMs: Date.now() - 400 * DAY_MS }) })
     const api = await geolocation({ provider }).register({}, ctx)

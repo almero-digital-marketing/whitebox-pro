@@ -206,6 +206,17 @@ describe('service.status', () => {
     expect(at(s, 'completed').value).toBe(3)
   })
 
+  // Which source a metric came from, carried to the board: liveCounts takes a grace
+  // cutoff rather than a window, activityCounts is windowed on its own timestamps.
+  // `stuck` belongs with the live ones despite sitting last in the row — it's
+  // current state (still waiting past its wake-up time), not a windowed event.
+  it('marks the liveCounts metrics live, including stuck, and leaves activity windowed', async () => {
+    setup()
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.filter(m => m.live).map(m => m.key)).toEqual(['active journeys', 'enrolled', 'stuck'])
+    expect(s.metrics.filter(m => !m.live).map(m => m.key)).toEqual(['started', 'completed', 'failed'])
+  })
+
   // Only the two that mean a person is stranded mid-journey. `enrolled` is
   // large-and-fine; a count being big is not a fault.
   it('marks only failed and stuck as bad', async () => {

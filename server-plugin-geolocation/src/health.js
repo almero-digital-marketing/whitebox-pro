@@ -47,14 +47,19 @@ export function recordMiss() { lookups++; misses++ }    // provider had no data 
 export function recordError() { lookups++; errors++ }   // provider threw — the lookup produced nothing
 
 export async function status({ since } = {}) {   // `since` unused on purpose — see the header
+  // Every metric here is `live`. This plugin owns no tables: the three counters are
+  // process-lifetime totals held in memory (they reset on restart and don't extend
+  // to a second instance), and the database facts below are read off the file right
+  // now. None of it can be windowed because none of it is stored per-event, so the
+  // board must not show it under a window selector as though it were.
   const metrics = [
-    { key: 'lookups', value: lookups },
+    { key: 'lookups', value: lookups, live: true },
     // No data for an IP is normal, not broken: private, reserved and unroutable
     // addresses all land here, and so do addresses MaxMind simply can't place.
-    { key: 'no data', value: misses },
+    { key: 'no data', value: misses, live: true },
     // The provider threw: a missing, unreadable or corrupt database, or a reader
     // that never opened. Each one is a visitor who got no geo at all.
-    { key: 'failed', value: errors, severity: 'bad' },
+    { key: 'failed', value: errors, severity: 'bad', live: true },
   ]
 
   // Optional by design: health() is not part of the provider contract (that is
@@ -82,11 +87,11 @@ export async function status({ since } = {}) {   // `since` unused on purpose �
   } else {
     const ageDays = Math.floor((Date.now() - db.mtimeMs) / DAY_MS)
     const stale = ageDays > staleAfterDays
-    metrics.push({ key: 'database age (days)', value: ageDays })
+    metrics.push({ key: 'database age (days)', value: ageDays, live: true })
     // A judgement expressed as a count, which is exactly what the contract's
     // "non-zero means something is wrong" wants: the age itself is always
     // non-zero and always fine until it isn't, so it can't carry the severity.
-    metrics.push({ key: 'stale database', value: stale ? 1 : 0, severity: 'bad' })
+    metrics.push({ key: 'stale database', value: stale ? 1 : 0, severity: 'bad', live: true })
     if (stale) {
       note = `${db.dbPath} is ${ageDays} days old — geoipupdate has probably stopped; lookups still answer, from stale allocations`
       if (!db.watching) note += ' (and the file is not watched — pass watch: true)'

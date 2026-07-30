@@ -223,10 +223,13 @@ export async function status({ since } = {}) {
       .catch(err => { logger?.warn?.({ err }, 'journeys: status activity counts failed'); return null }),
   ])
 
+  // The two sources are already split by kind, and `live: true` is what carries
+  // that distinction to the board: liveCounts is current state (it takes a grace
+  // cutoff, not a window), activityCounts is windowed on its own timestamps.
   const metrics = []
   if (live) {
-    metrics.push({ key: 'active journeys', value: live.active_journeys })
-    metrics.push({ key: 'enrolled', value: live.enrolled })
+    metrics.push({ key: 'active journeys', value: live.active_journeys, live: true })
+    metrics.push({ key: 'enrolled', value: live.enrolled, live: true })
   }
   if (activity) {
     metrics.push({ key: 'started', value: activity.started })
@@ -237,7 +240,7 @@ export async function status({ since } = {}) {
   }
   // Same severity, different failure: nothing marked these, they simply never
   // woke up. Reported last because it's the one an operator has to go and fix.
-  if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad' })
+  if (live) metrics.push({ key: 'stuck', value: live.stuck, severity: 'bad', live: true })
 
   return {
     label: 'journeys',

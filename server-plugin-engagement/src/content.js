@@ -342,7 +342,10 @@ export async function status({ since } = {}) {
       metrics: [
         { key: 'transcribed', value: byKind.video || 0 },
         { key: 'described', value: byKind.image || 0 },
-        { key: 'no text', value: noText, severity: 'bad' },
+        // `live`, matching the query above: this counts the whole cache, not the
+        // window. Without the flag the board would show it beside the two windowed
+        // counts and imply all three moved together when the window changed.
+        { key: 'no text', value: noText, severity: 'bad', live: true },
       ],
       note: noText
         ? `${noText} cached entr${noText === 1 ? 'y' : 'ies'} resolved to no text (whole cache, not the window) — every view of those URLs records nothing until they're invalidated`

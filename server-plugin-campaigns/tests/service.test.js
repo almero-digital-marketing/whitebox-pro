@@ -217,6 +217,17 @@ describe('status', () => {
     expect(at(s, 'drafts').value).toBe(7)
   })
 
+  // The split the board renders on. `sent`/`dry run` FILTER on sent_at >= since;
+  // the other three count by `status`, which has no timestamp, so widening the
+  // window cannot move them. Unmarked they'd read as windowed counts that happen
+  // to be small — asserted exactly, because a wrong flag is invisible in the UI.
+  it('marks the status-derived counts live and leaves the windowed ones unmarked', async () => {
+    setup()
+    const s = await service.status({ since: new Date() })
+    expect(s.metrics.filter(m => m.live).map(m => m.key)).toEqual(['scheduled', 'drafts', 'overdue'])
+    expect(s.metrics.filter(m => !m.live).map(m => m.key)).toEqual(['sent', 'dry run'])
+  })
+
   // dryRun defaults ON, so on a deployment that hasn't gone live EVERY send is a
   // dry run. Flagging that would paint the card red for a system doing exactly
   // what it was configured to do.

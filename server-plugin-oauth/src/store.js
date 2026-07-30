@@ -156,8 +156,10 @@ export async function status({ since } = {}) {
       label: 'oauth',
       metrics: [
         { key: 'logins', value: Number(logins?.count ?? 0) },
-        { key: 'invites pending', value: outstanding.length - expired },
-        { key: 'invites expired', value: expired, severity: 'bad' },
+        // `live`, matching the query above: "who is locked out right now" has no
+        // window, and password_hash IS NULL is a state rather than an event.
+        { key: 'invites pending', value: outstanding.length - expired, live: true },
+        { key: 'invites expired', value: expired, severity: 'bad', live: true },
       ],
       note: expired
         ? `${expired} invite${expired === 1 ? '' : 's'} expired — those teammates can't set a password until someone resends`

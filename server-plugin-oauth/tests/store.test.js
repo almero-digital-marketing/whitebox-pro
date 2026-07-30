@@ -226,7 +226,10 @@ describe('store — status (self-describing health)', () => {
   it('counts a live invite as pending and never flags it', async () => {
     await store.createInvite({ email: 'pending@example.com' })
     const s = await store.status({ since })
-    expect(s.metrics.find(m => m.key === 'invites pending')).toEqual({ key: 'invites pending', value: 1 })
+    // `live` because "who is locked out right now" has no window — password_hash
+    // IS NULL is a state, not an event with a timestamp.
+    expect(s.metrics.find(m => m.key === 'invites pending'))
+      .toEqual({ key: 'invites pending', value: 1, live: true })
     expect(s.metrics.find(m => m.key === 'invites expired').value).toBe(0)
     expect(s.note).toBeNull()
   })
@@ -239,7 +242,8 @@ describe('store — status (self-describing health)', () => {
     await db('whitebox_oauth_users').where({ id: stale.id }).update({ invite_expires_at: new Date(Date.now() - HOUR) })
 
     const s = await store.status({ since })
-    expect(s.metrics.find(m => m.key === 'invites expired')).toEqual({ key: 'invites expired', value: 1, severity: 'bad' })
+    expect(s.metrics.find(m => m.key === 'invites expired'))
+      .toEqual({ key: 'invites expired', value: 1, severity: 'bad', live: true })
     expect(s.metrics.find(m => m.key === 'invites pending').value).toBe(1)   // the expired one isn't double-counted
     expect(s.note).toMatch(/1 invite expired/)
   })

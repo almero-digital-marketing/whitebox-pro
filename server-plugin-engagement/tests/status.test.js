@@ -86,7 +86,10 @@ describe('engagement.content.status', () => {
       { url: 'c.jpg', kind: 'image', text: '', generated_at: recent },
     ])
     const s = await content.status({ since })
-    expect(s.metrics.find(m => m.key === 'no text')).toEqual({ key: 'no text', value: 2, severity: 'bad' })
+    // `live: true` is load-bearing, not incidental: this one counts the whole cache
+    // while the two beside it are windowed, and the board groups on that flag.
+    expect(s.metrics.find(m => m.key === 'no text'))
+      .toEqual({ key: 'no text', value: 2, severity: 'bad', live: true })
     expect(s.note).toMatch(/2 cached entries resolved to no text/)
   })
 

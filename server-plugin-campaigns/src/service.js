@@ -290,13 +290,17 @@ export async function status({ since } = {}) {
   return {
     label: 'campaigns',
     metrics: [
+      // Windowed: both FILTER on sent_at >= since (store.healthCounts).
       { key: 'sent', value: c.sent },
       { key: 'dry run', value: c.dry_run },
-      { key: 'scheduled', value: c.scheduled },
-      { key: 'drafts', value: c.draft },
+      // Current state: these three count by `status`, which has no timestamp to
+      // window. A draft created last year is still a draft today, so widening the
+      // window can't change them — hence `live`.
+      { key: 'scheduled', value: c.scheduled, live: true },
+      { key: 'drafts', value: c.draft, live: true },
       // Committed to a send time that has passed, and still sitting there —
       // there is no worker that will pick it up.
-      { key: 'overdue', value: c.overdue, severity: 'bad' },
+      { key: 'overdue', value: c.overdue, severity: 'bad', live: true },
     ],
     // No `of` on any of these: a campaign has no ceiling, so there is nothing for
     // a ratio to be measured against and a denominator would invent one.
