@@ -29,9 +29,11 @@ const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirMode
   feedView, feedCounts,
   connected, paused, dropped, overflowed, failing, pinned, pinnedFigs } = storeToRefs(store)
 
-// Which right-pane section is open. One today, so it starts open — the app's other
-// panes open their first panel too rather than presenting a stack of closed headers.
-const sidePanel = ref('status')
+// Which right-pane section is open — Live first, matching every other pane in the
+// app opening its first panel rather than presenting a stack of closed headers.
+// Live leads because the window and the filters change what every other number on
+// the board means, so they are the first thing you'd reach for.
+const sidePanel = ref('live')
 
 // Not via storeToRefs: a plain function on the store, so wrapping it in a ref would
 // only add a `.value` for the template to unwrap again.
@@ -147,15 +149,21 @@ const directionChips = computed(() => {
 // One helper for both axes, so the chips can't drift apart in how they read.
 // `title` spells the cycle out because a tri-state control has no conventional
 // affordance — the next state has to be discoverable without experimenting.
+// Classes ONLY. The title used to be returned alongside them, which meant binding
+// this to `:class` would have turned the whole sentence into a class name.
 function chipState(modes: Map<string, string>, key: string) {
   const m = modes.get(key)
-  return {
-    on: m === 'include',
-    off: m === 'exclude',
-    title: m === 'include' ? `Only ${key} — click to exclude it`
-      : m === 'exclude' ? `Excluding ${key} — click to clear`
-      : `Click to show only ${key}`,
-  }
+  return { on: m === 'include', off: m === 'exclude' }
+}
+
+// Spelled out because a tri-state control has no conventional affordance — the next
+// state has to be discoverable without experimenting. Says "the board", not "the
+// list": these narrow every card now, not only the feed.
+function chipTitle(modes: Map<string, string>, key: string) {
+  const m = modes.get(key)
+  return m === 'include' ? `Board shows only ${key} — click to exclude it instead`
+    : m === 'exclude' ? `Board is excluding ${key} — click to clear`
+    : `Click to show only ${key} across the board`
 }
 
 // Shaped for FilterMenu: groups of { value, label, count }. Channels come from
@@ -288,10 +296,11 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
         <span class="lv-live" :class="{ off: !connected }">
           <i class="count-dot" :class="{ zero: !connected }" /> {{ connected ? 'live' : 'reconnecting' }}
         </span>
-        <div class="lv-seg">
-          <button v-for="w in WINDOWS" :key="w" type="button" class="lv-win"
-            :class="{ on: store.window === w }" @click="store.setWindow(w)">{{ w }}</button>
-        </div>
+        <!-- The window picker and the filters moved to the Live pane on the right.
+             They govern every card, not just the row they used to sit above, so they
+             belong with the other board-wide controls rather than in the header —
+             which now carries only the pinned figures and whether the feed is
+             running. -->
         <!-- Icon-only, the same 30px bordered square as People's search filter
              (.icon-btn in style.css). Paused is the non-default state, so it
              takes the `on` treatment; the dot says events are stacking up
@@ -496,24 +505,78 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
     </section>
     </div>
 
-    <!-- ── STATUS pane ───────────────────────────────────────────────────────
-         Every counter every plugin reports, one per row, each with a switch that
-         promotes it to the header.
-         One row per counter rather than the inline rows this used to be: a switch
-         needs its own hit area and its own label, and twelve wrapped rows of
-         switches would be unreadable. The trade is height, which is why this is a
-         pane with its own scroll rather than a card in the grid.
-         Grouped by plugin and NOT collapsible: the point of the pane is to scan
-         everything on offer and pick, and an accordion would hide most of it
-         behind clicks. -->
+    <!-- ── the pane: everything that GOVERNS the board ───────────────────────
+         Two sections. "Live" holds the controls — the window and the filters, both
+         of which apply board-wide — and "Status" holds the counters and picks which
+         of them reach the header. Both are choices about what the board shows, which
+         is why they sit beside it rather than in the header above it. -->
     <aside class="lv-side">
 
-      <!-- ONE "Status" panel holding every plugin as a group, which is what the app's
-           right panes are: a small stack of named sections, not thirteen of them.
-           A panel per plugin was tried and dropped — thirteen headers turned the
-           pane into a list of things to click before it was a list of counters, and
-           the one you wanted was always shut. -->
       <Accordion v-model:value="sidePanel" class="lv-accordion">
+        <!-- ── Live: the board-wide controls ──────────────────────────────── -->
+        <AccordionPanel value="live">
+          <AccordionHeader>
+            <span class="acc-title">
+              Live
+              <!-- Says the board is narrowed even with the section shut, which
+                   matters more here than for Status: a filtered board looks like a
+                   quiet one, and that is the single most misleading thing this
+                   module can do. -->
+              <span v-if="feedFiltered" class="count-pill sm">filtered</span>
+            </span>
+          </AccordionHeader>
+          <AccordionContent>
+            <p class="lv-side-hint">
+              These apply to the whole board — every card and the feed.
+            </p>
+
+            <label class="lv-fld-l">Window</label>
+            <div class="lv-seg lv-seg-wide">
+              <button v-for="w in WINDOWS" :key="w" type="button" class="lv-win"
+                :class="{ on: store.window === w }" @click="store.setWindow(w)">{{ w }}</button>
+            </div>
+
+            <label class="lv-fld-l">Direction</label>
+            <!-- The same tri-state chips the feed's filter menu offers, laid out in
+                 the pane instead of behind an icon — they narrow every card now, so
+                 hiding them under a control that reads as "filter this list" would
+                 misdescribe what they do. -->
+            <div class="lv-chips">
+              <button v-for="d in directionChips" :key="d" type="button" class="lv-chip"
+                :class="chipState(feedDirModes, d)"
+                :title="chipTitle(feedDirModes, d)"
+                @click="store.toggleDirection(d)">
+                {{ DIRECTION_GLYPH[d] }} {{ d }}
+                <small>{{ directionCounts[d] || 0 }}</small>
+              </button>
+            </div>
+
+            <label class="lv-fld-l">Channel</label>
+            <div class="lv-chips">
+              <button v-for="c in channelCounts" :key="c.channel" type="button" class="lv-chip"
+                :class="chipState(feedChanModes, c.channel)"
+                :title="chipTitle(feedChanModes, c.channel)"
+                @click="store.toggleChannel(c.channel)">
+                {{ c.channel }} <small>{{ c.count }}</small>
+              </button>
+              <p v-if="!channelCounts.length" class="lv-side-note">
+                No channels in this window yet.
+              </p>
+            </div>
+
+            <div class="b-actions">
+              <Button label="Clear filters" text severity="secondary" size="small"
+                :disabled="!feedFiltered" @click="store.clearFeedFilters()" />
+            </div>
+          </AccordionContent>
+        </AccordionPanel>
+
+        <!-- ── Status: the counters, and which reach the header ────────────────
+             ONE panel holding every plugin as a group, which is what the app's right
+             panes are: a small stack of named sections, not thirteen of them. A panel
+             per plugin was tried and dropped — thirteen headers turned the pane into
+             a list of things to click before it was a list of counters, and the one
+             you wanted was always shut. -->
         <AccordionPanel value="status">
           <AccordionHeader>
             <span class="acc-title">

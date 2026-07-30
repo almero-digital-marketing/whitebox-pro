@@ -512,3 +512,107 @@ describe('status() descriptions', () => {
     expect(s.metrics[0].description).toMatch(/Live updates are off/i)
   })
 })
+
+// The dashboard-wide filter. It used to narrow the FEED only, client-side, because
+// that was the one list the browser held; everything else on the board is a server
+// aggregate, so narrowing those has to happen here.
+describe('makeFilter — the board-wide filter', () => {
+  const payload = (dir, ch) => ({ data: { direction: dir, channel: ch } })
+
+  it('passes everything when no axis is constrained', () => {
+    const f = service.makeFilter({})
+    expect(f.off).toBe(true)
+    expect(f.passes('mail.sent', null)).toBe(true)
+  })
+
+  // `-x` excludes. This is the default the board ships with (`dir=-internal`).
+  it('excludes a value with a leading dash', () => {
+    const f = service.makeFilter({ dir: '-internal' })
+    expect(f.passes('journey.enrolled', null)).toBe(false)   // internal
+    expect(f.passes('mail.sent', null)).toBe(true)           // out
+    expect(f.passes('crm.deal', null)).toBe(true)            // in
+  })
+
+  // An include list makes the axis exclusive — the other rule of a faceted filter.
+  it('admits only the included values once anything is included', () => {
+    const f = service.makeFilter({ chan: 'mail,sms' })
+    expect(f.passes('mail.sent', null)).toBe(true)
+    expect(f.passes('sms.sent', null)).toBe(true)
+    expect(f.passes('crm.deal', null)).toBe(false)
+  })
+
+  // Exclude beats include, so `mail,-mail` resolves rather than contradicting.
+  it('lets an exclude win over an include on the same value', () => {
+    const f = service.makeFilter({ chan: 'mail,-mail' })
+    expect(f.passes('mail.sent', null)).toBe(false)
+  })
+
+  it('requires BOTH axes to pass', () => {
+    const f = service.makeFilter({ dir: 'out', chan: 'mail' })
+    expect(f.passes('mail.sent', null)).toBe(true)
+    expect(f.passes('sms.sent', null)).toBe(false)    // right direction, wrong channel
+    expect(f.passes('crm.deal', null)).toBe(false)    // right channel? no — and wrong direction
+  })
+
+  // Classification is by the RECORDED facet where there is one, exactly as the feed
+  // does it — so one awareness type filtered by direction splits correctly.
+  it('filters one awareness type by its recorded direction', () => {
+    const f = service.makeFilter({ dir: 'in' })
+    expect(f.passes('awareness.recorded', payload('observation', 'crm'))).toBe(true)
+    expect(f.passes('awareness.recorded', payload('exposure', 'mail'))).toBe(false)
+  })
+
+  it('ignores empty tokens and whitespace rather than treating them as a value', () => {
+    const f = service.makeFilter({ dir: ' , out , ' })
+    expect(f.off).toBe(false)
+    expect(f.passes('mail.sent', null)).toBe(true)
+    expect(f.passes('crm.deal', null)).toBe(false)
+  })
+})
+
+// The filter has to reach the aggregates, or the cards contradict the feed above
+// them — which is the whole reason it moved server-side.
+describe('summary()/timeseries() honour the board filter', () => {
+  const counts = [
+    { type: 'mail.sent', count: 60 },
+    { type: 'crm.deal', count: 30 },
+    { type: 'journey.enrolled', count: 10 },
+  ]
+
+  it('drops filtered rows from the totals, the directions and the channels', async () => {
+    service.init({ eventRegistry: registry(counts, 7), logger: console })
+    const all = await service.summary({ window: '30m' })
+    expect(all.total).toBe(100)
+
+    const out = await service.summary({ window: '30m', dir: 'out' })
+    expect(out.total).toBe(60)
+    expect(out.by_direction).toMatchObject({ out: 60, in: 0, internal: 0 })
+    expect(out.by_channel).toEqual({ mail: 60 })
+  })
+
+  // `types` feeds the feed's count view, so it has to narrow with everything else.
+  it('narrows the type breakdown too', async () => {
+    service.init({ eventRegistry: registry(counts, 0), logger: console })
+    const s = await service.summary({ window: '30m', chan: '-mail' })
+    expect(s.types.map(t => t.type).sort()).toEqual(['crm.deal', 'journey.enrolled'])
+  })
+
+  // The strip must not change SHAPE when narrowed — a filtered-out row leaves its
+  // bucket at zero rather than removing the bucket, or the bars would re-space.
+  it('keeps every bucket seeded while filtering what lands in them', async () => {
+    const now = Date.now()
+    const bucketOf = (m) => new Date(Math.floor((now - m * 60_000) / 60_000) * 60_000).toISOString()
+    service.init({
+      eventRegistry: registry([], 0, [
+        { bucket: bucketOf(1), type: 'crm.deal', count: 2 },
+        { bucket: bucketOf(2), type: 'mail.sent', count: 5 },
+      ]),
+      logger: console,
+    })
+    const unfiltered = await service.timeseries({ window: '30m' })
+    const filtered = await service.timeseries({ window: '30m', dir: 'in' })
+    expect(filtered.buckets.length).toBe(unfiltered.buckets.length)
+    expect(filtered.buckets.reduce((a, b) => a + b.in, 0)).toBe(2)
+    expect(filtered.buckets.reduce((a, b) => a + b.out, 0)).toBe(0)
+  })
+})

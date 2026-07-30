@@ -132,6 +132,54 @@ export async function status({ since } = {}) {
   return { label: 'live', metrics, note }
 }
 
+// ── dashboard-wide filters ─────────────────────────────────────────────────
+//
+// The board's filters used to narrow the FEED only, client-side, because that was
+// the one list the browser held. Everything else on the board — the header figures,
+// Coming in / Going out, the traffic strip — is a server aggregate, so narrowing
+// those means narrowing them HERE.
+//
+// Applied after classification, not in SQL. Direction and channel are this plugin's
+// own reading of an event (classify.js); the registry doesn't store them, so there
+// is nothing to put in a WHERE clause. Filtering the classified rows is both the
+// only place it can happen and the only way the feed and the cards are guaranteed
+// to agree about what a row is.
+//
+// Wire format is one token list per axis, `-` prefixed to exclude:
+//   dir=-internal        everything except orchestration
+//   chan=mail,sms        only these two
+// which is exactly the tri-state the UI holds, so nothing has to be translated.
+export function parseAxis(param) {
+  const inc = new Set(), exc = new Set()
+  for (const raw of String(param || '').split(',')) {
+    const t = raw.trim()
+    if (!t) continue
+    if (t.startsWith('-')) exc.add(t.slice(1))
+    else inc.add(t)
+  }
+  return { inc, exc }
+}
+
+// The standard faceted rules, matching the UI's `axisMatch` exactly — an exclude
+// always wins, an include list makes the axis exclusive, and an empty axis passes
+// everything. Kept identical on purpose: two implementations of "does this row
+// match" is how a filtered card ends up disagreeing with the filtered feed under it.
+const axisPasses = (value, { inc, exc }) =>
+  !exc.has(value) && (inc.size === 0 || inc.has(value))
+
+export function makeFilter({ dir, chan } = {}) {
+  const d = parseAxis(dir)
+  const c = parseAxis(chan)
+  const off = !d.inc.size && !d.exc.size && !c.inc.size && !c.exc.size
+  return {
+    off,
+    // `payload` is the recorded-facet shape, so this asks the same question the
+    // feed row asks.
+    passes: (type, payload) => off
+      || (axisPasses(direction(type, payload), d) && axisPasses(channel(type, payload), c)),
+  }
+}
+
 // Accepts 5m / 30m / 1h / 24h, defaults to 30m. Parsed rather than free-form
 // seconds so a caller can't ask for a window that would scan the whole table.
 const WINDOWS = { '5m': 300, '30m': 1800, '1h': 3600, '24h': 86400 }
@@ -240,9 +288,11 @@ async function collectStatus(since) {
  * refreshes as a whole, so splitting it across endpoints would only guarantee
  * the cards disagree with each other by a second or two.
  */
-export async function summary({ window: w } = {}) {
+export async function summary({ window: w, dir, chan } = {}) {
   const secs = parseWindow(w)
   const from = since(secs)
+  // Dashboard-wide: the same filter the feed uses, applied to the aggregates too.
+  const filter = makeFilter({ dir, chan })
 
   const [counts, active, lastAt, status] = await Promise.all([
     eventRegistry.countsByType({ since: from }),
@@ -269,6 +319,7 @@ export async function summary({ window: w } = {}) {
     // since it's the highest-volume type in WhiteBox the "coming in / going
     // out" cards read empty while the feed showed inbound traffic.
     const payload = facetPayload(row)
+    if (!filter.passes(type, payload)) continue
     const d = direction(type, payload)
     byDirection[d] = (byDirection[d] || 0) + count
     const ch = channel(type, payload)
@@ -292,7 +343,7 @@ export async function summary({ window: w } = {}) {
     // as several rows, and the "Top event types" list rendered it two or three
     // times with a split count (and duplicate :key values). The facet split is
     // an implementation detail of the folding, not something to publish.
-    types: collapseTypes(counts),
+    types: collapseTypes(counts.filter(r => filter.passes(r.type, facetPayload(r)))),
     active_passports: active,
     // so an empty board can say "quiet since…" rather than just showing zeros
     last_event_at: lastAt ? new Date(lastAt).toISOString() : null,
@@ -420,8 +471,9 @@ const MIN_POINTS = 12
 const MAX_POINTS = 600
 const DEFAULT_POINTS = 120
 
-export async function timeseries({ window: w, points } = {}) {
+export async function timeseries({ window: w, points, dir, chan } = {}) {
   const secs = parseWindow(w)
+  const filter = makeFilter({ dir, chan })
   const wanted = Math.min(MAX_POINTS, Math.max(MIN_POINTS, Math.floor(Number(points) || DEFAULT_POINTS)))
   // Smallest step that fits the request — so the client gets at most `wanted`
   // bars, at the finest readable granularity that satisfies it.
@@ -452,9 +504,13 @@ export async function timeseries({ window: w, points } = {}) {
     // A row just outside the seeded range (clock skew, a bucket that ticked over
     // mid-query) still gets counted rather than silently dropped.
     if (!buckets.has(key)) buckets.set(key, blank(key))
-    // Same recorded-facet classification as summary(), so the strip and the
-    // cards above it can't tell different stories about the same window.
-    buckets.get(key)[direction(type, facetPayload(row))] += count
+    // Same recorded-facet classification AND the same filter as summary(), so the
+    // strip and the cards above it can't tell different stories about the same
+    // window. A filtered-out row leaves its bucket seeded at zero rather than
+    // vanishing, which is what keeps the strip's shape stable while you narrow.
+    const payload = facetPayload(row)
+    if (!filter.passes(type, payload)) continue
+    buckets.get(key)[direction(type, payload)] += count
   }
 
   // Chronological: seeded keys are already in order, but a late-added edge row

@@ -6,7 +6,7 @@
 // indistinguishable from a broken one, and "is it broken?" is the entire question
 // this module exists to answer.
 import { defineStore } from 'pinia'
-import { ref, computed, shallowRef } from 'vue'
+import { ref, computed, shallowRef, watch } from 'vue'
 import {
   liveClient as client,
   type FeedEvent, type Summary, type Series, type WindowKey, type Utm, type Content,
@@ -126,6 +126,22 @@ export const useLiveStore = defineStore('live', () => {
     return [...tally.entries()].map(([channel, count]) => ({ channel, count })).sort((a, b) => b.count - a.count)
   })
 
+  // The filters as the SERVER takes them. They started as a feed-only, client-side
+  // narrowing of one list; now they narrow the whole board, which means the
+  // aggregates have to be re-fetched with them because those are computed
+  // server-side (see server-plugin-live's makeFilter).
+  //
+  // Same tri-state, one token list per axis, `-` prefixed to exclude — so nothing is
+  // translated between the two ends and they cannot disagree about what a filter
+  // means. `internal: exclude` by default therefore sends `dir=-internal`.
+  const encodeAxis = (modes: Map<string, Mode>) =>
+    [...modes.entries()].map(([k, m]) => (m === 'exclude' ? `-${k}` : k)).join(',')
+
+  const boardFilter = computed(() => ({
+    dir: encodeAxis(feedDirModes.value),
+    chan: encodeAxis(feedChanModes.value),
+  }))
+
   const DEFAULT_DIR: [string, Mode][] = [['internal', 'exclude']]
   const feedFiltered = computed(() => Boolean(feedQuery.value.trim())
     || feedChanModes.value.size > 0
@@ -146,6 +162,18 @@ export const useLiveStore = defineStore('live', () => {
   }
   function toggleDirection(d: string) { feedDirModes.value = cycle(feedDirModes.value, d) }
   function toggleChannel(c: string) { feedChanModes.value = cycle(feedChanModes.value, c) }
+
+  // A filter change now has to REFETCH, because it narrows server-computed
+  // aggregates as well as the client-held feed. Watching the encoded strings rather
+  // than the Maps: `cycle()` replaces the Map wholesale, so a Map watcher fires even
+  // when the resulting filter is identical (neutral → include → exclude → neutral
+  // lands back where it started), and each of those would be a wasted round trip.
+  //
+  // The feed itself stays instant — it is filtered locally from rows already in
+  // hand, so narrowing feels immediate while the cards catch up on the next tick.
+  watch(() => `${boardFilter.value.dir}|${boardFilter.value.chan}`, () => {
+    if (summary.value) refreshAggregates()
+  })
   function clearFeedFilters() {
     feedQuery.value = ''
     feedChanModes.value = new Map()
@@ -286,8 +314,8 @@ export const useLiveStore = defineStore('live', () => {
     loading.value = true
     try {
       const [s, t, u, c, r] = await Promise.all([
-        client.summary(window.value),
-        client.timeseries(window.value, points.value ?? undefined),
+        client.summary(window.value, boardFilter.value),
+        client.timeseries(window.value, points.value ?? undefined, boardFilter.value),
         client.utm(window.value),
         client.content(window.value),
         // Backfill deliberately smaller than MAX_FEED, so live events have room to
@@ -327,8 +355,8 @@ export const useLiveStore = defineStore('live', () => {
   async function refreshAggregates() {
     try {
       const [s, t, u, c] = await Promise.all([
-        client.summary(window.value),
-        client.timeseries(window.value, points.value ?? undefined),
+        client.summary(window.value, boardFilter.value),
+        client.timeseries(window.value, points.value ?? undefined, boardFilter.value),
         client.utm(window.value),
         client.content(window.value),
       ])

@@ -108,12 +108,28 @@ export interface Content { window: WindowKey; total: number; kinds: UtmRow[] }
 
 export interface Series { window: WindowKey; bucket_seconds: number; buckets: { bucket: string; in: number; out: number; internal: number; unknown: number }[] }
 
+/**
+ * The dashboard-wide filter, as the server takes it: one token list per axis, `-`
+ * prefixed to exclude (`dir=-internal`, `chan=mail,sms`). Empty strings are dropped
+ * so an unfiltered board sends no params at all.
+ */
+export interface BoardFilter { dir?: string; chan?: string }
+const filterQS = (f?: BoardFilter) =>
+  [['dir', f?.dir], ['chan', f?.chan]]
+    .filter(([, v]) => v)
+    .map(([k, v]) => `&${k}=${encodeURIComponent(String(v))}`)
+    .join('')
+
 export const liveClient = {
-  summary: (w: WindowKey) => req(`/summary?window=${w}`) as Promise<Summary>,
+  // The filter reaches /summary and /timeseries because those are the two whose
+  // numbers this plugin classifies. /utm and /content answer questions a direction
+  // has no bearing on, so they take the window alone.
+  summary: (w: WindowKey, f?: BoardFilter) =>
+    req(`/summary?window=${w}${filterQS(f)}`) as Promise<Summary>,
   // `points` = how many bars the strip can draw at its current width. Omitted
   // before the plot has been measured; the server falls back to a sane default.
-  timeseries: (w: WindowKey, points?: number) =>
-    req(`/timeseries?window=${w}${points ? `&points=${points}` : ''}`) as Promise<Series>,
+  timeseries: (w: WindowKey, points?: number, f?: BoardFilter) =>
+    req(`/timeseries?window=${w}${points ? `&points=${points}` : ''}${filterQS(f)}`) as Promise<Series>,
   utm: (w: WindowKey) => req(`/utm?window=${w}`) as Promise<Utm>,
   content: (w: WindowKey) => req(`/content?window=${w}`) as Promise<Content>,
   recent: (w: WindowKey, limit = 100) => req(`/recent?limit=${limit}&window=${w}`) as Promise<{ events: FeedEvent[] }>,
