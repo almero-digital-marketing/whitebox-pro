@@ -111,6 +111,20 @@ group('describe()', () => {
       .toBe('+359888 → +35924374782 (web)')
   })
 
+  // Click-to-call comes from the number POOL, not from telephony, so its payload
+  // is hand-built and names the tracked number `number` rather than `line` — and
+  // it has no `caller` at all, because the visitor has not dialled yet. Every
+  // branch used to fall through to null, so the row arrived in the feed with an
+  // empty detail column while carrying both the number and the tag.
+  it('describes a click-to-call by the number shown, with no caller to point at', () => {
+    expect(describe('voip.click', wrap({ number: '+35924374782', tag: 'web', connectionId: 'c1' })))
+      .toBe('+35924374782 (web)')
+  })
+
+  it('still names the pool when a click has only a tag', () => {
+    expect(describe('voip.click', wrap({ tag: 'sales' }))).toBe('tag sales')
+  })
+
   // The honesty rule: no summary beats an invented one, because an operator
   // reads this column as fact.
   it('returns null rather than inventing something for an unknown shape', () => {

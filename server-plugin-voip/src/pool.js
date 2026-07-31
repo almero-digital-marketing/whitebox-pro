@@ -150,8 +150,14 @@ export function click(connectionId, tag = 'default') {
     type: 'voip.click',
     data: {
       connectionId,
-      passportId: entry.passportId,
-      sessionId: entry.sessionId,
+      // snake_case, and not a style preference: the event registry persists
+      // `payload.data.passport_id` and nothing else (server/src/event-registry
+      // record()), so a camelCase key here meant every click-to-call was logged
+      // and shown with no person attached to it. The other three voip events
+      // notify with the calls DB row, which is snake_case already — this one
+      // builds its payload by hand, which is how it drifted.
+      passport_id: entry.passportId,
+      session_id: entry.sessionId,
       tag,
       number: entry.numbers[tag],
       ts: new Date(),

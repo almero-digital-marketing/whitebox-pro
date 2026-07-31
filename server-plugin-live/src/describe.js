@@ -196,10 +196,19 @@ export function describe(type, payload) {
   if (t.startsWith('voip.')) {
     // caller → the tracked line it rang, which is what attributes the call.
     const from = d.caller || null
-    const line = d.line || d.destination || null
+    // `number` is the pool's name for the same thing the telephony rows call
+    // `line`: the tracked number this visitor was shown. Without it a
+    // voip.click described itself as nothing at all — it carries no `caller`
+    // (the visitor has not dialled yet, so there is no calling party to name)
+    // and no `line`, so every branch here fell through to null.
+    const line = d.line || d.destination || d.number || null
     const tag = d.tag ? ` (${d.tag})` : ''
     if (from && line) return trim(`${from} → ${line}${tag}`)
-    return trim(from || line)
+    // A click is an intent, not a connection: the number shown is the whole
+    // story, and the tag is what says WHICH pool it came from — so keep the tag
+    // even with nothing to point an arrow at.
+    if (line) return trim(`${line}${tag}`)
+    return trim(from || (d.tag ? `tag ${d.tag}` : null))
   }
 
   if (t.startsWith('crm.')) {

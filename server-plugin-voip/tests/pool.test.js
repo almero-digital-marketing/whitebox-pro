@@ -278,8 +278,11 @@ describe('voip.click', () => {
         tag: 'sales',
         number,
         connectionId: 'c1',
-        passportId: 'p1',
-        sessionId: 9,
+        // snake_case is the contract, not a detail: the event registry reads
+        // `data.passport_id` and only that, so camelCase here logged the click
+        // with no person on it.
+        passport_id: 'p1',
+        session_id: 9,
       }),
     }))
 

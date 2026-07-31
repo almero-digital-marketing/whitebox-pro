@@ -73,6 +73,12 @@ const BY_PREFIX = {
   'engagement.': 'in',
   'voip.call': 'in',
   'voip.ring': 'in',
+  // Click-to-call. The strongest intent signal the web side produces — the
+  // visitor asked for the number and reached for it — so `in` alongside the
+  // real call, not `internal`. It is emitted by the number POOL rather than by
+  // telephony (see server-plugin-voip/src/pool.js), which is how it came to be
+  // the one voip event missing from this map.
+  'voip.click': 'in',
   'shortener.': 'in',
   // A person arriving. Emitted by core on a genuine mint / new session only (not
   // per request), so this is new-visitors and new-sessions — the most basic

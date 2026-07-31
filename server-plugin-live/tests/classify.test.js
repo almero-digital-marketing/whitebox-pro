@@ -27,6 +27,13 @@ describe('direction()', () => {
     expect(direction('conversion.purchase')).toBe('in')
   })
 
+  // Every voip event EXCEPT the click was mapped, so a click-to-call — the only
+  // one of the four the web SDK can produce on its own — landed as `unknown` and
+  // was counted in neither direction.
+  it('counts a click-to-call as inbound, like the call it precedes', () => {
+    expect(direction('voip.click')).toBe('in')
+  })
+
   // the distinction that keeps the numbers honest: orchestration is not traffic
   it('keeps orchestration out of the in/out counts', () => {
     expect(direction('journey.enrolled')).toBe('internal')
