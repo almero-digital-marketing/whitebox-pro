@@ -56,6 +56,14 @@ export function campaigns(options = {}) {
       'campaigns.sent': 'internal',
     },
 
+    // What one of our events was ABOUT, for a feed row. For orchestration the
+    // name is the whole answer: which one ran. (live described campaigns,
+    // journeys and audiences with one shared branch — audiences emits nothing, so
+    // a third of that branch was dead, and the other two only agreed by accident.)
+    detail: {
+      'campaigns.': (d) => d.name || d.title || d.slug || d.id || null,
+    },
+
     permissions: {
       items: [
         { key: 'campaigns:read', label: 'View Campaigns', description: 'View campaigns and their delivery status' },

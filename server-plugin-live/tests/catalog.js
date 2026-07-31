@@ -79,4 +79,15 @@ export const PLUGINS = [
   { name: 'shortener', events: { 'shortener.claimed': 'in' } },
 ]
 
+// A couple of detail declarations too, so `toFeedRow` is exercised end to end.
+// It passed for a long time without them: the test asserted id/type/direction/
+// channel/passport and never `detail`, which is the one field this whole exercise
+// was about — a blank detail column would have gone on passing.
+PLUGINS.push({
+  name: 'detail-fixture',
+  events: { 'fixture.thing': 'in' },
+  detail: { 'fixture.thing': (d) => d.label ?? null },
+})
+PLUGINS.find(p => p.name === 'mail').detail = { 'mail.': (d) => d.to ?? null }
+
 export const catalog = () => build(PLUGINS)

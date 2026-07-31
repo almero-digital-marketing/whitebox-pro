@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as service from '../src/service.js'
 import * as classify from '../src/classify.js'
+import { init as describeInit } from '../src/describe.js'
 import { catalog } from './catalog.js'
 
 // Classification is declared by the plugins that emit the events and aggregated
 // by core (server/src/event-catalog.js); live is handed the result. Every test
 // below reads it, so install it once — see catalog.js for why it's a fixture and
 // not an import of the real plugins.
-beforeEach(() => classify.init({ eventCatalog: catalog() }))
+beforeEach(() => {
+  const eventCatalog = catalog()
+  classify.init({ eventCatalog })
+  describeInit({ eventCatalog })
+})
 
 const registry = (counts = [], active = 0, series = []) => ({
   countsByType: vi.fn(async () => counts),
@@ -111,6 +116,24 @@ describe('toFeedRow()', () => {
       passport_id: 'p1', data: { data: { direction: 'expression', channel: 'web' } },
     })
     expect(r).toMatchObject({ id: 'e1', type: 'awareness.recorded', direction: 'in', channel: 'web', passport_id: 'p1' })
+  })
+
+  // `detail` was NOT asserted here for a long time, which is how a blank detail
+  // column went unnoticed for two whole event families — this is the one field the
+  // row exists to carry beyond the type name.
+  it('carries the detail the emitting module declared', () => {
+    const r = service.toFeedRow({
+      id: 'e2', type: 'mail.sent', occurred_at: '2026-01-01T00:00:00.000Z',
+      data: { data: { to: 'someone@example.com' } },
+    })
+    expect(r.detail).toBe('someone@example.com')
+  })
+
+  it('carries null detail rather than omitting the field, when nobody declared one', () => {
+    const r = service.toFeedRow({
+      id: 'e3', type: 'campaigns.sent', occurred_at: '2026-01-01T00:00:00.000Z', data: { data: {} },
+    })
+    expect(r).toHaveProperty('detail', null)
   })
 })
 

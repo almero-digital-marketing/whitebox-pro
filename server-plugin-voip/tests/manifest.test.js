@@ -1,88 +1,47 @@
-// Does our event manifest match what we actually emit?
-//
-// This is the test that would have caught the bug that started all of this:
-// `voip.click` was emitted by pool.js and classified nowhere, so click-to-call
-// showed up in the Live board with no direction, and had done for as long as the
-// feature existed. Nobody could see it by reading code, because the emitter and
-// the classification lived in different packages.
-//
-// Now they live in the same one — so this can check them against each other, and
-// it does it by SCANNING OUR OWN SOURCE rather than against a hand-kept list.
-// That distinction is the whole value: a hand-kept list of "what we emit" is just
-// a second thing to forget to update, and the list in live's tests had drifted
-// too (it named mail.clicked and mail.unsubscribed, neither of which any plugin
-// emits).
-//
-// Worth copying into any plugin that emits events. It needs nothing from core.
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { manifestSuite } from 'whitebox-pro-server/test-manifest'
 import { voip } from '../src/index.js'
 
-const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
+// Checks our `events` declaration against the notify() calls in our own src/.
+// `voip.click` is named explicitly because it is the one that was missing — it is
+// emitted by the number POOL rather than by telephony, which is how it came to be
+// the only voip event live's old map had never heard of.
+manifestSuite({
+  plugin: voip({}),
+  srcDir: new URL('../src', import.meta.url),
+  expectEmitted: ['voip.click'],
+})
 
-// Every literal event type passed to notify() anywhere in src/. Template
-// literals (`voip.${x}`) are skipped on purpose — a dynamic suffix can only be
-// declared as a prefix, and asserting on the un-interpolated string would be
-// asserting on source text rather than behaviour.
-function emittedTypes(dir) {
-  const found = new Set()
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      for (const t of emittedTypes(path)) found.add(t)
-      continue
-    }
-    if (!entry.name.endsWith('.js')) continue
-    const src = readFileSync(path, 'utf8')
-    for (const m of src.matchAll(/notify\s*\??\.?\s*\(\s*'([a-z][\w.]*)'/g)) found.add(m[1])
-  }
-  return found
-}
+// What our events look like in a feed row. live used to write these, reading
+// `caller` and `line`/`destination` — and knowing nothing about `number`, which is
+// what the pool calls the same field. So every click-to-call had a blank detail
+// column while its payload carried both the number and the tag.
+describe('voip event detail', () => {
+  const d = voip({}).detail['voip.']
 
-// The manifest's own matching rule: exact type, or a declaration ending in a dot
-// that the type starts with.
-const declares = (events, type) =>
-  Object.keys(events).some(key => (key.endsWith('.') ? type.startsWith(key) : key === type))
-
-describe('voip event manifest', () => {
-  const { events } = voip({})
-  const emitted = [...emittedTypes(SRC)].sort()
-
-  it('finds the events we emit at all (guards the scanner itself)', () => {
-    // If the regex ever stops matching, every assertion below passes vacuously —
-    // so assert the scan found something, and specifically found the one that
-    // was missing.
-    expect(emitted.length).toBeGreaterThan(0)
-    expect(emitted).toContain('voip.click')
+  it('attributes a call by the line it rang', () => {
+    expect(d({ caller: '+359888', line: '+35924374782', tag: 'web' }))
+      .toBe('+359888 → +35924374782 (web)')
   })
 
-  it.each([...emittedTypes(SRC)].sort())('declares %s', (type) => {
-    expect(declares(events, type)).toBe(true)
+  // A click is an intent, not a connection: there is no calling party yet, so the
+  // number shown is the whole story and the tag says which pool it came from.
+  it('describes a click-to-call by the number shown, with no caller to point at', () => {
+    expect(d({ number: '+35924374782', tag: 'web', connectionId: 'c1' })).toBe('+35924374782 (web)')
   })
 
-  // The other direction, and the one that catches a stale entry rather than a
-  // missing one: live's old map declared four namespaces nobody emitted, plus
-  // 'conversions.' for an event called `conversion.`, and every one of those was
-  // invisible. A declaration for an event we don't emit is dead weight that reads
-  // as coverage.
-  it('declares nothing it does not emit', () => {
-    const dynamic = /voip\.\$\{/.test(readFileSync(join(SRC, 'pool.js'), 'utf8'))
-    for (const key of Object.keys(events)) {
-      if (key.endsWith('.')) {
-        // A prefix is only justified by a dynamic suffix somewhere.
-        expect(dynamic, `prefix "${key}" declared but nothing builds a dynamic type`).toBe(true)
-        continue
-      }
-      expect(emitted, `declared "${key}" but nothing emits it`).toContain(key)
+  it('reads the pool own field name for the tracked number', () => {
+    // pool.js writes `number`; ari.js writes `line`. Both must work.
+    for (const key of ['number', 'line', 'destination']) {
+      expect(d({ [key]: '+359123' })).toBe('+359123')
     }
   })
 
-  it('gives every declaration a direction the catalog understands', () => {
-    for (const [key, spec] of Object.entries(events)) {
-      const d = typeof spec === 'string' ? spec : spec.direction
-      expect(['in', 'out', 'internal'], `"${key}"`).toContain(d)
-    }
+  it('still names the pool when only a tag survives', () => {
+    expect(d({ tag: 'sales' })).toBe('tag sales')
+  })
+
+  it('says nothing rather than something vague', () => {
+    expect(d({})).toBeNull()
   })
 })

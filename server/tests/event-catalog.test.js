@@ -9,7 +9,7 @@
 //   · a near-miss                        → 'conversions.' for `conversion.`
 //   · a prefix that is not a channel     → `awareness` in the channel filter
 import { describe, it, expect, vi } from 'vitest'
-import { build, direction, channel, lookup, CORE_EVENTS } from '../src/event-catalog.js'
+import { build, direction, channel, detail, lookup, CORE_EVENTS } from '../src/event-catalog.js'
 
 const plugin = (name, events, channels) => ({ name, events, ...(channels && { channels }) })
 
@@ -184,5 +184,132 @@ describe("core's own declarations", () => {
       const d = direction(cat, type, { data: { direction: 'exposure', channel: 'web' } })
       expect(['in', 'out', 'internal'], type).toContain(d)
     }
+  })
+})
+
+// ── detail: what an event was ABOUT ─────────────────────────────────────────
+
+describe('detail() dispatch', () => {
+  const PLUGINS = [{
+    name: 'mail',
+    events: { 'mail.sent': 'out', 'mail.bulk.queued': 'out' },
+    detail: { 'mail.': (d) => d.to ?? null, 'mail.bulk.': (d) => `${d.accepted} recipients` },
+  }]
+
+  it('routes to the declaring module, most specific first', () => {
+    const cat = build(PLUGINS)
+    expect(detail(cat, 'mail.sent', { data: { to: 'a@b.c' } })).toBe('a@b.c')
+    expect(detail(cat, 'mail.bulk.queued', { data: { accepted: 9 } })).toBe('9 recipients')
+  })
+
+  // Applied here rather than by every declaration, so the cap lives in one place
+  // and a plugin can't forget it.
+  it('applies the length cap for the declaration', () => {
+    const cat = build([{ name: 'x', events: { 'x.y': 'in' }, detail: { 'x.y': () => 'z'.repeat(5000) } }])
+    expect(detail(cat, 'x.y', {}).length).toBeLessThanOrEqual(200)
+  })
+
+  it('is null for an event with no detail declared, and with no catalog', () => {
+    expect(detail(build([{ name: 'q', events: { 'q.r': 'in' } }]), 'q.r', {})).toBeNull()
+    expect(detail(null, 'mail.sent', {})).toBeNull()
+  })
+
+  // A detail function runs over arbitrary HISTORICAL payloads, including rows
+  // written before a field existed. One row failing to describe itself must never
+  // be the thing that breaks the board.
+  it('contains a throwing declaration instead of propagating it', () => {
+    const warn = vi.fn()
+    const cat = build([{ name: 'boom', events: { 'boom.x': 'in' }, detail: { 'boom.x': () => { throw new Error('nope') } } }])
+    expect(detail(cat, 'boom.x', {}, { logger: { warn } })).toBeNull()
+    expect(warn).toHaveBeenCalled()
+  })
+
+  // The drift the two maps make possible, and the exact failure that made live's
+  // old map untrustworthy: a branch that never runs looks identical to a correct
+  // one.
+  it('reports a detail key no declared event can match', () => {
+    const warn = vi.fn()
+    const cat = build([{
+      name: 'typo',
+      events: { 'conversion.': 'in' },
+      detail: { 'conversions.': () => 'never runs' },   // plural — matches nothing
+    }], { logger: { warn } })
+    expect(cat.orphanDetail).toEqual([{ key: 'conversions.', module: 'typo' }])
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('accepts a detail key covered by a prefix declaration', () => {
+    const cat = build([{
+      name: 'mail',
+      events: { 'mail.sent': 'out' },
+      detail: { 'mail.': (d) => d.to },
+    }])
+    expect(cat.orphanDetail).toEqual([])
+  })
+})
+
+describe("core's own event detail", () => {
+  const cat = build([])
+  const d = (type, data) => detail(cat, type, { data })
+
+  it('names a new visitor and attributes a new session', () => {
+    expect(d('passport.created', {})).toBe('new visitor')
+    expect(d('session.started', { utm_source: 'google', utm_campaign: 'brand' })).toBe('google / brand')
+    expect(d('session.started', { utm_source: 'google' })).toBe('google')
+    expect(d('session.started', { referrer: 'https://ref.com/x' })).toBe('ref /x')
+    // Attribution is the reason anyone looks at a new session; saying so plainly
+    // beats an empty column.
+    expect(d('session.started', {})).toBe('direct')
+  })
+
+  it('shows the real (redacted) text when core carries a preview', () => {
+    // "text · verify-text-1" told an operator nothing — an internal identifier
+    // where the sentence the person actually read was available.
+    expect(d('awareness.recorded', { source: 'text', preview: 'Как работи лазерната епилация' }))
+      .toBe('text · Как работи лазерната епилация')
+  })
+
+  it('flattens newlines and whitespace runs out of real page text', () => {
+    expect(d('awareness.recorded', { source: 'text', preview: 'one\n\n  two   three' }))
+      .toBe('text · one two three')
+  })
+
+  // Producers compose "<their own label> — <the real content>". That first segment
+  // restates the type column one place to the left AND eats the row's width before
+  // the content gets a chance.
+  it('ignores a preview that only restates the event type', () => {
+    expect(d('awareness.recorded', {
+      source: 'text',
+      content_id: 'conversion:view_content:abc',
+      content_url: 'https://gpoint.bg/studios',
+      preview: 'Conversion: view content',
+    })).toBe('text · /studios')
+  })
+
+  it('still shows a preview that is genuinely different from the type', () => {
+    expect(d('awareness.recorded', {
+      source: 'text',
+      content_id: 'conversion:view_content:abc',
+      preview: 'Conversion: view content — Защо не използваме лазер',
+    })).toBe('text · Защо не използваме лазер')
+  })
+
+  // `source` carries WHAT was consumed and is the only place that distinction
+  // survives — there is no engagement.* event type, on purpose: it would
+  // double-count one touch as two events in the traffic totals.
+  it('names the content kind, which is the only place it survives', () => {
+    expect(d('awareness.recorded', { source: 'video', content_url: 'https://a.bg/watch/1' }))
+      .toBe('video · /watch/1')
+    expect(d('awareness.recorded', { source: 'image', content_id: 'hero-1' })).toBe('image · hero-1')
+  })
+
+  it('percent-decodes a non-ASCII content path for display', () => {
+    expect(d('awareness.recorded', { source: 'text', content_url: 'https://gpoint.bg/%D0%BA%D0%BB%D1%83%D0%B1' }))
+      .toBe('text · /клуб')
+  })
+
+  it('says which passport was forgotten, without printing the whole id', () => {
+    expect(d('awareness.forgotten', { passport_id: 'abcdef1234567890' })).toBe('forgot abcdef12')
+    expect(d('awareness.forgotten', {})).toBe('forgot a passport')
   })
 })

@@ -38,6 +38,29 @@ export function voip(options = {}) {
       'voip.pick': 'internal',
     },
 
+    // And what one of our events was ABOUT, for a feed row. Same reasoning as
+    // `events`: only we know which fields our payloads carry. live's version of
+    // this read `caller` and `line`/`destination` and knew nothing about
+    // `number` — which is what the number POOL calls the same thing — so every
+    // click-to-call showed a blank detail column while carrying both the number
+    // and the tag.
+    detail: {
+      'voip.': (d) => {
+        // caller → the tracked line it rang, which is what attributes the call.
+        const from = d.caller || null
+        // The telephony rows call it `line`; pool.js calls it `number`. Both are
+        // the tracked number this visitor was shown.
+        const line = d.line || d.destination || d.number || null
+        const tag = d.tag ? ` (${d.tag})` : ''
+        if (from && line) return `${from} → ${line}${tag}`
+        // A click is an intent, not a connection: there is no calling party yet,
+        // so the number shown is the whole story and the tag says which pool it
+        // came from.
+        if (line) return `${line}${tag}`
+        return from || (d.tag ? `tag ${d.tag}` : null)
+      },
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

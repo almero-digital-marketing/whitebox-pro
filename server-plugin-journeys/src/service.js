@@ -124,7 +124,9 @@ export async function enroll(journeyId, passportId, meta = {}) {
       // isEditable note on why full graph versioning is a v2 deferral).
       context: JSON.stringify({ trigger: meta, journey_version: journey.updated_at }),
     })
-    notifyLifecycle?.('journey.enrolled', { type: 'journey.enrolled', data: { journey_id: journeyId, passport_id: passportId, enrollment_id: id } })
+    // journey_name so a feed row can say WHICH journey — the id alone is useless
+    // to a person reading it, and `journey` is already loaded here.
+    notifyLifecycle?.('journey.enrolled', { type: 'journey.enrolled', data: { journey_id: journeyId, journey_name: journey.name ?? null, passport_id: passportId, enrollment_id: id } })
     executor.advance(id).catch(err => logger?.error?.({ err, enrollmentId: id }, 'journeys: initial advance failed'))
     return fromEnrollmentRow(row)
   } finally {

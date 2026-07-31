@@ -32,6 +32,13 @@ export function crm(options = {}) {
       'crm.': 'in',
     },
 
+    // What one of our events was ABOUT, for a feed row. The record's own
+    // identifiers, because that is what lets an operator find it in the system
+    // that pushed it.
+    detail: {
+      'crm.': (d) => [d.kind, d.external_id, d.status].filter(Boolean).join(' · ') || d.source || null,
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

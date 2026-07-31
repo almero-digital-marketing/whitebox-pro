@@ -65,6 +65,27 @@ export function journeys(options = {}) {
       'journey.exited': 'internal',
     },
 
+    // What one of our events was ABOUT, for a feed row.
+    //
+    // Every journey row used to show a BLANK detail column, and had done since
+    // the feed existed. live described journeys, campaigns and audiences with one
+    // shared branch reading `name || title || slug || id` — and our payloads carry
+    // none of those four. They carry `journey_id`, so even the `id` fallback
+    // missed. Nobody could see it: the branch looked perfectly reasonable, and it
+    // was in a different package from the payload it was guessing at.
+    //
+    // Fixed on both sides: enrolled and completed now carry `journey_name` (free
+    // — the journey was already loaded at both call sites), and this falls back to
+    // a short id for `exited`, which is a manual API/MCP path with no journey
+    // loaded and not worth an extra query for a label.
+    detail: {
+      'journey.': (d) => {
+        const which = d.journey_name || (d.journey_id ? `#${String(d.journey_id).slice(0, 8)}` : null)
+        if (which && d.reason) return `${which} — ${d.reason}`
+        return which || d.reason || null
+      },
+    },
+
     permissions: {
       items: [
         { key: 'journeys:read', label: 'View Journeys', description: 'View journeys, their steps, and enrollment status' },

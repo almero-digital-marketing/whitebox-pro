@@ -57,12 +57,17 @@ async function fail(enr, reason) {
   logger?.warn?.({ enrollmentId: enr.id, reason }, 'journeys: enrollment failed')
 }
 
-async function completeOrExit(enr, result) {
+// `journey` is passed in only for its NAME on the event. The caller has it
+// loaded already (processStep), so this costs nothing, and the id alone is
+// useless to anyone reading a feed — every journey row's detail column was blank
+// because the payload carried no human-readable label at all. Optional so the
+// notify never depends on it.
+async function completeOrExit(enr, result, journey) {
   await store.updateEnrollment(enr.id, {
     status: 'completed', completed_at: new Date().toISOString(),
     exit_reason: result.reason || null, current_step_id: null,
   })
-  notifyLifecycle?.('journey.completed', { type: 'journey.completed', data: { journey_id: enr.journey_id, passport_id: enr.passport_id, enrollment_id: enr.id, reason: result.reason || null } })
+  notifyLifecycle?.('journey.completed', { type: 'journey.completed', data: { journey_id: enr.journey_id, journey_name: journey?.name ?? null, passport_id: enr.passport_id, enrollment_id: enr.id, reason: result.reason || null } })
 }
 
 const MAX_INLINE_HOPS = 25   // trampoline guard against a malformed cycle with no wait step
@@ -86,7 +91,7 @@ export async function processStep(enrollmentId, hops = 0) {
     step_id: enr.current_step_id, kind: node.kind, result: JSON.stringify(result),
   })
 
-  if (result.exit) { await completeOrExit(enr, result); return }
+  if (result.exit) { await completeOrExit(enr, result, journey); return }
 
   if (result.wait_until) {
     await store.updateEnrollment(enr.id, {

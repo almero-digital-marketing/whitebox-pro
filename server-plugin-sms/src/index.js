@@ -39,6 +39,28 @@ export function sms(options = {}) {
       'sms.received': 'in',
     },
 
+    // What one of our events was ABOUT, for a feed row.
+    detail: {
+      'sms.bulk.': (d) => {
+        const n = d.accepted ?? d.cancelled ?? null
+        if (n !== null) return `${n} recipients`
+        return d.batch_id ? `batch ${d.batch_id}` : null
+      },
+      // Recipient and outcome only — NEVER the message text. The event registry
+      // strips `body` at the write (it's message content, and the log crosses
+      // permission boundaries), so reading it here would make a backfilled row
+      // describe itself differently from the same event arriving live off the
+      // firehose — the one thing computing detail in a single place prevents.
+      // Segment count is the useful non-sensitive extra.
+      'sms.': (d) => {
+        const who = d.to || d.phone || null
+        const why = d.failure_reason || d.reason || d.error_message || null
+        if (who && why) return `${who} — ${why}`
+        if (who && d.segments) return `${who} · ${d.segments} segment${d.segments === 1 ? '' : 's'}`
+        return who || null
+      },
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

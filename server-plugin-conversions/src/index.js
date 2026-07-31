@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url'
 
 import { resolveAuth } from 'whitebox-pro-server/auth'
 import createNotify from 'whitebox-pro-server/notify'
+import { money, pathOf } from 'whitebox-pro-server/event-format'
 import * as store from './store.js'
 import * as ingest from './ingest.js'
 import { createReporter } from './reporter.js'
@@ -54,6 +55,21 @@ export function conversions(options = {}) {
       'adnetwork.accepted': 'out',
       'adnetwork.rejected': 'out',
       'adnetwork.error': 'out',
+    },
+
+    // What one of our events was ABOUT, for a feed row. Two functions, because
+    // the two event families answer completely different questions: what the
+    // conversion was WORTH, versus why a network refused it.
+    detail: {
+      // Value first — it's why anyone looks at a conversion. Then where it
+      // happened, which at least locates it when there's no money attached.
+      'conversion.': (d) => money(d.value, d.currency) || pathOf(d.url) || d.kind || null,
+
+      // The failure reason is the entire point of the event when there is one.
+      'adnetwork.': (d) => {
+        const head = [d.network, d.event].filter(Boolean).join(' · ')
+        return d.error ? `${head} — ${d.error}` : head || null
+      },
     },
 
     async migrate(db) {

@@ -58,6 +58,25 @@ export function mail(options = {}) {
       'mail.complained': 'in',
     },
 
+    // What one of our events was ABOUT, for a feed row. Two functions for eleven
+    // event types, which is why `detail` is keyed separately from `events`:
+    // a batch is described by its size, a single message by its recipient.
+    detail: {
+      'mail.bulk.': (d) => {
+        const n = d.accepted ?? d.cancelled ?? null
+        if (n !== null) return `${n} recipients`
+        return d.batch_id ? `batch ${d.batch_id}` : null
+      },
+      'mail.': (d) => {
+        // A failure reason is the entire point of the row when there is one.
+        const who = d.to || null
+        const why = d.failure_reason || null
+        if (who && why) return `${who} — ${why}`
+        if (who) return d.subject ? `${who} · ${d.subject}` : who
+        return d.subject || null
+      },
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

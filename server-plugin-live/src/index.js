@@ -17,6 +17,7 @@ import * as service from './service.js'
 import * as rest from './rest.js'
 import * as stream from './stream.js'
 import * as classify from './classify.js'
+import * as describe from './describe.js'
 import { resolveAuth } from 'whitebox-pro-server/auth'
 
 export function live(options = {}) {
@@ -68,8 +69,9 @@ export function live(options = {}) {
       // no matter where live sits in the load order. live is purely a consumer:
       // it contributes nothing to the catalog and no longer carries a map of
       // other modules' event namespaces.
-      if (!ctx.eventCatalog) logger.warn('live: ctx.eventCatalog is missing — events will classify as unknown and the channel filter will be empty')
+      if (!ctx.eventCatalog) logger.warn('live: ctx.eventCatalog is missing — events will classify as unknown, the channel filter will be empty and the feed will show no detail')
       classify.init({ eventCatalog: ctx.eventCatalog })
+      describe.init({ eventCatalog: ctx.eventCatalog, logger })
 
       service.init({ eventRegistry, plugins: ctx.plugins, pluginNames, logger, streamStats: streaming.stats })
       rest.register(app, { service, requireRead: auth.middleware })

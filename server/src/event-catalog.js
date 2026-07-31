@@ -1,3 +1,5 @@
+import { trim, body, collapse, pathOf, decodePath, letters } from './event-format.js'
+
 // What each event MEANS — declared by whoever emits it.
 //
 // Every notify() lands in the event registry as a type and a payload. Two
@@ -139,6 +141,101 @@ export const CORE_EVENTS = {
 // Channels core can produce that no event type reveals. See `web` above.
 export const CORE_CHANNELS = ['web']
 
+// ── DETAIL ──────────────────────────────────────────────────────────────────
+//
+// What an event was ABOUT, in one short line. A feed of type names answers
+// "something happened" and nothing more: twenty rows reading `awareness.recorded`
+// are indistinguishable, so an operator has to open each one to learn anything.
+// The type is the verb; this is the object — who it reached, which video was
+// watched, which network rejected us.
+//
+// A SEPARATE map from `events`, keyed the same way (exact type, or a trailing-dot
+// prefix, longest match wins). Separate because the natural granularity differs:
+// mail declares eleven event types but needs two detail functions, and folding
+// them together would mean repeating `detail: mailDetail` eleven times. build()
+// warns about a detail key that no declared event can match, so the two maps
+// can't quietly drift apart.
+//
+// Values are functions, which does mean the catalog isn't serialisable. Nothing
+// serialises it, and the alternative — a template mini-language — would be a
+// worse version of JavaScript.
+//
+// Rules, learned the hard way:
+//   · Never guess a shape. Every field read is one the producer actually writes.
+//   · Return null rather than something vague. "—" in the UI is honest; an
+//     invented summary is worse than no summary.
+//   · No PII beyond what the module already shows. Recipients are already visible
+//     in mail/sms's own surfaces, but text CONTENT is redacted upstream in
+//     awareness and must not be reconstituted — hence source/kind rather than the
+//     excerpt itself.
+//   · Don't truncate. detail() applies `trim` for you, so the cap is in one place.
+
+// Producers compose awareness text as "<their own label> — <the real content>".
+// Conversions write "Conversion: view content — Защо не използваме…" for a
+// `conversion.view_content` event: the first segment restates the type column, so
+// it's pure noise here AND it consumes the row's width before the content gets a
+// chance. Strip that leading echo; keep everything after it.
+//
+// Returns null when nothing but the echo remains — the caller then falls back to
+// the url/id, which at least says where it happened.
+function stripTypeEcho(preview, d) {
+  if (!preview) return null
+  // The type name as the producer would have written it, from content_id
+  // ('conversion:view_content:<uuid>' -> 'conversion view content').
+  const name = letters(String(d.content_id || '').split(':').slice(0, 2).join(' '))
+  if (!name) return preview
+
+  const segments = preview.split(/\s+[—–|]\s+/)
+  const kept = segments.filter((seg, i) => {
+    if (i > 0) return true                       // only a LEADING echo is noise
+    const s = letters(seg)
+    // exact restatement, or a prefix of it (a label truncated by the preview cap)
+    return !(s === name || (s.length <= name.length + 4 && name.startsWith(s)))
+  })
+  const out = kept.join(' — ').trim()
+  return out || null
+}
+
+// Engagement lands here with `source` carrying WHAT was consumed ('video' |
+// 'text' | 'image' | 'section' | 'link' | …), which is the only place that
+// distinction survives — there is no separate engagement.* event type, on
+// purpose: it would double-count one touch as two events in the traffic totals.
+function describeAwareness(d) {
+  const what = d.source || d.channel || null
+
+  // Prefer the actual (already-redacted) text. "text · verify-text-1" told an
+  // operator nothing — an internal identifier where the sentence the person
+  // actually read was available. Core carries a bounded excerpt for exactly this,
+  // so show the content and fall back to the identifier only when there isn't any
+  // (a conversion, a voip call — nothing was "read").
+  const meaningful = stripTypeEcho(trim(collapse(d.preview)), d)
+  if (meaningful) return what ? `${what} · ${meaningful}` : meaningful
+
+  // content_id is the paired fallback for content_url and can carry the same
+  // encoding (it's often derived from the slug), so it decodes the same way.
+  const where = pathOf(d.content_url) || trim(decodePath(d.content_id))
+  if (what && where) return `${what} · ${where}`
+  return trim(what) || where
+}
+
+export const CORE_DETAIL = {
+  'awareness.recorded': describeAwareness,
+  'awareness.forgotten': (d) =>
+    d.passport_id ? `forgot ${String(d.passport_id).slice(0, 8)}` : 'forgot a passport',
+
+  'passport.created': () => 'new visitor',
+
+  // Attribution is the reason anyone looks at a new session.
+  'session.started': (d) => {
+    const src = d.utm_source || null
+    const campaign = d.utm_campaign || null
+    if (src && campaign) return `${src} / ${campaign}`
+    if (src) return src
+    if (d.referrer) return `ref ${pathOf(d.referrer) || d.referrer}`
+    return 'direct'
+  },
+}
+
 const isPrefix = (key) => key.endsWith('.')
 
 // Normalise a declaration to the object form once, here, so every reader deals
@@ -154,7 +251,7 @@ const normalise = (entry) =>
  * The first declaration stands, because dropping the second is the smaller lie —
  * whoever emits it is at least classified consistently.
  *
- * @param {Array<{name?: string, events?: object, channels?: string[]}>} plugins
+ * @param {Array<{name?: string, events?: object, channels?: string[], detail?: object}>} plugins
  * @param {{ logger?: object }} [opts]
  */
 export function build(plugins = [], { logger } = {}) {
@@ -165,6 +262,10 @@ export function build(plugins = [], { logger } = {}) {
   // Namespaces whose channel is PER-ROW rather than fixed — see the exclusion at
   // the end of this function.
   const perRowChannel = new Set()
+  // Detail functions, same two-map split so they dispatch by the same rule.
+  const detailByType = new Map()
+  const detailByPrefix = new Map()
+  const orphanDetail = []
 
   const add = (module, key, entry) => {
     const target = isPrefix(key) ? byPrefix : byType
@@ -183,21 +284,51 @@ export function build(plugins = [], { logger } = {}) {
     else channels.add(key.split('.')[0])
   }
 
+  const addDetail = (module, key, fn) => {
+    if (typeof fn !== 'function') return
+    const target = isPrefix(key) ? detailByPrefix : detailByType
+    if (target.has(key)) {
+      conflicts.push({ key, first: target.get(key).module, second: module, kind: 'detail' })
+      return
+    }
+    target.set(key, { module, fn })
+  }
+
   for (const [key, entry] of Object.entries(CORE_EVENTS)) add('core', key, entry)
+  for (const [key, fn] of Object.entries(CORE_DETAIL)) addDetail('core', key, fn)
   for (const c of CORE_CHANNELS) channels.add(c)
 
   for (const plugin of plugins) {
-    if (!plugin?.events) continue
+    if (!plugin?.events && !plugin?.detail) continue
     const module = plugin.name || '(unnamed)'
-    for (const [key, entry] of Object.entries(plugin.events)) add(module, key, entry)
+    for (const [key, entry] of Object.entries(plugin.events || {})) add(module, key, entry)
+    for (const [key, fn] of Object.entries(plugin.detail || {})) addDetail(module, key, fn)
     for (const c of plugin.channels || []) channels.add(c)
   }
 
   for (const c of conflicts) {
     logger?.warn?.(
-      'event catalog: "%s" declared by both %s and %s — keeping %s',
-      c.key, c.first, c.second, c.first,
+      'event catalog: %s"%s" declared by both %s and %s — keeping %s',
+      c.kind === 'detail' ? 'detail for ' : '', c.key, c.first, c.second, c.first,
     )
+  }
+
+  // A detail key that no declared event can ever match. This is the drift the two
+  // maps make possible, and it's the exact failure that made live's old map so
+  // hard to trust: a `'conversions.'` branch that never ran looked identical to a
+  // correct one. Cheap to detect here, invisible everywhere else.
+  const declared = [...byType.keys(), ...byPrefix.keys()]
+  const reachable = (key) => declared.some(t =>
+    isPrefix(key) ? (t.startsWith(key) || key.startsWith(t)) : (t === key || (isPrefix(t) && key.startsWith(t))),
+  )
+  for (const [key, { module }] of [...detailByType, ...detailByPrefix]) {
+    if (!reachable(key)) {
+      orphanDetail.push({ key, module })
+      logger?.warn?.(
+        'event catalog: %s declares detail for "%s" but no event it declares can match it',
+        module, key,
+      )
+    }
   }
 
   // A namespace whose channel is per-row is NOT itself a channel — that's an
@@ -211,14 +342,18 @@ export function build(plugins = [], { logger } = {}) {
 
   // Longest first, so an exact-ish prefix beats a broader one and the order of
   // declaration never matters.
-  const prefixes = [...byPrefix.keys()].sort((a, b) => b.length - a.length)
+  const byLength = (a, b) => b.length - a.length
 
   return {
     byType,
     byPrefix,
-    prefixes,
+    prefixes: [...byPrefix.keys()].sort(byLength),
+    detailByType,
+    detailByPrefix,
+    detailPrefixes: [...detailByPrefix.keys()].sort(byLength),
     channels: [...channels].sort(),
     conflicts,
+    orphanDetail,
   }
 }
 
@@ -272,4 +407,31 @@ export function channel(catalog, type, payload) {
     if (raw) return raw
   }
   return String(type || '').split('.')[0]
+}
+
+/**
+ * What this event was ABOUT, in one line — or null when the emitting module has
+ * nothing useful to say. Null is a real answer: "—" in the UI is honest, an
+ * invented summary is worse than no summary.
+ *
+ * `trim` is applied here rather than by every declaration, so the length cap
+ * lives in one place and a plugin can't forget it.
+ *
+ * A declaration that THROWS yields null and a warning rather than taking the
+ * request with it. These functions run over arbitrary historical payloads —
+ * including rows written before a field existed — and one feed row failing to
+ * describe itself must never be the thing that breaks the board.
+ */
+export function detail(catalog, type, payload, { logger } = {}) {
+  if (!catalog) return null
+  const t = String(type || '')
+  const hit = catalog.detailByType?.get(t)
+    ?? catalog.detailPrefixes?.map(p => (t === p || t.startsWith(p) ? catalog.detailByPrefix.get(p) : null)).find(Boolean)
+  if (!hit) return null
+  try {
+    return trim(hit.fn(body(payload), t))
+  } catch (err) {
+    logger?.warn?.({ err, module: hit.module, type: t }, 'event catalog: detail() threw — showing no detail')
+    return null
+  }
 }

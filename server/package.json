@@ -9,10 +9,12 @@
     "./auth": "./src/auth.js",
     "./notify": "./src/notify.js",
     "./event-catalog": "./src/event-catalog.js",
+    "./event-format": "./src/event-format.js",
     "./logger": "./src/logger.js",
     "./ai": "./src/ai.js",
     "./pagination": "./src/pagination.js",
-    "./test-setup/neon": "./tests/setup/neon.js"
+    "./test-setup/neon": "./tests/setup/neon.js",
+    "./test-manifest": "./tests/support/manifest.js"
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",

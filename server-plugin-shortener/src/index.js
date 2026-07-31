@@ -32,6 +32,18 @@ export function shortener(options = {}) {
       'shortener.claimed': 'in',
     },
 
+    // What our event was ABOUT, for a feed row. live had no branch for us at all,
+    // so a claim showed as a bare type name — the code is the one thing that says
+    // WHICH link, and `merged` is the interesting part when it happens: the claim
+    // joined an anonymous visitor to a known person.
+    detail: {
+      'shortener.claimed': (d) => {
+        const code = d.code ? `/${d.code}` : null
+        if (code && d.merged) return `${code} — merged identities`
+        return code || (d.merged ? 'merged identities' : null)
+      },
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),
