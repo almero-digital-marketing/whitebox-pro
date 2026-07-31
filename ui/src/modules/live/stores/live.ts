@@ -14,6 +14,10 @@ import {
 import { connectLive } from '../realtime'
 import { notifyError } from '../../../shell/toast'
 import { useAuthStore } from '../../../shell/stores/auth'
+// Reused, not reimplemented: `displayName` decides what a person is CALLED (email,
+// else phone, else "Anonymous · <short id>"), and two panes disagreeing about that
+// is exactly the drift worth avoiding.
+import { peopleClient, displayName } from '../../people/people'
 
 // Bounded on purpose, and the UI SAYS it's bounded — silently dropping the tail
 // would make a busy system look calm.
@@ -76,6 +80,19 @@ export const useLiveStore = defineStore('live', () => {
   // not a question anyone asks, while "only this person" is the first thing you
   // want after spotting an odd row.
   const feedPassport = ref<string | null>(null)
+  // Who that passport actually IS. The feed carries only the id, and an id tells
+  // nobody anything — so the scoped person is looked up once and rendered the way
+  // People's own rail renders one: name on line one, last seen on line two.
+  //
+  // Null when nothing is scoped, when the lookup fails, or when the viewer has no
+  // `people:read` — Live has its own permission and must not require another
+  // module's. The row falls back to the short id in all three cases, so it degrades
+  // to exactly what it showed before rather than to an error.
+  const feedPerson = ref<any | null>(null)
+  // What to CALL them, by People's own rule, falling back to the short id while the
+  // lookup is in flight or when it isn't permitted.
+  const feedPersonName = computed(() =>
+    feedPerson.value ? displayName(feedPerson.value) : (feedPassport.value || '').slice(0, 8))
 
   function axisMatch(value: string, modes: Map<string, Mode>) {
     if (modes.get(value) === 'exclude') return false
@@ -232,6 +249,20 @@ export const useLiveStore = defineStore('live', () => {
   // it is the control that removes it, so there is nothing to hunt for.
   function togglePassport(id: string | null) {
     feedPassport.value = !id || feedPassport.value === id ? null : id
+    feedPerson.value = null
+    if (feedPassport.value) loadPerson(feedPassport.value)
+  }
+
+  async function loadPerson(id: string) {
+    try {
+      const p = await peopleClient.get(id)
+      // Guard against a slow response for a person you have since switched away
+      // from — otherwise the row ends up showing the previous one.
+      if (feedPassport.value === id) feedPerson.value = p
+    } catch {
+      // 403 without people:read, 404 for an erased passport, or the server being
+      // down. All three mean "show the id", not "show an error".
+    }
   }
 
   // ── list vs count ────────────────────────────────────────────────────────
@@ -422,7 +453,7 @@ export const useLiveStore = defineStore('live', () => {
     feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
-    feedPassport, togglePassport,
+    feedPassport, feedPerson, feedPersonName, togglePassport,
     isDirOn, isChanOn, setDirection, setChannel,
     loading, connected, dropped,
     failing, maxFeed: MAX_FEED,

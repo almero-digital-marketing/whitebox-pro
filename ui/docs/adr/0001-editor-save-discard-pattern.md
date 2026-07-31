@@ -86,17 +86,27 @@ Rules this encodes:
      below except the two `.save-bar` rows in Users.vue uses this variant.
 7. **A right-pane row (a secondary/side pane, not the center pane) always
    uses the `.actions`/`.b-actions` variant, never `.save-bar`, and its
-   buttons never carry an icon.** A right pane is reachable by scrolling
-   and isn't guaranteed to visually terminate the way a fixed center-pane
-   bar does, so it always supplies its own separator — `border-top: 1px
-   solid var(--border)`, `margin-top: 16px`, `padding-top: 14px`, `gap:
-   10px` (copy these values verbatim; see Users.vue:446 or
-   Journeys.vue:815 for the exact override shape when the row lives inside
-   a scrolling/accordion container rather than a fixed-height pane). Icons
-   are dropped in this variant even where the equivalent center-pane
-   button has one (compare `.usr-doc .b-actions`'s Save, which has a check
-   icon, against `.usr-side .b-actions`'s Publish, which doesn't) — the
-   row's position already makes its purpose unambiguous.
+   buttons never carry an icon.** Spacing is `margin-top: 16px`,
+   `padding-top: 14px`, `gap: 10px` (copy these verbatim; see
+   `.usr-side .b-actions` or `.ppl-console .b-actions` for the override
+   shape when the row lives inside a scrolling/accordion container rather
+   than a fixed-height pane). Icons are dropped in this variant even where
+   the equivalent center-pane button has one (compare
+   `.usr-doc .b-actions`'s Save, which has a check icon, against
+   `.usr-side .b-actions`'s Publish, which doesn't) — the row's position
+   already makes its purpose unambiguous.
+
+   **No `border-top`.** This rule used to require one, on the reasoning
+   that a scrolling pane isn't guaranteed to terminate visually the way a
+   fixed center-pane bar does. In an ACCORDION — which is what every right
+   pane in this app now is — that doesn't hold: the next panel's header
+   already draws a `border-top` a few pixels below, so the row's own rule
+   was a second line doing the same job. In a short panel with a hint
+   paragraph above the buttons it put three horizontal rules into one
+   small box. The `margin-top` alone separates the row from the fields.
+   Changed in `.ppl-console .b-actions` and `.usr-side .b-actions`; the
+   center-pane variants (`.usr-doc`, Campaigns, Audiences) keep theirs,
+   because there a fixed bar genuinely does terminate the pane.
 8. **"Discard" is reserved for revert-in-place.** Use it only when the
    editor stays open and its fields snap back to the last-known state
    (rule 5). Where the equivalent action instead closes or unmounts the

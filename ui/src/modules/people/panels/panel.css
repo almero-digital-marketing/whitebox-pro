@@ -46,7 +46,17 @@
    per-property, so declaring only `padding-top` let that rule's shorthand keep
    supplying 16px left/right — which pushed Save in from the pane edge
    while every field above it sat flush. */
-.ppl-console .b-actions { display: flex; align-items: center; gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0; border-top: 1px solid var(--border); }
+/* No border-top. ADR-0001 rule 7 used to require right-pane action rows to supply
+   their own separator, on the reasoning that a scrolling pane isn't guaranteed to
+   terminate visually the way a fixed center-pane bar does. In an ACCORDION that
+   reasoning doesn't hold: the next panel's header already draws a border-top a few
+   pixels below, so the row's own rule was a second line doing the same job — and
+   with a hint paragraph above it, three horizontal rules inside one short panel.
+   The margin still separates the row from the fields; see the ADR, amended.
+   `border-top: none` EXPLICITLY, not just an omitted declaration: journeys'
+   panels/panel.css declares a bare, unscoped `.b-actions { border-top: … }` that
+   applies app-wide, so dropping it here only let that one through. */
+.ppl-console .b-actions { display: flex; align-items: center; gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0; border-top: none; }
 .ppl-console .b-actions > .p-button { flex-shrink: 0; }
 /* ADR rule 6's other variant, values copied from Users.vue: no border of its
    own, for a row that's FOLLOWED by a section which already draws one (here the

@@ -77,7 +77,14 @@
    it read as the first item in a single long list. Drawn on the group itself so it
    appears and disappears with the section; `--border` is the pane's own divider
    weight (the accordion headers use it). */
+/* 12px below the line to match the 12px `.lv-sgroup + .lv-sgroup` puts above the
+   next group — equal space either side of a divider, rather than 16 above and 12
+   below, which is what made it look stuck to the buttons. */
 .lv-sgroup.lv-scope { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+/* The action row inside the scope group sits closer to the row it acts on than the
+   pane-wide 16px, so the group's own 16px below the line is the larger gap and the
+   divider stops looking stuck to the buttons. */
+.lv-sgroup.lv-scope .save-bar { margin-top: 10px; }
 .lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 
 /* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
@@ -354,11 +361,12 @@
    monospace face the id needs to stay comparable with the feed row it came from,
    and the icon's alignment. Setting a size or colour here is what makes a pane end
    up with three label tiers. */
-.lv-person-id { display: inline-flex; align-items: center; gap: 5px;
-  font-family: ui-monospace, monospace; }
-/* 13px + a nudge, matching how `.lv-srow.bad` already sizes an inline glyph beside
-   this same label tier — so the two icons in this pane sit on the same baseline. */
-.lv-person-id .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--muted); }
+/* The scoped person, rendered like a People rail row. `.two-line` (global, in
+   style.css) supplies the grid and both text tiers; this only adds the row's own
+   width behaviour and sizes the inline glyph, because setting a font-size or colour
+   here is how the two stop matching. */
+.lv-person { min-width: 0; }
+.lv-person .ri-sub .material-symbols-outlined { font-size: 13px; line-height: 1; }
 
 
 /* The pool sits under the three channel rows, separated like they are, and

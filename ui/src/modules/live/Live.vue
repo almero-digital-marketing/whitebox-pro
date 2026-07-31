@@ -28,7 +28,7 @@ const store = useLiveStore()
 // being a RouterLink. Same pattern as shell/views/NoAccess.vue.
 const router = useRouter()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
-  feedChanModes, feedPassport, directionCounts, channelCounts, feedFiltered,
+  feedChanModes, feedPassport, feedPerson, feedPersonName, directionCounts, channelCounts, feedFiltered,
   feedView, feedCounts,
   connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
@@ -473,38 +473,37 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
             <div v-if="feedPassport" class="lv-sgroup lv-scope">
               <div class="lv-sgroup-head"><span class="lv-dl-ch">Person</span></div>
               <div class="lv-srow">
-                <span class="lv-srow-t">
-                  <span class="lv-srow-top">
-                    <!-- Same `.lv-srow-k` label tier as every other row in this pane —
-                         the id is the row's NAME, not a value, so it reads at the tier
-                         a name reads at. Plain text: it identifies WHO is selected,
-                         and the one thing you can do about it is a labelled button of
-                         its own below. An id that was also a click target had to be
-                         guessed at; a button that says "Person details" does not. -->
-                    <span class="lv-srow-k lv-person-id">
-                      <span class="material-symbols-outlined">person</span>{{ short(feedPassport) }}
-                    </span>
+                <!-- Rendered the way People's rail renders a person: `.two-line`
+                     (a GLOBAL opt-in class in style.css, applied alongside a module's
+                     own row class exactly for this) puts the name on line one and when
+                     we last saw them on line two, and the name comes from People's own
+                     `displayName`. Reused rather than restyled — two panes disagreeing
+                     about what a person is called is the drift worth avoiding, and an
+                     8-character id was never a name.
+                     Falls back to the short id when the lookup hasn't landed or the
+                     viewer has no people:read. -->
+                <span class="lv-person two-line">
+                  <span class="ri-name">{{ feedPersonName }}</span>
+                  <span class="ri-sub">
+                    <span class="material-symbols-outlined">person</span>
+                    <span v-if="feedPerson?.last_seen_at">last seen {{ fmtTime(feedPerson.last_seen_at) }}</span>
+                    <span v-else>{{ short(feedPassport) }}</span>
                   </span>
                 </span>
-                <!-- The app's icon-button pattern for "remove this" — same
-                     `text rounded small secondary` + `close` glyph as the query
-                     builder's condition row, People's selection chips and Audiences'
-                     member list. A word where every other row in this pane has a
-                     control on the right made this row the odd one out. -->
-                <Button text rounded size="small" severity="secondary"
-                  aria-label="Stop showing only this person"
-                  v-tooltip.top="'Show everyone again'"
-                  @click="store.togglePassport(null)">
-                  <template #icon><span class="material-symbols-outlined">close</span></template>
-                </Button>
               </div>
-              <!-- Outside the row, and LABELLED. The row says who is selected; going
-                   to their record is a separate thing you do about it, so it gets the
-                   pane's own action-row treatment (`.save-bar`, ADR-0001 rule 6 —
-                   right-aligned, no border-top because the next section draws one).
-                   `router.push` rather than a RouterLink because this is a button, the
-                   same way shell/views/NoAccess.vue navigates. -->
+              <!-- Both actions LABELLED, side by side, outside the row. The row says
+                   who is selected; what you can do about it lives below it in the
+                   pane's own action row (`.save-bar`, ADR-0001 rule 6 — right-aligned,
+                   no border of its own because what follows draws one).
+                   Order and weight follow the ADR's discard/act pairing: the plain
+                   text button releases, the emphasised one goes somewhere. An × icon
+                   was here instead of "Clear", which meant the two things you can do
+                   to this row were a glyph and a word, in two different places.
+                   `router.push` rather than a RouterLink because this is a button —
+                   the same way shell/views/NoAccess.vue navigates. -->
               <div class="save-bar">
+                <Button label="Clear" text severity="secondary" size="small"
+                  @click="store.togglePassport(null)" />
                 <Button label="Person details" size="small" outlined severity="secondary"
                   @click="router.push(`/people/${feedPassport}`)" />
               </div>
