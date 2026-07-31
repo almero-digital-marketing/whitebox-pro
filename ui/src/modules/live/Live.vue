@@ -468,6 +468,41 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                  label tiers is how the typography drifts, and these lists are the
                  same kind of thing as the counter list (a name, a number, a control on
                  the right). -->
+            <!-- FIRST, because it is the narrowest filter and the only one applied
+                 from somewhere else: you set it by clicking a feed row, which has
+                 usually scrolled away by the time you wonder why the board looks
+                 empty. Putting it under Window and Channel meant the answer to "why
+                 am I seeing this" sat below two lists you had to scroll past. Absent
+                 entirely when nothing is scoped, so it costs no space by default. -->
+            <div v-if="feedPassport" class="lv-sgroup">
+              <div class="lv-sgroup-head"><span class="lv-dl-ch">Person</span></div>
+              <div class="lv-srow">
+                <span class="lv-srow-t">
+                  <span class="lv-srow-top">
+                    <!-- Same `.lv-srow-k` label tier as every other row in this pane —
+                         the id is the row's NAME, not a value, so it reads at the tier
+                         a name reads at. The icon marks it as a person without needing
+                         the heading to be read first. -->
+                    <RouterLink class="lv-srow-k lv-person-id" :to="`/people/${feedPassport}`"
+                      title="Open this person in People">
+                      <span class="material-symbols-outlined">person</span>{{ short(feedPassport) }}
+                    </RouterLink>
+                  </span>
+                </span>
+                <!-- The app's icon-button pattern for "remove this" — same
+                     `text rounded small secondary` + `close` glyph as the query
+                     builder's condition row, People's selection chips and Audiences'
+                     member list. A word where every other row in this pane has a
+                     control on the right made this row the odd one out. -->
+                <Button text rounded size="small" severity="secondary"
+                  aria-label="Stop showing only this person"
+                  v-tooltip.top="'Show everyone again'"
+                  @click="store.togglePassport(null)">
+                  <template #icon><span class="material-symbols-outlined">close</span></template>
+                </Button>
+              </div>
+            </div>
+
             <div class="lv-sgroup">
               <div class="lv-sgroup-head"><span class="lv-dl-ch">Window</span></div>
               <div class="lv-seg lv-seg-wide">
@@ -522,24 +557,6 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               </p>
             </div>
 
-            <!-- A passport scope is applied from a FEED ROW, so without this the
-                 only evidence the whole board is narrowed to one person would be a
-                 row that has probably already scrolled away. Shown here, with the
-                 same pane's own section heading, so the filter panel is a complete
-                 answer to "why am I seeing this". -->
-            <div v-if="feedPassport" class="lv-sgroup">
-              <div class="lv-sgroup-head"><span class="lv-dl-ch">Person</span></div>
-              <div class="lv-srow">
-                <span class="lv-srow-t">
-                  <span class="lv-srow-top">
-                    <RouterLink class="lv-person-id" :to="`/people/${feedPassport}`"
-                      title="Open this person">{{ short(feedPassport) }}</RouterLink>
-                  </span>
-                </span>
-                <Button label="Clear" text severity="secondary" size="small"
-                  @click="store.togglePassport(null)" />
-              </div>
-            </div>
 
             <div class="save-bar">
               <Button label="Clear filters" text severity="secondary" size="small"

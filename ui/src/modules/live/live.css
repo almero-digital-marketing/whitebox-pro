@@ -336,11 +336,19 @@
 .lv-ev-open .material-symbols-outlined { font-size: 15px; line-height: 1; }
 .lv-ev-open:hover { color: var(--accent); }
 
-/* The active person scope, shown in the filter pane's own row shape so it reads as
-   one more filter rather than a special case. Monospace to match the id in the
-   feed row it came from. */
-.lv-person-id { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none; }
+/* The active person scope, in the filter pane's own row shape so it reads as one
+   more filter rather than a special case.
+   Typography comes from `.lv-srow-k` (12px, --text-strong) — the same tier every
+   other row's NAME uses in this pane — and this adds only what is specific: the
+   monospace face the id needs to stay comparable with the feed row it came from,
+   and the icon's alignment. Setting a size or colour here is what makes a pane end
+   up with three label tiers. */
+.lv-person-id { display: inline-flex; align-items: center; gap: 5px;
+  font-family: ui-monospace, monospace; text-decoration: none; }
 .lv-person-id:hover { text-decoration: underline; }
+/* 13px + a nudge, matching how `.lv-srow.bad` already sizes an inline glyph beside
+   this same label tier — so the two icons in this pane sit on the same baseline. */
+.lv-person-id .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--muted); }
 
 /* The pool sits under the three channel rows, separated like they are, and
    reuses the .lv-bar track from the direction cards — a gauge is a gauge. */
