@@ -53,6 +53,13 @@
 .save-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); margin-right: auto; }
 .save-note .material-symbols-outlined { font-size: 8px; color: #d97706; }
 .save-note--hidden { visibility: hidden; }
-.jrn-accordion .b-actions { height: auto; padding: 14px 0 0; margin-top: 16px; }
+/* No border-top in the accordion — ADR-0001 rule 7, already applied in
+   `.ppl-console .b-actions` and `.usr-side .b-actions` and missed here. The
+   base rule's divider earns its keep on a CENTRE-pane bar, which terminates the
+   pane; inside an accordion the next panel's header draws one a few pixels
+   below, so this was a second line doing the same job — and in the Node editor,
+   whose panels end with a hint paragraph, it put three horizontal rules into one
+   small box. `margin-top` alone separates the buttons from the fields. */
+.jrn-accordion .b-actions { height: auto; padding: 14px 0 0; margin-top: 16px; border-top: none; }
 .jrn-accordion .b-actions > .p-button { flex-shrink: 0; }
 .jrn-accordion .save-note { flex: 1 1 auto; min-width: 0; margin-right: 0; }
