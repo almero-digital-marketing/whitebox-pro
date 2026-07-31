@@ -632,12 +632,15 @@ export function toFeedRow(row) {
     //
     // If a payload inspector is ever wanted, it needs a route of its own with a
     // deliberate answer to "which fields may a browser see" — NOT a passthrough of
-    // core's /internal/events/log, which serves payloads verbatim behind a static
-    // machine token precisely because it is not browser-facing. A scrubber for this
-    // used to live in this package (src/project.js) and was removed: a hand-kept
-    // list of other plugins' column names drifted behind them, missing mail's
-    // `body_html` and voip's `link`. Whatever replaces it should read a declaration
-    // from the plugins that own those fields, the way direction/channel/detail
-    // already do (server/src/event-catalog.js).
+    // core's event log (GET /events/log, config.eventRegistry.logPath), which serves
+    // payloads verbatim behind a static machine token precisely because it is not
+    // browser-facing. Worth reading the path carefully: nothing in it says
+    // "internal", so it looks like an ordinary read until you check what gates it.
+    //
+    // A scrubber for this used to live in this package (src/project.js) and was
+    // removed: a hand-kept list of other plugins' column names drifted behind them,
+    // missing mail's `body_html` and voip's `link`. Whatever replaces it should read
+    // a declaration from the plugins that own those fields, the way
+    // direction/channel/detail already do (server/src/event-catalog.js).
   }
 }
