@@ -168,9 +168,13 @@ describe('claim', () => {
     expect(store.consumeIdentity).toHaveBeenCalled()
     expect(awareness.record).toHaveBeenCalled()
     expect(r).toMatchObject({ bound: true, passport_id: 'P_known', data: { name: 'Jane' } })
-    expect(notify).toHaveBeenCalledWith('shortener.claimed', {
-      type: 'shortener.claimed', data: { code: 'c', passport_id: 'P_known', merged: true },
-    })
+    // objectContaining: the payload also carries the destination, label and the
+    // link's UTMs now, so a feed row can say WHICH link and WHY it was sent —
+    // asserting the whole object would make every future field a broken test.
+    expect(notify).toHaveBeenCalledWith('shortener.claimed', expect.objectContaining({
+      type: 'shortener.claimed',
+      data: expect.objectContaining({ code: 'c', passport_id: 'P_known', merged: true }),
+    }))
   })
 
   it('first-touch: adopts the customer with no merge', async () => {
@@ -180,9 +184,10 @@ describe('claim', () => {
     const r = await service.claim('T', null)
     expect(passports.merge).not.toHaveBeenCalled()
     expect(r.passport_id).toBe('P_known')
-    expect(notify).toHaveBeenCalledWith('shortener.claimed', {
-      type: 'shortener.claimed', data: { code: 'c', passport_id: 'P_known', merged: false },
-    })
+    expect(notify).toHaveBeenCalledWith('shortener.claimed', expect.objectContaining({
+      type: 'shortener.claimed',
+      data: expect.objectContaining({ code: 'c', passport_id: 'P_known', merged: false }),
+    }))
   })
 
   it('a repeat claim (identity already consumed) still binds to the target but does NOT merge — a different visitor reusing the link must not get folded into the customer a second time', async () => {

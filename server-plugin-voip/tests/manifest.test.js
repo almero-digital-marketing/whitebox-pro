@@ -10,6 +10,9 @@ manifestSuite({
   plugin: voip({}),
   srcDir: new URL('../src', import.meta.url),
   expectEmitted: ['voip.click'],
+  // `awareness.recorded` is core's event; we describe only the rows WE produced
+  // (the catalog routes by `data.plugin`). See docs/11-plugin-events.md.
+  scopedDetail: ['awareness.recorded'],
 })
 
 // What our events look like in a feed row. live used to write these, reading

@@ -66,6 +66,52 @@ export function pathOf(url) {
   }
 }
 
+/**
+ * The PATH, always — where pathOf() substitutes the hostname when the path is
+ * just `/`.
+ *
+ * That substitution is right for a link whose host is the point (a short link, a
+ * referrer). It is wrong for a page view on your own site, where it turned
+ * "someone viewed the homepage" into the word `localhost` — the host is the same
+ * on every row and says nothing, while `/` at least says which page.
+ */
+export function urlPath(url) {
+  if (!url) return null
+  try {
+    return trim(decodePath(new URL(url).pathname)) || '/'
+  } catch {
+    return trim(decodePath(url))
+  }
+}
+
+/** A uuid cut to something a person can compare at a glance. The feed links out
+ *  to the full record; eight characters is enough to tell two rows apart. */
+export const short = (id) => (id ? String(id).slice(0, 8) : null)
+
+/**
+ * WHY this happened, when the payload says.
+ *
+ * Attribution is the question a feed is worst at answering: twenty sends look
+ * identical, and the one that matters is the one nobody expected. A campaign or
+ * journey id turns "we emailed someone" into "the July promo emailed someone",
+ * which is the difference between a row you scroll past and a row you act on.
+ *
+ * Shared so it reads the same on every event that has it. Prefers a NAME when the
+ * producer carries one — an id says "automated", a name says which.
+ */
+export function attribution(d = {}) {
+  if (d.campaign_name) return `via campaign ${d.campaign_name}`
+  if (d.campaign_id)   return `via campaign ${short(d.campaign_id)}`
+  if (d.journey_name)  return `via journey ${d.journey_name}`
+  if (d.journey_id)    return `via journey ${short(d.journey_id)}`
+  // UTMs, for anything that carries the session's own attribution.
+  const src = d.utm_source || null
+  const camp = d.utm_campaign || null
+  if (src && camp) return `${src} / ${camp}`
+  if (src) return src
+  return null
+}
+
 /** Letters/digits only (Latin + Cyrillic), so punctuation, case and word
  *  separators can't hide a match. */
 export const letters = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9Ѐ-ӿ]+/g, '')

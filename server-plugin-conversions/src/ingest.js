@@ -93,6 +93,10 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
     }
     networks = await reporter.report(passportId, canonical, {
       signals: reqCtx.signals || {}, ip: reqCtx.ip, user_agent: reqCtx.user_agent,
+      // For the adnetwork event's own detail line, not for the networks — see
+      // the note at its notify(). Deliberately not folded into `canonical`,
+      // which is the payload we transmit.
+      url,
     })
   } else {
     networks = { skipped: 'consent' }

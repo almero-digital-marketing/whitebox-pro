@@ -44,9 +44,15 @@ describe('mail event detail', () => {
     expect(bulk({})).toBeNull()
   })
 
+  // WHICH batch, not just how big. Two batches in flight read identically
+  // otherwise, and "240 recipients" twice tells you nothing about either.
+  it('names the batch alongside the size', () => {
+    expect(bulk({ accepted: 240, batch_id: 'b9c1d2e3f4g5' })).toBe('240 recipients · batch b9c1d2e3')
+  })
+
   // 0 is a real batch size and must survive the ?? chain rather than falling
-  // through to the batch id.
+  // through to the batch id alone.
   it('reports an empty batch as empty', () => {
-    expect(bulk({ accepted: 0, batch_id: 'b-9' })).toBe('0 recipients')
+    expect(bulk({ accepted: 0, batch_id: 'b-9' })).toBe('0 recipients · batch b-9')
   })
 })

@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url'
 
 import { resolveAuth } from 'whitebox-pro-server/auth'
 import createNotify from 'whitebox-pro-server/notify'
-import { money, pathOf } from 'whitebox-pro-server/event-format'
+import { money, urlPath } from 'whitebox-pro-server/event-format'
 import * as store from './store.js'
 import * as ingest from './ingest.js'
 import { createReporter } from './reporter.js'
@@ -61,14 +61,39 @@ export function conversions(options = {}) {
     // the two event families answer completely different questions: what the
     // conversion was WORTH, versus why a network refused it.
     detail: {
-      // Value first — it's why anyone looks at a conversion. Then where it
-      // happened, which at least locates it when there's no money attached.
-      'conversion.': (d) => money(d.value, d.currency) || pathOf(d.url) || d.kind || null,
+      // Value first — it's why anyone looks at a conversion — then WHERE. Both,
+      // when there are both: "120 BGN · /checkout" answers more than either half.
+      //
+      // NOT `kind`. It holds 'standard' or 'custom', which is a fact about our own
+      // schema and not about what happened — a row reading "standard · /" says
+      // nothing the `conversion.contact` in the type column hasn't already said.
+      // The page on its own is the better answer when there's no money.
+      'conversion.': (d) =>
+        [money(d.value, d.currency), urlPath(d.url)].filter(Boolean).join(' · ') || null,
 
-      // The failure reason is the entire point of the event when there is one.
+      // network · event · page, and the failure reason when there is one — that
+      // reason is the entire point of the event.
+      //
+      // The page matters as much as the rest: "tiktok · page_view" is unreadable
+      // on a busy feed, because page_view of WHAT? Every row looks identical.
       'adnetwork.': (d) => {
-        const head = [d.network, d.event].filter(Boolean).join(' · ')
+        const head = [d.network, d.event, urlPath(d.url)].filter(Boolean).join(' · ')
         return d.error ? `${head} — ${d.error}` : head || null
+      },
+
+      // ── awareness rows WE recorded ────────────────────────────────────────
+      //
+      // `awareness.recorded` is CORE's event, but we compose its payload when we
+      // call awareness.record(), so we are the only ones who can read it well.
+      // Core's generic version rendered ours as "conversion · localhost": the
+      // category (which just restates the channel column) and the hostname (the
+      // same on every row). Neither says what happened or where.
+      //
+      // What we actually wrote is a `content_id` of `conversion:<name>:<uuid>`,
+      // so the NAME is right there — and the page is in content_url.
+      'awareness.recorded': (d) => {
+        const name = String(d.content_id || '').split(':')[1] || d.source || null
+        return [name, urlPath(d.content_url)].filter(Boolean).join(' · ') || null
       },
     },
 

@@ -84,6 +84,14 @@ export async function resolveRedirect(code, ctx = {}) {
 
 // ── claim (anonymous browser → known customer) ────────────────────────────
 
+// The attribution keys only. `link.data` is arbitrary prefill (name, email,
+// booking details) and this payload reaches the firehose, so it is picked by name
+// rather than spread.
+const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']
+const utmsOf = (data) => Object.fromEntries(
+  UTM_KEYS.filter(k => data?.[k]).map(k => [k, data[k]]),
+)
+
 export async function claim(token, visitorPassportId) {
   if (!token) return { bound: false }
   const click = await store.getClick(token)
@@ -141,7 +149,20 @@ export async function claim(token, visitorPassportId) {
   )
   notify?.('shortener.claimed', {
     type: 'shortener.claimed',
-    data: { code: link.code, passport_id: bound, merged: !!(target && visitor && visitor !== target) },
+    data: {
+      code: link.code,
+      // WHERE it goes and WHY it was sent. A row reading "/aB3x" names a code
+      // nobody recognises: the destination says which link was followed, the
+      // label says what we called it, and the UTMs say which send put it in front
+      // of them.
+      url: link.url ?? null,
+      label: link.label ?? null,
+      // UTMs ONLY, picked out by name — `link.data` is arbitrary prefill and
+      // routinely holds a name or an email, and this payload goes to the firehose.
+      ...utmsOf(link.data),
+      passport_id: bound,
+      merged: !!(target && visitor && visitor !== target),
+    },
   })
   return { bound: true, passport_id: bound, data: link.data || {} }
 }

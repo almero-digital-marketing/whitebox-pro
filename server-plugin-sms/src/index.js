@@ -13,6 +13,7 @@ import { mountRoutes } from './routes.js'
 import { registerMcp } from './mcp.js'
 import { resolveAuth } from 'whitebox-pro-server/auth'
 import createNotify from 'whitebox-pro-server/notify'
+import { attribution } from 'whitebox-pro-server/event-format'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -55,9 +56,13 @@ export function sms(options = {}) {
       'sms.': (d) => {
         const who = d.to || d.phone || null
         const why = d.failure_reason || d.reason || d.error_message || null
-        if (who && why) return `${who} — ${why}`
-        if (who && d.segments) return `${who} · ${d.segments} segment${d.segments === 1 ? '' : 's'}`
-        return who || null
+        const what = why
+          ? `— ${why}`
+          : (d.segments ? `${d.segments} segment${d.segments === 1 ? '' : 's'}` : null)
+        const head = [who, what].filter(Boolean).join(who && why ? ' ' : ' · ')
+        // WHY it went out — the outbox row carries campaign_id / journey_id and we
+        // notify with the row itself, so this was always available and never shown.
+        return [head || null, attribution(d)].filter(Boolean).join(' · ') || null
       },
     },
 

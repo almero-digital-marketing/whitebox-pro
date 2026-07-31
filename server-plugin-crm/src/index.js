@@ -37,6 +37,18 @@ export function crm(options = {}) {
     // that pushed it.
     detail: {
       'crm.': (d) => [d.kind, d.external_id, d.status].filter(Boolean).join(' · ') || d.source || null,
+
+      // The awareness rows WE record on ingest. We compose content_id as
+      // `<source>:fact|obs:<kind>:<id>`, so the KIND — booking, deal, note — is in
+      // there and is the only part worth reading. Core's generic version showed
+      // `observation · <the whole id>`, which is the direction (already its own
+      // column) and an opaque string.
+      'awareness.recorded': (d) => {
+        const [source, what, kind] = String(d.content_id || '').split(':')
+        const label = what === 'fact' ? 'fact' : what === 'obs' ? 'observation' : null
+        return [kind || null, label, source && source !== 'crm' ? source : null]
+          .filter(Boolean).join(' · ') || d.preview || null
+      },
     },
 
     async migrate(db) {

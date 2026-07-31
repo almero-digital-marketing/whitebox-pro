@@ -137,6 +137,11 @@ export async function findByIdentity(type, value) {
 export async function link(passportId, items) {
   passportId = await resolve(passportId)
   const now = dayjs().toDate()
+  // Only what was ACTUALLY attached for the first time. link() runs on nearly
+  // every identify, inbound mail, and answered call, and the overwhelming
+  // majority of those calls just bump last_seen_at on an identity we already
+  // hold — announcing those would bury the one that matters in noise.
+  const learned = []
 
   for (const item of items) {
     if (STRONG.has(item.type)) {
@@ -144,9 +149,12 @@ export async function link(passportId, items) {
       const existing = await db(IDENTITIES).where({ type: item.type, value: item.value }).first()
 
       if (!existing) {
+        let inserted = true
         await db(IDENTITIES).insert({ passport_id: passportId, type: item.type, name: item.name, value: item.value, last_seen_at: now }).catch(err => {
           if (!err.message?.includes('unique') && !err.message?.includes('duplicate')) throw err
+          inserted = false   // lost a race to a concurrent link — not news
         })
+        if (inserted) learned.push({ type: item.type, name: item.name })
         continue
       }
 
@@ -163,8 +171,24 @@ export async function link(passportId, items) {
         await db(IDENTITIES).where({ id: existing.id }).update({ last_seen_at: now })
       } else {
         await db(IDENTITIES).insert({ passport_id: passportId, type: item.type, name: item.name, value: item.value, last_seen_at: now })
+        learned.push({ type: item.type, name: item.name })
       }
     }
+  }
+
+  // An anonymous visitor became a known person — the moment most of this system
+  // exists to capture, and it used to leave no trace at all.
+  //
+  // Identity TYPES and NAMES only, never values. The feed streams to any console
+  // client and links out to /people/<id>, where the actual addresses are shown
+  // behind that module's own permission — putting a bare email in the firehose
+  // would route around it. "learned email, phone" is the useful sentence anyway;
+  // WHICH email is a click away.
+  if (learned.length) {
+    notify?.('passport.identified', {
+      type: 'passport.identified',
+      data: { passport_id: passportId, identities: learned },
+    })?.catch?.(() => {})
   }
 }
 
@@ -232,6 +256,7 @@ export async function merge(survivorId, absorbedId) {
 
   const key = [survivorId, absorbedId].sort().join(':')
   const acquired = await lock.acquire(`passport:merge:${key}`, 5000)
+  let merged = false
 
   try {
     await db.transaction(async trx => {
@@ -298,8 +323,24 @@ export async function merge(survivorId, absorbedId) {
       await trx(MERGES).insert({ absorbed_id: absorbedId, survivor_id: survivorId })
     })
     logger.info('Merged passport %s into %s', absorbedId, survivorId)
+    merged = true
   } finally {
     await lock.release(acquired)
+  }
+
+  // Two people turned out to be one. Nothing else in the system changes as much
+  // about the past — every event, session and fact the absorbed passport owned is
+  // now attributed to the survivor — and until now it happened in silence, visible
+  // only in a log line. Emitted INSIDE the success path (not the finally) so a
+  // merge that threw doesn't announce itself.
+  if (merged) {
+    notify?.('passport.merged', {
+      type: 'passport.merged',
+      // The survivor, because that is who the row is now about. `passport_id` is
+      // also the only field the event registry persists, so this is what puts the
+      // merge on the surviving person's timeline.
+      data: { passport_id: survivorId, survivor_id: survivorId, absorbed_id: absorbedId },
+    })?.catch?.(() => {})
   }
 
   return survivorId
@@ -327,6 +368,7 @@ export async function erase(passportId) {
   if (!id || !(await db(PASSPORTS).where({ id }).first())) return null
 
   const acquired = await lock.acquire(`passport:erase:${id}`, 5000)
+  let erased = false
   const removed = {}
   try {
     await db.transaction(async trx => {
@@ -348,8 +390,28 @@ export async function erase(passportId) {
       if (self) removed[PASSPORTS] = self
     })
     logger.info({ passport_id: id, removed }, 'Erased passport')
+    erased = true
   } finally {
     await lock.release(acquired)
+  }
+
+  // A person was deleted. The most audit-worthy thing this system does, and the
+  // one operation you most want to see on a board rather than discover in a log.
+  //
+  // Deliberately carries NO passport_id — not even in `data`, which is the field
+  // the registry persists. Recording "we erased X" against X is self-defeating:
+  // the whole point was to stop holding the identifier. The row counts say what
+  // happened without resurrecting who it happened to, and the surrounding log line
+  // (which has its own retention and access rules) keeps the id for an operator
+  // who legitimately needs it.
+  if (erased) {
+    notify?.('passport.erased', {
+      type: 'passport.erased',
+      data: {
+        tables: Object.keys(removed).length,
+        rows: Object.values(removed).reduce((n, v) => n + Number(v || 0), 0),
+      },
+    })?.catch?.(() => {})
   }
   return { id, removed }
 }
@@ -360,7 +422,17 @@ export async function erase(passportId) {
 export async function unlink(passportId, identityId) {
   const pid = await resolve(passportId)
   if (!pid) return 0
-  return db(IDENTITIES).where({ id: identityId, passport_id: pid }).del()
+  const removed = await db(IDENTITIES).where({ id: identityId, passport_id: pid }).del()
+  // Only when a row actually went — an unlink of something already gone is not an
+  // event, and this is the counterpart to passport.identified: a correction to
+  // who we think someone is, which deserves the same visibility as the claim.
+  if (removed) {
+    notify?.('passport.unlinked', {
+      type: 'passport.unlinked',
+      data: { passport_id: pid, identity_id: identityId },
+    })?.catch?.(() => {})
+  }
+  return removed
 }
 
 // Everything known about one passport, assembled from the two stores that

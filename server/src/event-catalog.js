@@ -108,6 +108,20 @@ export const CORE_EVENTS = {
   'passport.created': 'in',
   'session.started': 'in',
 
+  // The rest of a person's lifecycle. All `internal`, and that is the honest
+  // reading: nobody outside was touched. A merge, an erasure and a newly-learned
+  // email are things WE did to our own records — the inbound act that caused them
+  // (the form submit, the call, the reply) already counted as traffic under its
+  // own channel, so counting these too would count one act twice.
+  //
+  // `internal` is not "unimportant" — it is the direction for orchestration, and
+  // these are the most consequential entries the feed carries. A merge rewrites
+  // every historical attribution the absorbed passport had.
+  'passport.identified': 'internal',
+  'passport.merged': 'internal',
+  'passport.unlinked': 'internal',
+  'passport.erased': 'internal',
+
   // Awareness carries its own direction, recorded at the point of the touch, so
   // it is read from the payload rather than derived from the type. The map is
   // core's vocabulary for what a touch WAS:
@@ -225,6 +239,28 @@ export const CORE_DETAIL = {
 
   'passport.created': () => 'new visitor',
 
+  // Types and names, never values — see the note where this is emitted. "learned
+  // email" is the useful sentence; which email is one click away on /people/<id>,
+  // behind that module's own permission.
+  'passport.identified': (d) => {
+    const what = (d.identities || [])
+      .map(i => i.name && i.name !== i.type ? `${i.type}/${i.name}` : i.type)
+      .filter(Boolean)
+    return what.length ? `learned ${what.join(', ')}` : 'learned an identity'
+  },
+
+  // Both ids, short — the survivor is who the row is attributed to, so the
+  // absorbed one is the piece you can't get from anywhere else on the row.
+  'passport.merged': (d) =>
+    d.absorbed_id ? `absorbed ${String(d.absorbed_id).slice(0, 8)}` : 'merged two passports',
+
+  'passport.unlinked': () => 'identity removed',
+
+  // No id, deliberately. The counts are what says how much was actually deleted —
+  // an erasure that removed 2 rows across 1 table did not do what you think.
+  'passport.erased': (d) =>
+    d.rows ? `erased ${d.rows} rows across ${d.tables} tables` : 'erased a passport',
+
   // Attribution is the reason anyone looks at a new session.
   'session.started': (d) => {
     const src = d.utm_source || null
@@ -266,6 +302,9 @@ export function build(plugins = [], { logger } = {}) {
   const detailByType = new Map()
   const detailByPrefix = new Map()
   const orphanDetail = []
+  // Detail for an event a plugin does NOT own, scoped to the rows it produced.
+  // Keyed `${module} ${type}` — see the note on plugin-scoped detail below.
+  const detailByOrigin = new Map()
 
   const add = (module, key, entry) => {
     const target = isPrefix(key) ? byPrefix : byType
@@ -298,12 +337,62 @@ export function build(plugins = [], { logger } = {}) {
   for (const [key, fn] of Object.entries(CORE_DETAIL)) addDetail('core', key, fn)
   for (const c of CORE_CHANNELS) channels.add(c)
 
+  // Pass 1: every plugin's own events, so pass 2 can tell "I own this type" from
+  // "somebody else owns it and I only produced some of its rows".
   for (const plugin of plugins) {
-    if (!plugin?.events && !plugin?.detail) continue
+    if (!plugin?.events) continue
     const module = plugin.name || '(unnamed)'
-    for (const [key, entry] of Object.entries(plugin.events || {})) add(module, key, entry)
-    for (const [key, fn] of Object.entries(plugin.detail || {})) addDetail(module, key, fn)
+    for (const [key, entry] of Object.entries(plugin.events)) add(module, key, entry)
     for (const c of plugin.channels || []) channels.add(c)
+  }
+
+  // Does ANY module declare an event this detail key could match? Defined after
+  // pass 1, so it sees every declaration regardless of plugin order.
+  const reachableFromDeclared = (key) => {
+    const declaredKeys = [...byType.keys(), ...byPrefix.keys()]
+    return declaredKeys.some(t =>
+      key.endsWith('.') ? (t.startsWith(key) || key.startsWith(t)) : (t === key || (isPrefix(t) && key.startsWith(t))),
+    )
+  }
+
+  // Pass 2: detail. A plugin declaring detail for a type IT declared is the
+  // ordinary case. Declaring detail for someone else's type is PLUGIN-SCOPED —
+  // see below.
+  for (const plugin of plugins) {
+    if (!plugin?.detail) continue
+    const module = plugin.name || '(unnamed)'
+    const owns = (key) => Object.keys(plugin.events || {}).some(t =>
+      key.endsWith('.') ? (t.startsWith(key) || key.startsWith(t)) : (t === key || (t.endsWith('.') && key.startsWith(t))),
+    )
+    for (const [key, fn] of Object.entries(plugin.detail)) {
+      if (owns(key)) { addDetail(module, key, fn); continue }
+      // ── PLUGIN-SCOPED DETAIL ──────────────────────────────────────────────
+      //
+      // One event type, many authors. `awareness.recorded` is emitted by CORE,
+      // but its payload is composed by whichever plugin called awareness.record()
+      // — conversions writes `content_id: 'conversion:page_view:<uuid>'` and a
+      // preview of its own; engagement writes a content id and the real page
+      // text. Core cannot describe both well, and it showed: every conversions
+      // row read "conversion · localhost", which names the category and the
+      // hostname and tells you neither what happened nor which page.
+      //
+      // So the row is described by whoever PRODUCED it. The payload already says
+      // who that was (`data.plugin`, stamped by the loader), and detail() prefers
+      // a function registered against that name. Core's own declaration stays as
+      // the fallback for a row from a plugin that declared nothing.
+      //
+      // This is the same principle as everywhere else in this file — the module
+      // that owns the data owns the description — extended to the case where the
+      // emitter and the author are different modules.
+      //
+      // Still checked, though: scoping is for a type SOMEBODY declares. A key
+      // matching no declared event anywhere is a typo, not a scoped override, and
+      // it must stay loud — `'conversions.'` for an event called `conversion.` is
+      // the exact bug that made live's old map untrustworthy, and treating every
+      // unmatched key as "scoped" would have quietly reintroduced it.
+      if (!reachableFromDeclared(key)) { orphanDetail.push({ key, module }); continue }
+      if (typeof fn === 'function') detailByOrigin.set(`${module} ${key}`, { module, fn })
+    }
   }
 
   for (const c of conflicts) {
@@ -313,22 +402,18 @@ export function build(plugins = [], { logger } = {}) {
     )
   }
 
-  // A detail key that no declared event can ever match. This is the drift the two
-  // maps make possible, and it's the exact failure that made live's old map so
-  // hard to trust: a `'conversions.'` branch that never ran looked identical to a
-  // correct one. Cheap to detect here, invisible everywhere else.
-  const declared = [...byType.keys(), ...byPrefix.keys()]
-  const reachable = (key) => declared.some(t =>
-    isPrefix(key) ? (t.startsWith(key) || key.startsWith(t)) : (t === key || (isPrefix(t) && key.startsWith(t))),
-  )
-  for (const [key, { module }] of [...detailByType, ...detailByPrefix]) {
-    if (!reachable(key)) {
-      orphanDetail.push({ key, module })
-      logger?.warn?.(
-        'event catalog: %s declares detail for "%s" but no event it declares can match it',
-        module, key,
-      )
-    }
+  // A detail key that no declared event can ever match — the drift the two maps
+  // make possible, and the exact failure that made live's old map untrustworthy:
+  // a `'conversions.'` branch that never ran looked identical to a correct one.
+  //
+  // Collected in pass 2 (a key that isn't the plugin's own AND matches nothing
+  // anywhere), because that is the only place it can arise: a key a plugin DOES
+  // own is reachable by definition. Reported here so one loop owns the warning.
+  for (const { key, module } of orphanDetail) {
+    logger?.warn?.(
+      'event catalog: %s declares detail for "%s" but no declared event can match it',
+      module, key,
+    )
   }
 
   // A namespace whose channel is per-row is NOT itself a channel — that's an
@@ -351,6 +436,7 @@ export function build(plugins = [], { logger } = {}) {
     detailByType,
     detailByPrefix,
     detailPrefixes: [...detailByPrefix.keys()].sort(byLength),
+    detailByOrigin,
     channels: [...channels].sort(),
     conflicts,
     orphanDetail,
@@ -450,11 +536,18 @@ export function channel(catalog, type, payload) {
 export function detail(catalog, type, payload, { logger } = {}) {
   if (!catalog) return null
   const t = String(type || '')
-  const hit = catalog.detailByType?.get(t)
+  const d = body(payload)
+
+  // Whoever PRODUCED this row describes it, when they said so. `data.plugin` is
+  // stamped by the plugin loader on every awareness.record(), so a shared event
+  // type reads in the vocabulary of the module that actually authored the row
+  // rather than in the emitter's lowest common denominator.
+  const hit = (d?.plugin && catalog.detailByOrigin?.get(`${d.plugin} ${t}`))
+    ?? catalog.detailByType?.get(t)
     ?? catalog.detailPrefixes?.map(p => (t === p || t.startsWith(p) ? catalog.detailByPrefix.get(p) : null)).find(Boolean)
   if (!hit) return null
   try {
-    return trim(hit.fn(body(payload), t))
+    return trim(hit.fn(d, t))
   } catch (err) {
     logger?.warn?.({ err, module: hit.module, type: t }, 'event catalog: detail() threw — showing no detail')
     return null

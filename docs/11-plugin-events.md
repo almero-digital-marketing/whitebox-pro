@@ -164,14 +164,59 @@ Rules:
   one row failing to describe itself must never break the board. Don't rely on it.
 
 Shared formatting helpers live in `whitebox-pro-server/event-format` — `trim`,
-`money`, `pathOf`, `collapse`, `body`. Use them rather than reimplementing:
-`pathOf` alone encodes two bug fixes (percent-decoding Cyrillic paths for display,
-and surviving a malformed escape sequence), and a second copy would have one of
-them.
+`money`, `pathOf`, `urlPath`, `collapse`, `short`, `attribution`, `body`. Use them
+rather than reimplementing: `pathOf` alone encodes two bug fixes (percent-decoding
+Cyrillic paths for display, and surviving a malformed escape sequence), and a
+second copy would have one of them.
 
 ```js
-import { money, pathOf } from 'whitebox-pro-server/event-format'
+import { money, urlPath, attribution } from 'whitebox-pro-server/event-format'
 ```
+
+Two are worth knowing about specifically:
+
+- **`urlPath` vs `pathOf`** — `pathOf` substitutes the hostname when the path is
+  just `/`, which is right for a link whose host is the point (a referrer, a short
+  link) and wrong for a page view on your own site, where it rendered "someone
+  viewed the homepage" as the word `localhost`. Use `urlPath` for your own pages.
+- **`attribution(d)`** — WHY this happened, from `campaign_name`/`campaign_id`,
+  `journey_name`/`journey_id` or the UTMs. Append it whenever your payload carries
+  any: twenty sends look identical, and the one that matters is the unexpected
+  one. mail and sms notify with the outbox row, which has carried `campaign_id`
+  all along and never showed it.
+
+### Describing an event you don't own
+
+Some event types have one emitter and many authors. `awareness.recorded` is
+emitted by **core**, but its payload is composed by whichever plugin called
+`awareness.record()` — conversions writes `content_id: 'conversion:<name>:<uuid>'`,
+engagement writes the real page text, crm writes `'<source>:fact:<kind>:<id>'`.
+
+Core cannot describe all of those well, and it showed: every conversions row read
+`conversion · localhost` — the category (which restates the channel column) and
+the hostname (identical on every row). Neither said what happened or where.
+
+So declare it yourself. The catalog routes a row back to the plugin that produced
+it using `data.plugin`, which the loader stamps on every `awareness.record()`:
+
+```js
+detail: {
+  'awareness.recorded': (d) => {          // only OUR rows reach this
+    const name = String(d.content_id || '').split(':')[1] || d.source
+    return [name, urlPath(d.content_url)].filter(Boolean).join(' · ')
+  },
+},
+```
+
+Core's declaration stays as the fallback for rows from a plugin that declared
+nothing. In the test suite, list it in `scopedDetail` so the typo check still
+applies — a key matching no declared event anywhere is still an error, not a
+scoped override.
+
+A plugin may declare `detail` with **no `events` at all**: engagement emits no
+events (a touch is recorded as awareness, and emitting both would double-count one
+interaction) but still authors awareness rows, so it describes them and nothing
+else.
 
 ## Declaring nothing
 

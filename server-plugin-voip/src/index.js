@@ -12,6 +12,7 @@ import * as speech from './speech.js'
 import createNotify from 'whitebox-pro-server/notify'
 
 import { registerMcp } from './mcp.js'
+import { collapse } from 'whitebox-pro-server/event-format'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -58,6 +59,17 @@ export function voip(options = {}) {
         // came from.
         if (line) return `${line}${tag}`
         return from || (d.tag ? `tag ${d.tag}` : null)
+      },
+
+      // The awareness row WE record for a call. The call itself is already in the
+      // feed as voip.call; what this row adds is what was SAID — the transcript
+      // excerpt core puts in `preview`. Showing that beats repeating the number.
+      'awareness.recorded': (d) => {
+        const said = collapse(d.preview) || null
+        if (said) return said
+        // No transcript (yet, or transcription off) — name the call instead.
+        const id = String(d.content_id || '')
+        return id.startsWith('call:') ? `call ${id.slice('call:'.length)}` : null
       },
     },
 

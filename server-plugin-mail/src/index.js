@@ -16,6 +16,7 @@ import createNotify from 'whitebox-pro-server/notify'
 import { mountRoutes } from './routes.js'
 import { registerMcp } from './mcp.js'
 import { startStuckReaper } from './stuck-reaper.js'
+import { short, attribution } from 'whitebox-pro-server/event-format'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -62,18 +63,25 @@ export function mail(options = {}) {
     // event types, which is why `detail` is keyed separately from `events`:
     // a batch is described by its size, a single message by its recipient.
     detail: {
+      // Size AND which batch. "240 recipients" on its own is unreadable the
+      // moment two batches are in flight — they read identically.
       'mail.bulk.': (d) => {
         const n = d.accepted ?? d.cancelled ?? null
-        if (n !== null) return `${n} recipients`
-        return d.batch_id ? `batch ${d.batch_id}` : null
+        const which = d.batch_id ? `batch ${short(d.batch_id)}` : null
+        return [n !== null ? `${n} recipients` : null, which].filter(Boolean).join(' · ') || null
       },
       'mail.': (d) => {
-        // A failure reason is the entire point of the row when there is one.
+        // A failure reason is the entire point of the row when there is one, so
+        // it displaces the subject rather than crowding in beside it.
         const who = d.to || null
         const why = d.failure_reason || null
-        if (who && why) return `${who} — ${why}`
-        if (who) return d.subject ? `${who} · ${d.subject}` : who
-        return d.subject || null
+        const what = why ? `— ${why}` : (d.subject || null)
+        const head = [who, what].filter(Boolean).join(who && why ? ' ' : ' · ')
+        // WHY this went out. The outbox row carries campaign_id / journey_id (we
+        // notify with the row itself), and "this was a campaign send" vs "this was
+        // transactional" is the first thing you want to know about an unexpected
+        // send — it was in the payload all along and never shown.
+        return [head || null, attribution(d)].filter(Boolean).join(' · ') || null
       },
     },
 

@@ -20,6 +20,9 @@ manifestSuite({
   // BEFORE the notify, so no such event has ever existed — it's a counter in our
   // status(), not an event. live's map declared it anyway.
   dynamicTypes: ['adnetwork.accepted', 'adnetwork.rejected', 'adnetwork.error'],
+  // `awareness.recorded` is core's event; we describe only the rows WE produced
+  // (the catalog routes by `data.plugin`). See docs/11-plugin-events.md.
+  scopedDetail: ['awareness.recorded'],
 })
 
 describe('conversions event detail', () => {
@@ -35,8 +38,15 @@ describe('conversions event detail', () => {
 
   it('falls back to where it happened when no money is attached', () => {
     expect(conversion({ url: 'https://gpoint.bg/studios/sofia?utm_source=x' })).toBe('/studios/sofia')
-    expect(conversion({ kind: 'lead' })).toBe('lead')
     expect(conversion({})).toBeNull()
+  })
+
+  // `kind` is 'standard' | 'custom' — a fact about our schema, not about what
+  // happened. It rendered real rows as "standard · /", which says nothing the
+  // `conversion.contact` in the type column hasn't already said.
+  it('never shows the schema kind, which is not what happened', () => {
+    expect(conversion({ kind: 'standard', url: 'https://gpoint.bg/' })).toBe('/')
+    expect(conversion({ kind: 'standard' })).toBeNull()
   })
 
   // gpoint.bg's routes are Bulgarian, so the browser sends them percent-encoded;

@@ -18,6 +18,7 @@ import * as store from './store.js'
 import * as service from './service.js'
 import { mountRoutes } from './routes.js'
 import { registerMcp } from './mcp.js'
+import { urlPath, attribution } from 'whitebox-pro-server/event-format'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -37,10 +38,32 @@ export function shortener(options = {}) {
     // WHICH link, and `merged` is the interesting part when it happens: the claim
     // joined an anonymous visitor to a known person.
     detail: {
+      // `/aB3x` alone names a code nobody recognises. What it points AT, what we
+      // called it, and which send put it in front of them are the three things
+      // that make the row mean something.
       'shortener.claimed': (d) => {
-        const code = d.code ? `/${d.code}` : null
-        if (code && d.merged) return `${code} — merged identities`
-        return code || (d.merged ? 'merged identities' : null)
+        const which = d.label || urlPath(d.url) || (d.code ? `/${d.code}` : null)
+        // A merge is the interesting part when it happens: the claim joined an
+        // anonymous visitor to a known person.
+        const bits = [which, d.merged ? 'merged identities' : null, attribution(d)]
+        return bits.filter(Boolean).join(' · ') || null
+      },
+
+      // The awareness row WE record on a claim (see service.js). We write
+      // `content_id: 'shortlink:<code>'`, so the code is right there — core's
+      // generic version showed the source label and a path instead, which for a
+      // short link is the destination and not which link was followed.
+      //
+      // NOTE the label and the campaign are deliberately absent: we put them in
+      // that record's `meta`, and core's awareness.recorded payload does not carry
+      // meta (see server/src/awareness/index.js). Reading a field that isn't in
+      // the payload is exactly the bug this whole exercise removed — so this shows
+      // what is actually there and nothing more.
+      'awareness.recorded': (d) => {
+        const code = String(d.content_id || '').startsWith('shortlink:')
+          ? `/${String(d.content_id).slice('shortlink:'.length)}`
+          : null
+        return ['shortlink', code, urlPath(d.content_url)].filter(Boolean).join(' · ') || null
       },
     },
 

@@ -94,7 +94,7 @@ export const declares = (events = {}, type) =>
  * and the check FAILS if a dynamic namespace is neither enumerated here nor
  * covered by a prefix. That is the part that matters: you cannot forget to decide.
  */
-export function manifestSuite({ plugin, srcDir, expectEmitted = [], dynamicTypes = [] }) {
+export function manifestSuite({ plugin, srcDir, expectEmitted = [], dynamicTypes = [], scopedDetail = [] }) {
   const name = plugin?.name || '(unnamed)'
 
   describe(`${name} event manifest`, () => {
@@ -156,13 +156,31 @@ export function manifestSuite({ plugin, srcDir, expectEmitted = [], dynamicTypes
 
     // Same drift in the other map: a detail key no declared event can match is a
     // branch that never runs, and it looks exactly like a correct one.
+    //
+    // `scopedDetail` is the deliberate exception — a type we describe but do NOT
+    // own. `awareness.recorded` is emitted by core, while its payload is composed
+    // by whichever plugin called awareness.record(), so several plugins describe
+    // their own rows of it (the catalog routes by `data.plugin`). Listing them
+    // explicitly keeps the typo check: an unlisted key that matches nothing still
+    // fails, which is the whole point of this test.
     it('declares no detail for an event it does not declare', () => {
       for (const key of Object.keys(plugin?.detail || {})) {
+        if (scopedDetail.includes(key)) continue
         const reachable = Object.keys(events).some(t =>
           key.endsWith('.') ? (t.startsWith(key) || key.startsWith(t)) : (t === key || (t.endsWith('.') && key.startsWith(t))),
         )
-        expect(reachable, `detail "${key}" matches no declared event`).toBe(true)
+        expect(reachable, `detail "${key}" matches no declared event — if it belongs to another module and you only describe YOUR rows of it, list it in scopedDetail`).toBe(true)
       }
     })
+
+    // A scoped declaration only works if the catalog can route a row back to us,
+    // and it does that by `data.plugin` — which the loader stamps from this very
+    // name. A mismatch here would silently fall through to core's generic version.
+    if (scopedDetail.length) {
+      it.each(scopedDetail)('describes %s only for rows it produced', (key) => {
+        expect(Object.keys(plugin?.detail || {})).toContain(key)
+        expect(plugin?.name, 'a scoped detail needs a plugin name to match data.plugin against').toBeTruthy()
+      })
+    }
   })
 }

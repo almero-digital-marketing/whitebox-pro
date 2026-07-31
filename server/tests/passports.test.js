@@ -725,3 +725,103 @@ describe('POST /passports/link', () => {
     expect((await post({ passport_id: id, claims: [] })).status).toBe(400)
   })
 })
+
+// A person's lifecycle used to be almost entirely silent: `passport.created` fired
+// and then nothing ever again. Everything that actually happens to identity —
+// learning an email, merging two people, erasing one — left no trace in the feed,
+// only a log line. These are the entries an operator most wants to see.
+describe('lifecycle events', () => {
+  let notify
+  beforeEach(async () => {
+    notify = vi.fn(async () => {})
+    await init({ db, lock, config: {}, notify })
+  })
+  // Restore the shared harness so later suites aren't left with a stub.
+  afterAll(async () => { await init({ db, lock, config: {} }) })
+
+  const emitted = (type) => notify.mock.calls.filter(c => c[0] === type)
+
+  it('announces a newly learned identity, with its type but never its value', async () => {
+    const id = await identify(null)
+    notify.mockClear()
+    await link(id, [{ type: 'email', name: 'email', value: 'someone@example.com' }])
+
+    const [call] = emitted('passport.identified')
+    expect(call).toBeTruthy()
+    expect(call[1].data.passport_id).toBe(id)
+    expect(call[1].data.identities).toEqual([{ type: 'email', name: 'email' }])
+    // The firehose reaches any console client; the address itself lives behind
+    // /people/<id> and its own permission.
+    expect(JSON.stringify(call[1])).not.toContain('someone@example.com')
+  })
+
+  // link() runs on nearly every identify, inbound mail and answered call, and
+  // almost all of those just bump last_seen_at. Announcing them would bury the
+  // one that matters.
+  it('says nothing when the identity was already known', async () => {
+    const id = await identify(null)
+    await link(id, [{ type: 'email', name: 'email', value: 'dup@example.com' }])
+    notify.mockClear()
+    await link(id, [{ type: 'email', name: 'email', value: 'dup@example.com' }])
+    expect(emitted('passport.identified')).toHaveLength(0)
+  })
+
+  it('announces a merge, attributed to the survivor and naming the absorbed', async () => {
+    const survivor = await identify(null)
+    const absorbed = await identify(null)
+    notify.mockClear()
+    await merge(survivor, absorbed)
+
+    const [call] = emitted('passport.merged')
+    expect(call[1].data).toMatchObject({ passport_id: survivor, survivor_id: survivor, absorbed_id: absorbed })
+  })
+
+  it('says nothing when the merge was a no-op', async () => {
+    const id = await identify(null)
+    notify.mockClear()
+    await merge(id, id)          // same passport — merge() returns before doing anything
+    expect(emitted('passport.merged')).toHaveLength(0)
+  })
+
+  // Documenting real behaviour rather than asserting what I assumed: resolve()
+  // hands back an unknown id unchanged rather than proving the passport exists,
+  // so merge() treats a never-seen id as a real absorbed passport and records the
+  // alias. The event follows the merge, so it fires too. Whether merge() should
+  // reject an unknown absorbed id is a separate question about merge(), not about
+  // the event — and answering it here would hide it.
+  it('does announce a merge against an id that never existed, because merge() performs one', async () => {
+    const id = await identify(null)
+    notify.mockClear()
+    await merge(id, randomUUID())
+    expect(emitted('passport.merged')).toHaveLength(1)
+  })
+
+  // The erasure event carries NO passport id, anywhere. Recording "we erased X"
+  // against X defeats the erasure.
+  it('announces an erasure by what it removed, never by whom', async () => {
+    const id = await identify(null)
+    await link(id, [{ type: 'email', name: 'email', value: 'gone@example.com' }])
+    notify.mockClear()
+    await erase(id)
+
+    const [call] = emitted('passport.erased')
+    expect(call).toBeTruthy()
+    expect(call[1].data.rows).toBeGreaterThan(0)
+    expect(call[1].data.tables).toBeGreaterThan(0)
+    expect(call[1].data.passport_id).toBeUndefined()
+    expect(JSON.stringify(call[1])).not.toContain(id)
+  })
+
+  it('announces an unlink only when a row actually went', async () => {
+    const id = await identify(null)
+    await link(id, [{ type: 'email', name: 'email', value: 'drop@example.com' }])
+    const [row] = await identities(id)
+    notify.mockClear()
+
+    await unlink(id, row.id)
+    expect(emitted('passport.unlinked')).toHaveLength(1)
+
+    await unlink(id, row.id)            // already gone
+    expect(emitted('passport.unlinked')).toHaveLength(1)
+  })
+})

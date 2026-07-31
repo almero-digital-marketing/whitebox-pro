@@ -1,6 +1,8 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 
+import { collapse, urlPath } from 'whitebox-pro-server/event-format'
+
 import * as content from './content.js'
 import * as sections from './sections.js'
 import * as text from './text.js'
@@ -22,6 +24,33 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export function engagement(options = {}) {
   return {
     name: 'engagement',
+
+    // No `events` — we emit none, on purpose. A touch is recorded as AWARENESS
+    // rather than as its own event type, because emitting both would double-count
+    // one interaction in the traffic totals.
+    //
+    // But we still author those awareness rows, so we describe them. Core emits
+    // `awareness.recorded`; the payload is ours (see text.js / videos.js /
+    // images.js), and the catalog routes a row back to the plugin that produced
+    // it via `data.plugin`. Core's generic version is the fallback for rows from
+    // a plugin that declared nothing.
+    detail: {
+      'awareness.recorded': (d) => {
+        // WHAT was consumed — 'video' | 'text' | 'image' | 'section' | 'link' —
+        // is the distinction that only survives here, and it is the first thing
+        // you want to know.
+        const kind = d.source || null
+        // The real (already-redacted upstream) text beats an internal id every
+        // time: "text · verify-text-1" told an operator nothing where the
+        // sentence the person actually read was available.
+        const said = collapse(d.preview) || null
+        const where = urlPath(d.content_url) || d.content_id || null
+        // Dwell is the difference between "scrolled past" and "read it", and
+        // nothing else on the row carries it.
+        const dwell = d.dwell_ms ? `${Math.round(d.dwell_ms / 1000)}s` : null
+        return [kind, said || where, dwell].filter(Boolean).join(' · ') || null
+      },
+    },
 
     async migrate(db) {
       await db.migrate.latest({

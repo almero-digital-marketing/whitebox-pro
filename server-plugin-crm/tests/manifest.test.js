@@ -9,6 +9,9 @@ import { crm } from '../src/index.js'
 manifestSuite({
   plugin: crm({}),
   srcDir: new URL('../src', import.meta.url),
+  // `awareness.recorded` is core's event; we describe only the rows WE produced
+  // (the catalog routes by `data.plugin`). See docs/11-plugin-events.md.
+  scopedDetail: ['awareness.recorded'],
 })
 
 describe('crm event detail', () => {

@@ -55,6 +55,11 @@ export function createReporter({ networks = [], passports, logger, notify }) {
           event: eventName,
           event_id: canonical.event_id ?? null,
           passport_id: passportId,
+          // WHICH page. "tiktok · page_view" is unreadable on a busy feed —
+          // page_view of what? Taken from opts rather than added to `canonical`
+          // on purpose: canonical is what we transmit to Meta/TikTok/GA4, and
+          // this is for our own monitoring, not something to start sending them.
+          url: opts.url ?? null,
           // Present only on a failure — the reason is the whole value of the event.
           error: res.error ?? null,
         },
