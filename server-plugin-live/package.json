@@ -4,8 +4,7 @@
   "description": "WhiteBox server \u2014 live plugin. A realtime operations view of everything moving through WhiteBox: what arrives (web, replies, CRM, conversions), what leaves (mail, SMS, webhooks), and delivery health. Owns no tables; reads the core event registry and taps notify()'s firehose channel.",
   "type": "module",
   "exports": {
-    ".": "./src/index.js",
-    "./project": "./src/project.js"
+    ".": "./src/index.js"
   },
   "scripts": {
     "test": "vitest run"

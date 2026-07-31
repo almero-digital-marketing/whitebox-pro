@@ -65,10 +65,17 @@ const p = v => (typeof v === 'string' ? JSON.parse(v) : v) ?? null
 // the stored copy would make the log disagree with the bus while protecting
 // nothing.
 //
-// Deciding what a CLIENT may see is the transport's job, not the log's — see
-// server-plugin-live (feed rows carry a distilled `detail` and no payload at
-// all; its /events/log projects rather than dumping). That keeps the audit
-// record complete while nothing over-delivers to a browser.
+// Deciding what a CLIENT may see is the transport's job, not the log's. This
+// route is therefore the MACHINE seam and nothing else: gate it with a static
+// secret (see config.eventRegistry.auth) and do not re-serve it to a browser.
+//
+// Said plainly because the previous version of this comment claimed a projection
+// was in place — "see server-plugin-live, its /events/log projects rather than
+// dumping" — and that route was never in live. A reader auditing the log's safety
+// found a sentence saying it was handled. The scrubber it referred to has been
+// removed along with the browser route that used it; the surface a browser gets is
+// server-plugin-live's feed, whose rows carry a distilled one-line `detail` and no
+// payload at all.
 export async function record(type, payload) {
   await db(TABLE).insert({
     id: randomUUID(), type, data: JSON.stringify(payload ?? null),

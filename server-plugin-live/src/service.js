@@ -630,8 +630,14 @@ export function toFeedRow(row) {
     // of retained objects in the browser, and it shipped again on every socket
     // frame. `detail` is the distilled form the UI actually shows.
     //
-    // If a payload inspector is ever wanted, fetch one on demand by id
-    // (/events/log carries the full payload) rather than pushing every payload
-    // to every client for the one row someone might expand.
+    // If a payload inspector is ever wanted, it needs a route of its own with a
+    // deliberate answer to "which fields may a browser see" — NOT a passthrough of
+    // core's /internal/events/log, which serves payloads verbatim behind a static
+    // machine token precisely because it is not browser-facing. A scrubber for this
+    // used to live in this package (src/project.js) and was removed: a hand-kept
+    // list of other plugins' column names drifted behind them, missing mail's
+    // `body_html` and voip's `link`. Whatever replaces it should read a declaration
+    // from the plugins that own those fields, the way direction/channel/detail
+    // already do (server/src/event-catalog.js).
   }
 }
