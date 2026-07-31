@@ -318,7 +318,37 @@ export async function merge(survivorId, absorbedId) {
         }
       }
 
-      // 4. Record the alias so resolve() forwards absorbed → survivor. The
+      // 4. The survivor's own dates. Everything else about the absorbed passport
+      //    moves; these two are the survivor's own columns, so without this step
+      //    they keep describing only half the person.
+      //
+      //    `created_at` becomes the EARLIER of the two. It is read as "first seen"
+      //    (see get() and search()), and after a merge that answer is wrong in a way
+      //    nobody would question: the survivor's row was minted whenever its browser
+      //    first appeared, while the person it absorbed may have been known for
+      //    months. On this dev database one person read "first seen 31/07" with a
+      //    session from 08/07 — three weeks of history the record denied.
+      //
+      //    `last_seen_at` becomes the LATER, for the same reason in the other
+      //    direction: merging an id that was active more recently than the survivor
+      //    would otherwise leave the survivor looking stale until their next
+      //    identify(), which for a dormant person may be never.
+      const [surv, abs] = await Promise.all([
+        trx(PASSPORTS).where({ id: survivorId }).first(),
+        trx(PASSPORTS).where({ id: absorbedId }).first(),
+      ])
+      const earliest = (a, b) => (a && b ? (new Date(a) <= new Date(b) ? a : b) : (a || b))
+      const latest   = (a, b) => (a && b ? (new Date(a) >= new Date(b) ? a : b) : (a || b))
+      const dates = {}
+      const createdAt = earliest(surv?.created_at, abs?.created_at)
+      const lastSeenAt = latest(surv?.last_seen_at, abs?.last_seen_at)
+      // Only write what actually changes — a merge of two same-day passports should
+      // not touch the row at all.
+      if (createdAt && String(createdAt) !== String(surv?.created_at)) dates.created_at = createdAt
+      if (lastSeenAt && String(lastSeenAt) !== String(surv?.last_seen_at)) dates.last_seen_at = lastSeenAt
+      if (Object.keys(dates).length) await trx(PASSPORTS).where({ id: survivorId }).update(dates)
+
+      // 5. Record the alias so resolve() forwards absorbed → survivor. The
       //    absorbed passport row stays (now childless) — we do NOT delete it.
       await trx(MERGES).insert({ absorbed_id: absorbedId, survivor_id: survivorId })
     })

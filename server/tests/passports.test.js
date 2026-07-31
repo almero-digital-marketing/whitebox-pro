@@ -825,3 +825,65 @@ describe('lifecycle events', () => {
     expect(emitted('passport.unlinked')).toHaveLength(1)
   })
 })
+
+// Everything else about the absorbed passport moves on merge; `created_at` and
+// `last_seen_at` are the SURVIVOR's own columns, so without carrying them the
+// record describes half the person. `created_at` is read as "first seen", and on
+// the dev database one person read "first seen 31/07" while holding a session from
+// 08/07 — three weeks of history the record denied.
+describe('merge carries the survivor dates', () => {
+  const daysAgo = (n) => new Date(Date.now() - n * 86_400_000)
+
+  it('takes the EARLIER created_at, so first-seen covers the whole person', async () => {
+    const survivor = await identify(null)
+    const absorbed = await identify(null)
+    await db('whitebox_passports').where({ id: survivor }).update({ created_at: daysAgo(2) })
+    await db('whitebox_passports').where({ id: absorbed }).update({ created_at: daysAgo(90) })
+
+    await merge(survivor, absorbed)
+
+    const row = await db('whitebox_passports').where({ id: survivor }).first()
+    expect(new Date(row.created_at).getTime()).toBeCloseTo(daysAgo(90).getTime(), -4)
+  })
+
+  // The other direction, and the reason it matters: merging an id that was active
+  // more recently would otherwise leave the survivor looking stale until their next
+  // identify() — which for a dormant person may be never.
+  it('takes the LATER last_seen_at', async () => {
+    const survivor = await identify(null)
+    const absorbed = await identify(null)
+    await db('whitebox_passports').where({ id: survivor }).update({ last_seen_at: daysAgo(30) })
+    await db('whitebox_passports').where({ id: absorbed }).update({ last_seen_at: daysAgo(1) })
+
+    await merge(survivor, absorbed)
+
+    const row = await db('whitebox_passports').where({ id: survivor }).first()
+    expect(new Date(row.last_seen_at).getTime()).toBeCloseTo(daysAgo(1).getTime(), -4)
+  })
+
+  it('leaves the survivor alone when it is already the earlier/later of the two', async () => {
+    const survivor = await identify(null)
+    const absorbed = await identify(null)
+    await db('whitebox_passports').where({ id: survivor }).update({ created_at: daysAgo(90), last_seen_at: daysAgo(1) })
+    await db('whitebox_passports').where({ id: absorbed }).update({ created_at: daysAgo(2), last_seen_at: daysAgo(30) })
+    const before = await db('whitebox_passports').where({ id: survivor }).first()
+
+    await merge(survivor, absorbed)
+
+    const after = await db('whitebox_passports').where({ id: survivor }).first()
+    expect(String(after.created_at)).toBe(String(before.created_at))
+    expect(String(after.last_seen_at)).toBe(String(before.last_seen_at))
+  })
+
+  // get() is what the People page renders, so assert the fix reaches it rather than
+  // only the row.
+  it('reports the corrected first-seen through get()', async () => {
+    const survivor = await identify(null)
+    const absorbed = await identify(null)
+    await db('whitebox_passports').where({ id: absorbed }).update({ created_at: daysAgo(120) })
+    await merge(survivor, absorbed)
+
+    const person = await get(survivor)
+    expect(new Date(person.created_at).getTime()).toBeCloseTo(daysAgo(120).getTime(), -4)
+  })
+})
