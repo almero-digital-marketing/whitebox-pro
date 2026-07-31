@@ -473,27 +473,18 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                   <span class="lv-srow-top">
                     <!-- Same `.lv-srow-k` label tier as every other row in this pane —
                          the id is the row's NAME, not a value, so it reads at the tier
-                         a name reads at. The icon marks it as a person without needing
-                         the heading to be read first.
-                         Plain text, not a link: the two actions are icon buttons on the
-                         right, where every other row in this pane puts its control. An
-                         id that was ALSO a link gave "open this person" two targets. -->
-                    <span class="lv-srow-k lv-person-id">
+                         a name reads at.
+                         The ID ITSELF is the link to their record, rather than plain
+                         text beside an icon button that does the same thing: the id is
+                         what you want to click, it is already the widest target in the
+                         row, and a link is what "go somewhere" should be. That leaves
+                         one control per action — this navigates, the × clears. -->
+                    <RouterLink class="lv-srow-k lv-person-id" :to="`/people/${feedPassport}`"
+                      v-tooltip.top="'Open this person in People'">
                       <span class="material-symbols-outlined">person</span>{{ short(feedPassport) }}
-                    </span>
+                    </RouterLink>
                   </span>
                 </span>
-                <!-- Open their record. The People module's OWN icon
-                     (shell/modules.ts), not a generic arrow, so it names where the
-                     link goes and matches the sidebar entry it lands on. This is
-                     where it belongs rather than on every feed row: by the time this
-                     row exists you have picked a person, and "who are they?" is the
-                     next question rather than a target to miss while scanning. -->
-                <RouterLink :to="`/people/${feedPassport}`" class="lv-person-open"
-                  v-tooltip.top="'Open this person in People'"
-                  aria-label="Open this person in People">
-                  <span class="material-symbols-outlined">contacts</span>
-                </RouterLink>
                 <!-- The app's icon-button pattern for "remove this" — same
                      `text rounded small secondary` + `close` glyph as the query
                      builder's condition row, People's selection chips and Audiences'
