@@ -326,26 +326,18 @@
 .lv-ev-detail { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-ev-detail.muted { color: var(--muted); }
 .lv-ev-ch { color: var(--muted); }
-/* The passport cell holds two controls in one grid column (the feed row is a
-   subgrid): the id SCOPES the board to that person, the arrow opens their record.
-   flex-grow on the id, fixed on the arrow — the id truncates, the affordance
-   never does. */
-.lv-ev-who-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
-/* `0 1 auto`, NOT `1 1 auto`: the id must shrink (a long one still ellipsises) but
-   must not GROW. Growing made it absorb the column's spare width and shove the icon
-   out to the far edge, leaving a gap that read as two unrelated controls rather than
-   an id with its own link. */
+/* The passport cell is ONE control now: the id scopes the board to that person.
+   Opening their record moved to the Person filter in the right pane — see the note
+   in Live.vue. So no wrapper and no flex here; the button IS the grid cell. */
 .lv-ev-who { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none;
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   background: none; border: none; padding: 0; font-size: inherit; text-align: left; cursor: pointer; }
 .lv-ev-who:hover { text-decoration: underline; }
 .lv-ev-who.muted { color: var(--muted); }
 /* Scoped to this person: the row you clicked stays visibly the reason the board
    narrowed, so the way out is where the way in was. */
 .lv-ev-who.on { font-weight: 700; text-decoration: underline; }
-.lv-ev-open { flex: 0 0 auto; color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; }
-.lv-ev-open .material-symbols-outlined { font-size: 15px; line-height: 1; }
-.lv-ev-open:hover { color: var(--accent); }
+
 
 /* The active person scope, in the filter pane's own row shape so it reads as one
    more filter rather than a special case.
@@ -360,6 +352,14 @@
 /* 13px + a nudge, matching how `.lv-srow.bad` already sizes an inline glyph beside
    this same label tier — so the two icons in this pane sit on the same baseline. */
 .lv-person-id .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--muted); }
+
+/* "Open in People", beside the clear button. A RouterLink rather than a Button
+   because it NAVIGATES — but sized and coloured to sit level with the PrimeVue icon
+   button next to it, so the pair reads as two controls of the same kind. */
+.lv-person-open { display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted); text-decoration: none; padding: 4px; border-radius: 50%; }
+.lv-person-open:hover { color: var(--accent); background: var(--panel-2); }
+.lv-person-open .material-symbols-outlined { font-size: 16px; line-height: 1; }
 
 /* The pool sits under the three channel rows, separated like they are, and
    reuses the .lv-bar track from the direction cards — a gauge is a gauge. */

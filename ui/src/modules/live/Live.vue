@@ -388,28 +388,20 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <span class="lv-ev-ch">{{ e.channel }}</span>
           <!-- a deep link out, so the firehose is a starting point rather than
                a dead end -->
-          <!-- Click SCOPES the board to this person; the arrow opens their record.
-               Two actions, two targets, because they are genuinely different
-               intents: "what else did they just do" is answered here, in context,
-               while "who are they" is a page away. Making the id itself the filter
-               puts the common one under the cursor already on it. -->
-          <!-- ONE grid cell: the feed row is a subgrid with a fixed column count,
-               so both controls live inside it rather than as siblings. -->
-          <span v-if="e.passport_id" class="lv-ev-who-cell">
-            <button type="button" class="lv-ev-who"
-              :class="{ on: feedPassport === e.passport_id }"
-              :title="feedPassport === e.passport_id
-                ? 'Showing only this person — click to clear'
-                : 'Show only this person'"
-              @click="store.togglePassport(e.passport_id)">{{ short(e.passport_id) }}</button>
-            <!-- The People module's own icon (shell/modules.ts), not a generic
-                 arrow — it says WHERE the link goes, and matches the sidebar
-                 entry it lands on. -->
-            <RouterLink class="lv-ev-open" :to="`/people/${e.passport_id}`"
-              title="Open this person in People">
-              <span class="material-symbols-outlined">contacts</span>
-            </RouterLink>
-          </span>
+          <!-- ONE action per row: scope the board to this person. Opening their
+               record used to sit here too, as a second control in the same cell —
+               but it is the rarer intent, and a feed row is scanned rather than
+               read, so two targets a few pixels apart in a 20px-high row is a
+               misclick waiting to happen. It moved to the Person filter in the
+               right pane, which only exists once you HAVE picked someone: by then
+               you have committed to them, which is exactly when "who are they?"
+               becomes the question. -->
+          <button v-if="e.passport_id" type="button" class="lv-ev-who"
+            :class="{ on: feedPassport === e.passport_id }"
+            :title="feedPassport === e.passport_id
+              ? 'Showing only this person — click to clear'
+              : 'Show only this person'"
+            @click="store.togglePassport(e.passport_id)">{{ short(e.passport_id) }}</button>
           <span v-else class="lv-ev-who muted">—</span>
         </li>
         <!-- Three different empty states, because they mean three different
@@ -482,13 +474,26 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                     <!-- Same `.lv-srow-k` label tier as every other row in this pane —
                          the id is the row's NAME, not a value, so it reads at the tier
                          a name reads at. The icon marks it as a person without needing
-                         the heading to be read first. -->
-                    <RouterLink class="lv-srow-k lv-person-id" :to="`/people/${feedPassport}`"
-                      title="Open this person in People">
+                         the heading to be read first.
+                         Plain text, not a link: the two actions are icon buttons on the
+                         right, where every other row in this pane puts its control. An
+                         id that was ALSO a link gave "open this person" two targets. -->
+                    <span class="lv-srow-k lv-person-id">
                       <span class="material-symbols-outlined">person</span>{{ short(feedPassport) }}
-                    </RouterLink>
+                    </span>
                   </span>
                 </span>
+                <!-- Open their record. The People module's OWN icon
+                     (shell/modules.ts), not a generic arrow, so it names where the
+                     link goes and matches the sidebar entry it lands on. This is
+                     where it belongs rather than on every feed row: by the time this
+                     row exists you have picked a person, and "who are they?" is the
+                     next question rather than a target to miss while scanning. -->
+                <RouterLink :to="`/people/${feedPassport}`" class="lv-person-open"
+                  v-tooltip.top="'Open this person in People'"
+                  aria-label="Open this person in People">
+                  <span class="material-symbols-outlined">contacts</span>
+                </RouterLink>
                 <!-- The app's icon-button pattern for "remove this" — same
                      `text rounded small secondary` + `close` glyph as the query
                      builder's condition row, People's selection chips and Audiences'
