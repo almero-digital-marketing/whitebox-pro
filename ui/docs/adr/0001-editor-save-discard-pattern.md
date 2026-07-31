@@ -86,11 +86,23 @@ Rules this encodes:
      below except the two `.save-bar` rows in Users.vue uses this variant.
 7. **A right-pane row (a secondary/side pane, not the center pane) always
    uses the `.actions`/`.b-actions` variant, never `.save-bar`, and its
-   buttons never carry an icon.** Spacing is `margin-top: 16px`,
-   `padding-top: 14px`, `gap: 10px` (copy these verbatim; see
-   `.usr-side .b-actions` or `.ppl-console .b-actions` for the override
-   shape when the row lives inside a scrolling/accordion container rather
-   than a fixed-height pane). Icons are dropped in this variant even where
+   buttons never carry an icon.** Spacing is **one 12px separation above
+   the row** and `gap: 10px` (see `.usr-side .b-actions` or
+   `.ppl-console .b-actions` for the override shape when the row lives
+   inside a scrolling/accordion container rather than a fixed-height
+   pane). Where the container is a flex column that already has a gap —
+   People's `.p-form`, at 12px — the row adds NOTHING and the gap is the
+   separation; elsewhere the row carries `margin-top: 12px` itself.
+
+   This used to read `margin-top: 16px, padding-top: 14px`, inherited
+   wholesale from the center-pane variant. There the padding is the space
+   between the border and the buttons; here, with the border dropped (see
+   below), it is simply a second margin. Nothing subtracted it, so the row
+   sat 30px below the last field — and 42px in People, where `.p-form`'s
+   own 12px gap stacked on top — while the fields sat 12px apart. 12px is
+   the rhythm every right pane already uses for its fields, and an action
+   row is not a different KIND of spacing, just the last row. Applied to
+   `.ppl-console`, `.usr-side` and `.jrn-accordion`. Icons are dropped in this variant even where
    the equivalent center-pane button has one (compare
    `.usr-doc .b-actions`'s Save, which has a check icon, against
    `.usr-side .b-actions`'s Publish, which doesn't) — the row's position

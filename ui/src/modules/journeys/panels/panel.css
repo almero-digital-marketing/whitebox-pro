@@ -60,6 +60,10 @@
    below, so this was a second line doing the same job — and in the Node editor,
    whose panels end with a hint paragraph, it put three horizontal rules into one
    small box. `margin-top` alone separates the buttons from the fields. */
-.jrn-accordion .b-actions { height: auto; padding: 14px 0 0; margin-top: 16px; border-top: none; }
+/* One 12px separation, matching People and Users — see ADR-0001 rule 7, amended.
+   `padding: 14px 0 0` is the bordered centre-pane variant's gap between the rule
+   and the buttons; with no rule it is simply more margin, and stacked with
+   margin-top it put 30px above a row the fields sit 12px apart from. */
+.jrn-accordion .b-actions { height: auto; padding: 0; margin-top: 12px; border-top: none; }
 .jrn-accordion .b-actions > .p-button { flex-shrink: 0; }
 .jrn-accordion .save-note { flex: 1 1 auto; min-width: 0; margin-right: 0; }

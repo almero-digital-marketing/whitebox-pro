@@ -457,8 +457,11 @@ function fmtDateTime(iso?: string) {
    room) instead of the :first-child margin trick above — Discard/Publish are
    flex-shrink:0 and must never wrap their own label (see
    docs/adr/0001-editor-save-discard-pattern.md rule 9). */
-/* No border-top — see ADR-0001 rule 7, amended, and the note in People's panel.css. */
-.usr-side .b-actions { margin-top: 16px; padding-top: 14px; border-top: none; }
+/* No border-top — see ADR-0001 rule 7, amended, and the note in People's panel.css.
+   One 12px separation, not margin 16 + padding 14 stacked to 30: the padding is
+   the bordered variant's rule-to-button gap and means nothing without the rule.
+   12px is the field rhythm every right pane uses (People's `.p-form` gap). */
+.usr-side .b-actions { margin-top: 12px; padding-top: 0; border-top: none; }
 .usr-side .b-actions > .p-button { flex-shrink: 0; }
 .usr-side .save-note { flex: 1 1 auto; min-width: 0; margin-right: 0; }
 /* same empty state as Analytics' Board.vue */

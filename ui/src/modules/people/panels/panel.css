@@ -56,7 +56,22 @@
    `border-top: none` EXPLICITLY, not just an omitted declaration: journeys'
    panels/panel.css declares a bare, unscoped `.b-actions { border-top: … }` that
    applies app-wide, so dropping it here only let that one through. */
-.ppl-console .b-actions { display: flex; align-items: center; gap: 10px; height: auto; margin-top: 16px; padding: 14px 0 0; border-top: none; }
+/* ONE 12px separation above the row, not two stacked. This carried margin-top
+   16px AND padding-top 14px — both inherited from the bordered centre-pane
+   variant, where the padding is the space between the rule and the buttons.
+   With no border the padding is simply a second margin, so the buttons sat 30px
+   below the last field (42px inside `.p-form`, whose own gap made it three)
+   while the fields sat 12px apart. */
+.ppl-console .b-actions { display: flex; align-items: center; gap: 10px; height: auto; margin-top: 12px; padding: 0; border-top: none; }
+/* …and nothing at all inside `.p-form`, whose own 12px gap already IS that
+   separation — without this the two would stack right back up to 24px. Exactly
+   the correction `.p-form > .save-bar` makes below, in the other direction.
+   Kept as a separate rule rather than just zeroing the margin above, because
+   the rule above is `.ppl-console`-wide and a right-pane row outside a form
+   would then have no separation at all. (The module's other `.b-actions` are
+   the centre pane's pinned `.ppl-foot` footers, which zero their own margin
+   and are unaffected either way.) */
+.ppl-console .p-form > .b-actions { margin-top: 0; }
 .ppl-console .b-actions > .p-button { flex-shrink: 0; }
 /* ADR rule 6's other variant, values copied from Users.vue: no border of its
    own, for a row that's FOLLOWED by a section which already draws one (here the
