@@ -20,9 +20,13 @@ import AccordionPanel from 'primevue/accordionpanel'
 import AccordionHeader from 'primevue/accordionheader'
 import AccordionContent from 'primevue/accordioncontent'
 import TrafficStrip from './components/TrafficStrip.vue'
+import { useRouter } from 'vue-router'
 import './live.css'
 
 const store = useLiveStore()
+// For the "Person details" button — a labelled action, so it pushes rather than
+// being a RouterLink. Same pattern as shell/views/NoAccess.vue.
+const router = useRouter()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
   feedChanModes, feedPassport, directionCounts, channelCounts, feedFiltered,
   feedView, feedCounts,
@@ -466,23 +470,20 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                  empty. Putting it under Window and Channel meant the answer to "why
                  am I seeing this" sat below two lists you had to scroll past. Absent
                  entirely when nothing is scoped, so it costs no space by default. -->
-            <div v-if="feedPassport" class="lv-sgroup">
+            <div v-if="feedPassport" class="lv-sgroup lv-scope">
               <div class="lv-sgroup-head"><span class="lv-dl-ch">Person</span></div>
               <div class="lv-srow">
                 <span class="lv-srow-t">
                   <span class="lv-srow-top">
                     <!-- Same `.lv-srow-k` label tier as every other row in this pane —
                          the id is the row's NAME, not a value, so it reads at the tier
-                         a name reads at.
-                         The ID ITSELF is the link to their record, rather than plain
-                         text beside an icon button that does the same thing: the id is
-                         what you want to click, it is already the widest target in the
-                         row, and a link is what "go somewhere" should be. That leaves
-                         one control per action — this navigates, the × clears. -->
-                    <RouterLink class="lv-srow-k lv-person-id" :to="`/people/${feedPassport}`"
-                      v-tooltip.top="'Open this person in People'">
+                         a name reads at. Plain text: it identifies WHO is selected,
+                         and the one thing you can do about it is a labelled button of
+                         its own below. An id that was also a click target had to be
+                         guessed at; a button that says "Person details" does not. -->
+                    <span class="lv-srow-k lv-person-id">
                       <span class="material-symbols-outlined">person</span>{{ short(feedPassport) }}
-                    </RouterLink>
+                    </span>
                   </span>
                 </span>
                 <!-- The app's icon-button pattern for "remove this" — same
@@ -496,6 +497,16 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                   @click="store.togglePassport(null)">
                   <template #icon><span class="material-symbols-outlined">close</span></template>
                 </Button>
+              </div>
+              <!-- Outside the row, and LABELLED. The row says who is selected; going
+                   to their record is a separate thing you do about it, so it gets the
+                   pane's own action-row treatment (`.save-bar`, ADR-0001 rule 6 —
+                   right-aligned, no border-top because the next section draws one).
+                   `router.push` rather than a RouterLink because this is a button, the
+                   same way shell/views/NoAccess.vue navigates. -->
+              <div class="save-bar">
+                <Button label="Person details" size="small" outlined severity="secondary"
+                  @click="router.push(`/people/${feedPassport}`)" />
               </div>
             </div>
 

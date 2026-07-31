@@ -70,6 +70,14 @@
    No rule between groups: the uppercase heading already separates them, and thirteen
    hairlines down a narrow pane added structure the content didn't need. */
 .lv-sgroup + .lv-sgroup { margin-top: 12px; }
+/* The person scope is the one group that comes and goes, so it gets a rule beneath
+   it rather than relying on the 12px margin every other group is separated by. It
+   is a different KIND of filter from the two below it — one specific person, set
+   from a feed row, versus the axes that are always there — and without a divider
+   it read as the first item in a single long list. Drawn on the group itself so it
+   appears and disappears with the section; `--border` is the pane's own divider
+   weight (the accordion headers use it). */
+.lv-sgroup.lv-scope { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
 .lv-sgroup-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 
 /* The toggle row, the same object as analytics' CompareSection (`.lab.row` +
@@ -347,8 +355,7 @@
    and the icon's alignment. Setting a size or colour here is what makes a pane end
    up with three label tiers. */
 .lv-person-id { display: inline-flex; align-items: center; gap: 5px;
-  font-family: ui-monospace, monospace; text-decoration: none; color: var(--accent); }
-.lv-person-id:hover { text-decoration: underline; }
+  font-family: ui-monospace, monospace; }
 /* 13px + a nudge, matching how `.lv-srow.bad` already sizes an inline glyph beside
    this same label tier — so the two icons in this pane sit on the same baseline. */
 .lv-person-id .material-symbols-outlined { font-size: 13px; vertical-align: -2px; color: var(--muted); }
