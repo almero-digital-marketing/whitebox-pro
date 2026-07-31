@@ -296,11 +296,18 @@
    rows inherit them makes `max-content` mean "the longest type in the list",
    which is what it was always meant to say.
    The detail/bar column still takes every pixel the fixed ones don't need. */
-/* The last column carries the passport id AND the open-in-People icon, so it is
-   wider than the id alone needs: at 76px the icon pushed an 8-character
-   monospace id into an ellipsis on every row. */
-.lv-feed.is-list { display: grid; grid-template-columns: 16px 74px minmax(90px, max-content) minmax(0, 1fr) 66px 100px; align-content: start; }
-.lv-feed.is-count { display: grid; grid-template-columns: 16px minmax(90px, max-content) minmax(0, 1fr) 66px 56px; align-content: start; }
+/* Every column is sized to its CONTENT except the one that should absorb the slack.
+   No pixel widths: each was a guess about text nobody measured, and each was wrong
+   in one direction or the other — 76px ellipsised an 8-character passport id once
+   the People icon shared the column, 100px then left a strip of dead space after
+   it, and 66px for the channel is a bet that no channel name is longer than
+   "adnetwork". `max-content` is exactly the widest cell in the column and stays
+   right when a name, a glyph or a timestamp format changes.
+   The detail column keeps `minmax(0, 1fr)`: it takes whatever is left and truncates
+   with an ellipsis, which is the one place a hard limit belongs — it's the only
+   column whose content has no natural width. */
+.lv-feed.is-list { display: grid; grid-template-columns: max-content max-content max-content minmax(0, 1fr) max-content max-content; align-content: start; }
+.lv-feed.is-count { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content; align-content: start; }
 .lv-ev, .lv-agg { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1;
   align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
 /* an empty state is a sentence, not a row of columns */
