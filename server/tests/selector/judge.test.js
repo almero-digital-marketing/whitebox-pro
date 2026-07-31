@@ -82,4 +82,26 @@ describe('selector judge (LLM predicate)', () => {
     const res = await selector.resolve({ about: 'x', judge: { criteria: 'x', confidence: 0.7 } }, { projection: 'people' })
     expect(ids(res)).toEqual([c])
   })
+
+  // The system prompt tells the model to decide "based ONLY on the evidence
+  // provided", so an empty evidence list is a question with no admissible
+  // answer — asking anyway invites the invention the prompt forbids, and pays a
+  // token round trip for it. Matters most where a judge decides one person:
+  // journeys' branch step sends this straight down its No path.
+  it('does not ask the model about a candidate with no evidence', async () => {
+    const { a, c } = await proFreePro()
+    aboutMap['x'] = [a, c]
+    verdictMap[a] = { match: true, score: 1, reason: 'would have matched' }
+    verdictMap[c] = { match: true, score: 1, reason: 'would have matched' }
+    const withEvidence = awareness.recall
+    awareness.recall = async ({ passport_id }) =>
+      (passport_id === a ? [] : [{ channel: 'web', direction: 'expression', text: passport_id }])
+    try {
+      const res = await selector.resolve({ about: 'x', judge: { criteria: 'x', confidence: 0.7 } }, { projection: 'people' })
+      expect(ids(res)).toEqual([c])   // `a` never reached the model
+      expect(aiCalls).toBe(1)
+    } finally {
+      awareness.recall = withEvidence
+    }
+  })
 })

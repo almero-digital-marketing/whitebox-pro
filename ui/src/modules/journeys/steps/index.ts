@@ -98,9 +98,16 @@ export const STEP_KINDS: Record<string, StepKind> = {
   branch: {
     icon: 'alt_route',
     label: 'Branch',
-    description: 'Splits the flow into Yes/No paths based on an audience match or a filter condition.',
-    defaultConfig: () => ({ condition: { audience_id: '' } }),
-    summary: (c) => (c.condition?.audience_id ? 'by audience' : c.condition?.filter ? 'by filter' : 'no condition set'),
+    description: 'Splits the flow into Yes/No paths on a judge — a question about the person, answered yes/no — or on an audience match or filter condition.',
+    // Judge leads, so a new branch opens on the first tab rather than the
+    // second. Like the `{ audience_id: '' }` it replaces, this is deliberately
+    // incomplete — an empty criteria fails validation exactly as an empty
+    // audience id did, because a branch with no condition is not saveable
+    // either way.
+    defaultConfig: () => ({ condition: { judge: { criteria: '' } } }),
+    summary: (c) => (c.condition?.judge?.criteria ? 'by judge'
+      : c.condition?.audience_id ? 'by audience'
+        : c.condition?.filter ? 'by filter' : 'no condition set'),
     editor: BranchEditor,
   },
   set_fact: {

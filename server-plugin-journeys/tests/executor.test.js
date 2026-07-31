@@ -155,6 +155,56 @@ describe('runBranch — filter condition (non-audience)', () => {
   })
 })
 
+// The judge is the one branch condition that can fail to produce an answer, and
+// the one that costs money per enrollment. Both are behaviours, not incidents.
+describe('runBranch — judge condition', () => {
+  const JUDGE = { criteria: 'Has this person shown interest in booking?', confidence: 0.7 }
+  const graph = () => makeJourneyRow({
+    a: { kind: 'branch', config: { condition: { judge: JUDGE } }, on_true: 'b', on_false: 'c' },
+    b: { kind: 'exit', config: { reason: 'matched' } },
+    c: { kind: 'exit', config: { reason: 'no-match' } },
+  })
+  const enrollment = id => ({ id, journey_id: 'j1', passport_id: 'p20', status: 'active', current_step_id: 'a', context: '{}' })
+
+  // Scoped to ONE passport — the whole reason a judge is affordable in a branch
+  // when it isn't in an audience. A regression here is a cost bug, not a logic one.
+  it('asks the judge about only this passport and takes on_true when confirmed', async () => {
+    const selector = { resolve: vi.fn(async () => ({ count: 1, passports: [{ id: 'p20', score: 0.9, why: 'asked about prices twice' }] })) }
+    const h = makeHarness({ journeyRow: graph(), enrollment: enrollment('enrJ1'), deps: { selector } })
+    await executor.processStep('enrJ1')
+    expect(selector.resolve).toHaveBeenCalledWith({ judge: JUDGE }, { projection: 'people', scope: ['p20'] })
+    expect(h.enrollments.get('enrJ1').exit_reason).toBe('matched')
+  })
+
+  it('records the verdict on the step run, so a branch can be explained after the fact', async () => {
+    const selector = { resolve: vi.fn(async () => ({ count: 1, passports: [{ id: 'p20', score: 0.91, why: 'asked about prices twice' }] })) }
+    const h = makeHarness({ journeyRow: graph(), enrollment: enrollment('enrJ2'), deps: { selector } })
+    await executor.processStep('enrJ2')
+    const run = h.stepRuns.find(s => s.kind === 'branch')
+    expect(JSON.parse(run.result).verdict).toMatchObject({ match: true, score: 0.91, reason: 'asked about prices twice' })
+  })
+
+  it('takes on_false when the judge does not confirm', async () => {
+    const selector = { resolve: vi.fn(async () => ({ count: 0, passports: [] })) }
+    const h = makeHarness({ journeyRow: graph(), enrollment: enrollment('enrJ3'), deps: { selector } })
+    await executor.processStep('enrJ3')
+    expect(h.enrollments.get('enrJ3').exit_reason).toBe('no-match')
+    expect(JSON.parse(h.stepRuns.find(s => s.kind === 'branch').result).verdict).toMatchObject({ match: false })
+  })
+
+  // The important one. A model call can fail for structural reasons (no API key,
+  // a revoked one) that retrying cannot fix, and on_true is the side that
+  // usually sends something — so an unanswered question must not become a yes.
+  it('takes on_false and records the error when the judge cannot be reached', async () => {
+    const selector = { resolve: vi.fn(async () => { throw new Error('AI provider not configured') }) }
+    const h = makeHarness({ journeyRow: graph(), enrollment: enrollment('enrJ4'), deps: { selector } })
+    await executor.processStep('enrJ4')
+    expect(h.enrollments.get('enrJ4').exit_reason).toBe('no-match')
+    const verdict = JSON.parse(h.stepRuns.find(s => s.kind === 'branch').result).verdict
+    expect(verdict).toMatchObject({ match: false, error: 'AI provider not configured' })
+  })
+})
+
 describe('runWait', () => {
   it('computes wait_until from a relative duration', async () => {
     const journeyRow = makeJourneyRow({ a: { kind: 'wait', config: { duration_ms: 2 * 3_600_000 }, next: 'b' }, b: { kind: 'exit', config: {} } })

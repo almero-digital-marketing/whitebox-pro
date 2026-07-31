@@ -134,6 +134,40 @@ describe('per-kind step config gates', () => {
     expect(StepsGraph.safeParse(graph).success).toBe(false)
   })
 
+  // `judge` is the third, mutually exclusive condition kind — an LLM verdict on
+  // one person rather than a lookup.
+  const branchWith = condition => ({ entry: 'a', nodes: { a: { kind: 'branch', config: { condition }, on_true: 'a', on_false: 'a' } } })
+
+  it('accepts a branch condition that is a judge, with confidence left out', () => {
+    const res = StepsGraph.safeParse(branchWith({ judge: { criteria: 'Are they ready to book?' } }))
+    expect(res.success).toBe(true)
+    // Deliberately NOT defaulted here. StepConfig is checked inside StepsGraph's
+    // superRefine, which reports issues and discards the parsed value, so any
+    // `.default()` on a step config field would be inert — the raw config is
+    // what gets stored. The effective default is selector.judge.evaluate's 0.7.
+    expect(res.data.nodes.a.config.condition.judge.confidence).toBeUndefined()
+  })
+
+  it('keeps an explicit confidence', () => {
+    const res = StepsGraph.safeParse(branchWith({ judge: { criteria: 'Ready?', confidence: 0.9 } }))
+    expect(res.data.nodes.a.config.condition.judge.confidence).toBe(0.9)
+  })
+
+  it('rejects an empty judge criteria — the criteria IS the prompt', () => {
+    expect(StepsGraph.safeParse(branchWith({ judge: { criteria: '' } })).success).toBe(false)
+  })
+
+  it('rejects a confidence outside 0..1', () => {
+    expect(StepsGraph.safeParse(branchWith({ judge: { criteria: 'Ready?', confidence: 1.5 } })).success).toBe(false)
+  })
+
+  // Mutually exclusive with BOTH others: the engine runs filter then judge, so a
+  // branch carrying both would look like an AND the editor never offered.
+  it('rejects a branch condition combining judge with filter or audience', () => {
+    expect(StepsGraph.safeParse(branchWith({ judge: { criteria: 'Ready?' }, filter: { fact: { vip: { eq: true } } } })).success).toBe(false)
+    expect(StepsGraph.safeParse(branchWith({ judge: { criteria: 'Ready?' }, audience_id: '11111111-1111-4111-8111-111111111111' })).success).toBe(false)
+  })
+
   it('accepts a valid webhook step', () => {
     const graph = { entry: 'a', nodes: { a: { kind: 'webhook', config: { url: 'https://example.com/hook' }, next: 'b' }, b: { kind: 'exit', config: {} } } }
     expect(StepsGraph.safeParse(graph).success).toBe(true)

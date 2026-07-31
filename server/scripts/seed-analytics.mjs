@@ -515,7 +515,13 @@ const journeyDefs = (audienceId, campaignIds, listId) => [
         e1: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.email }, next: 'e2', position: { x: 40, y: 40 } },
         e2: { kind: 'trigger_campaign', config: { campaign_id: campaignIds.sms }, next: 'e3', position: { x: 40, y: 190 } },
         e3: { kind: 'wait', config: { duration_ms: 1_800_000 }, next: 'e4', position: { x: 40, y: 340 } },
-        e4: { kind: 'branch', config: { condition: { filter: { fact: { demo_flag: { eq: true } } } } }, on_true: 'e5', on_false: 'e8', position: { x: 40, y: 490 } },
+        // A judge branch rather than a filter one: the filter form is already
+        // covered by the query builder's own seeds, while this is the only
+        // seeded example of a question put to the model about one person — and
+        // it is the condition kind whose behaviour is least obvious from the
+        // schema alone. Someone with no recorded activity takes the No path
+        // without a model call at all (see server/src/selector/judge.js).
+        e4: { kind: 'branch', config: { condition: { judge: { criteria: 'Has this person shown interest in booking a treatment?', confidence: 0.7 } } } , on_true: 'e5', on_false: 'e8', position: { x: 40, y: 490 } },
         e5: { kind: 'set_fact', config: { key: 'kitchen_sink_true_path', value: true }, next: 'e9', position: { x: -100, y: 640 } },
         e9: { kind: 'add_to_list', config: { segment_id: listId }, next: 'e6', position: { x: -100, y: 790 } },
         e6: { kind: 'webhook', config: { url: 'https://httpbin.org/post', method: 'POST', payload: { path: 'true' } }, next: 'e7', position: { x: -100, y: 940 } },

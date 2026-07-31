@@ -53,9 +53,6 @@ export const Goal = z.object({
 }).strict()
 
 // --- per-kind step config ---
-// Branch conditions deliberately exclude an AI semantic judge (`about`) —
-// only a fact/filter or an audience membership check. Keeps branch
-// evaluation cheap and predictable regardless of enrollment volume.
 const StepConfig = {
   trigger_campaign: z.object({
     campaign_id: z.string().uuid(),
@@ -70,11 +67,45 @@ const StepConfig = {
     until: z.string().datetime().optional(),
   }).strict().refine(c => !!(c.duration_ms || c.until), 'wait needs `duration_ms` or `until`'),
 
+  // Exactly one of three: an audience membership check, a deterministic
+  // fact/activity filter, or `judge` — an LLM verdict on one person.
+  //
+  // `judge` was deliberately excluded when this shipped, on the grounds that it
+  // would make branch evaluation expensive and unpredictable "regardless of
+  // enrollment volume". That reasoning was inherited from AUDIENCES, where it is
+  // right: an audience runs the judge across every candidate the deterministic
+  // stages left, and re-resolves on a schedule — which is why the selector has a
+  // whole preview/cost-estimate path (`calls`, `estLatencyMs`) before you save one.
+  //
+  // A branch is a different shape. It resolves with `scope: [one passport]`, so
+  // it is one verdict, once, when that enrollment reaches the node — cost is
+  // linear in traffic through a single step, not in population, and it does not
+  // recur. The step already tolerates far more expensive work on the same path:
+  // `trigger_campaign` sends a real email.
+  //
+  // What the cheap stages DID buy is determinism, and that is genuinely given up
+  // here: the same person can branch differently on a re-run. The verdict
+  // (match/score/reason) is therefore recorded in the step run — see runBranch.
   branch: z.object({
     condition: z.object({
       filter: z.any().optional(),
       audience_id: z.string().uuid().optional(),
-    }).strict().refine(c => !!c.filter !== !!c.audience_id, 'branch condition needs exactly one of `filter` or `audience_id`'),
+      judge: z.object({
+        // The question, as a rule the model decides a person against.
+        criteria: z.string().min(1),
+        // Below this the verdict counts as "no". Bounded here but NOT defaulted
+        // here: StepConfig is validated inside StepsGraph's superRefine, which
+        // reports issues and throws the parsed value away, so a `.default()` on
+        // this field would never reach the stored config — it would read as a
+        // guarantee while doing nothing. The one real default lives where the
+        // comparison happens (selector.judge.evaluate, 0.7), so a branch and an
+        // audience cannot drift apart.
+        confidence: z.number().min(0).max(1).optional(),
+      }).strict().optional(),
+    }).strict().refine(
+      c => [c.filter, c.audience_id, c.judge].filter(Boolean).length === 1,
+      'branch condition needs exactly one of `filter`, `audience_id` or `judge`',
+    ),
   }).strict(),
 
   set_fact: z.object({

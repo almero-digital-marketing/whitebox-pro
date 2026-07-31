@@ -143,20 +143,57 @@ async function runWait(node) {
   return { wait_until: new Date(untilMs).toISOString(), next_step_id: node.next }
 }
 
-// Native-data-only: a filter (facts) or an audience membership check — never
-// an AI semantic judge (`about`). Keeps branch evaluation cheap and
-// predictable regardless of how many enrollments hit it.
+// Three condition kinds — an audience membership check, a deterministic
+// fact/activity filter, or an LLM verdict (`judge`). See journeys.js's branch
+// schema for why judge is scoped to one passport and what that costs.
+//
+// A branch cannot decline to decide. The selector's judge is written for
+// AUDIENCES, where an unconfirmed person is simply not added — so `evaluate`
+// drops a candidate whose verdict errored, and "dropped" reads as no-match here.
+// That happens to be the safe reading (an unanswered question is not a yes, and
+// `on_true` is the side that usually sends something), but it is safe by
+// coincidence rather than by statement, so it is asserted rather than inherited:
+// anything other than a confident yes goes down `on_false`, and says why.
 async function runBranch(node, enr) {
   const cond = node.config.condition
-  let matched
+
   if (cond.audience_id) {
     const { ids } = await audiences.resolveAudience(cond.audience_id)
-    matched = ids.includes(enr.passport_id)
-  } else {
-    const res = await selector.resolve({ filter: cond.filter }, { projection: 'people', scope: [enr.passport_id] })
-    matched = res.passports.some(pp => pp.id === enr.passport_id)
+    return { next_step_id: ids.includes(enr.passport_id) ? node.on_true : node.on_false }
   }
-  return { next_step_id: matched ? node.on_true : node.on_false }
+
+  if (cond.judge) {
+    // Errors are caught rather than thrown: a throw retries the step, and
+    // retrying a model call that is failing for a structural reason (no API key,
+    // a revoked one) just burns the enrollment's retry budget to arrive at the
+    // same answer. `verdict` rides along into step_runs.result — the executor
+    // stores whatever this returns — so an operator can see WHY someone went the
+    // way they did, which matters more here than on the deterministic paths
+    // where the condition alone explains it.
+    let res
+    try {
+      res = await selector.resolve({ judge: cond.judge }, { projection: 'people', scope: [enr.passport_id] })
+    } catch (err) {
+      return {
+        next_step_id: node.on_false,
+        verdict: { match: false, error: err.message, reason: 'the judge could not be reached — took the No path' },
+      }
+    }
+    const hit = res.passports.find(pp => pp.id === enr.passport_id)
+    return {
+      next_step_id: hit ? node.on_true : node.on_false,
+      // `why`/`score` come back only for a confirmed match — the people
+      // projection returns survivors, not verdicts — so a No records the outcome
+      // without a reason. Carrying the model's reasoning for a No would mean
+      // surfacing rejected verdicts out of selector.judge.evaluate.
+      verdict: hit
+        ? { match: true, score: hit.score, reason: hit.why }
+        : { match: false, reason: 'the judge did not confirm this person' },
+    }
+  }
+
+  const res = await selector.resolve({ filter: cond.filter }, { projection: 'people', scope: [enr.passport_id] })
+  return { next_step_id: res.passports.some(pp => pp.id === enr.passport_id) ? node.on_true : node.on_false }
 }
 
 async function runSetFact(node, enr) {

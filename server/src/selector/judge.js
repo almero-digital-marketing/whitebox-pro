@@ -37,6 +37,13 @@ export async function evaluate(candidates, judge, { ai, evidenceFor, concurrency
       let v
       try {
         const evidence = await evidenceFor(id)
+        // Nothing to reason from ⇒ not a match, without asking. The system
+        // prompt says to decide "based ONLY on the evidence provided", so an
+        // empty list is a question with no admissible answer — sending it
+        // invites exactly the invention the prompt forbids, and pays for a
+        // token round trip to get it. Same conservative direction as the catch
+        // below: unconfirmed is not confirmed.
+        if (!evidence?.length) continue
         v = await ai.object(SYSTEM, userPrompt(criteria, evidence), VERDICT)
       } catch {
         continue
