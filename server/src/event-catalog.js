@@ -303,7 +303,7 @@ export function build(plugins = [], { logger } = {}) {
   const detailByPrefix = new Map()
   const orphanDetail = []
   // Detail for an event a plugin does NOT own, scoped to the rows it produced.
-  // Keyed `${module} ${type}` — see the note on plugin-scoped detail below.
+  // Keyed `${module} ${type}` — see the note on plugin-scoped detail below.
   const detailByOrigin = new Map()
 
   const add = (module, key, entry) => {
