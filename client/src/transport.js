@@ -14,12 +14,21 @@ export default function createTransport({ url, getSessionId, getPassportId, emit
 
     const { io } = await import('socket.io-client')
 
-    const passport = getPassportId()
     socket = io(url, {
       transports: ['websocket', 'polling'],
-      query: {
-        passport: passport || '',
-      },
+      // `auth` as a FUNCTION, because socket.io re-evaluates it before every
+      // connection attempt — where `query` is captured once, at construction.
+      //
+      // That difference mattered: a page whose /sessions/resolve failed (an
+      // outage, a first visit that raced the server coming up) had no passport
+      // when the socket opened, so it handshook with '' — and then kept sending
+      // '' on every reconnect for the rest of the page's life, even after the
+      // retry on `transport:connected` had acquired a real passport. The socket
+      // stayed anonymous until a full page reload.
+      auth: (cb) => cb({ passport: getPassportId() || '' }),
+      // Kept alongside it: a server that only reads handshake.query still gets
+      // the passport it had at open time, which is what it got before.
+      query: { passport: getPassportId() || '' },
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 30000,

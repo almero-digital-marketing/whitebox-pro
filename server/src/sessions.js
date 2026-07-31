@@ -50,6 +50,10 @@ export async function init(options) {
   }
 }
 
+// Open a visit. The caller is expected to have a passport already — see
+// resolve()'s note on why a session with no passport is not an anonymous session
+// but an orphan. The only caller that reaches here directly is the
+// /sessions/resolve route, which identifies first.
 export async function start(passportId, utms = {}) {
   const resolvedId = passportId ? await passports.resolve(passportId) : null
   const data = { passport_id: resolvedId }
@@ -92,10 +96,35 @@ export async function findById(id) {
   return session
 }
 
+// Get this passport's current visit, opening one if it has none.
+//
+// No passport, no session — and that is the whole contract. A session is a
+// PASSPORT'S visit; a row with `passport_id: null` is not an anonymous session,
+// it is a session belonging to nobody. It can never be attributed, it inflates
+// both the session count and the inbound `session.started` signal, and it is
+// immediately superseded by a real session the moment the caller does identify.
+//
+// This used to fall through to `start(passportId || null)`, so `resolve(null)`
+// silently minted one. The socket handshake was the volume path: the browser SDK
+// sends `passport: ''` when it has none yet (client/src/transport.js), so any
+// socket that connected before its passport existed — a first visit whose
+// /sessions/resolve failed, an outage, `autoResolveSession: false` — produced an
+// orphan row plus a `session.started` event with no person attached to it. On this
+// dev database that was 37 of 57 sessions.
+//
+// Fixed here rather than at the six call sites, five of which already wrote
+// `resolve(passportId || null)` and clearly expected null to be a no-op. Note the
+// fallback three of them then apply — `passportId || session?.passport_id` — could
+// never have worked: a session minted by `resolve(null)` has a null passport by
+// construction.
+//
+// The /sessions/resolve ROUTE is unaffected: it calls passports.identify() first
+// and then start() with a real passport, which is exactly the right order and the
+// reason that path always produced attributed sessions.
 export async function resolve(passportId, utms = {}) {
-  let session = passportId ? await findActive(passportId).catch(() => null) : null
-  if (!session) session = await start(passportId || null, utms).catch(() => null)
-  return session
+  if (!passportId) return null
+  const session = await findActive(passportId).catch(() => null)
+  return session || await start(passportId, utms).catch(() => null)
 }
 
 export function register(app) {

@@ -24,7 +24,14 @@ function init(options) {
 
   io.on('connection', async socket => {
     const connectionId = socket.id
-    const { passport: passportId, utm_source, utm_medium, utm_campaign, utm_term, utm_content } = socket.handshake.query
+    const { passport: queryPassport, utm_source, utm_medium, utm_campaign, utm_term, utm_content } = socket.handshake.query
+    // `auth` first: the client re-evaluates it before every connection attempt,
+    // where `query` is frozen at socket construction. A page that opened its
+    // socket before it had a passport used to keep handshaking with '' forever —
+    // so it stayed anonymous, and (before sessions.resolve() started refusing)
+    // minted a fresh orphan session on every reconnect. Falls back to query so a
+    // client that only sets that still works.
+    const passportId = socket.handshake.auth?.passport || queryPassport || null
     const utms = { utm_source, utm_medium, utm_campaign, utm_term, utm_content }
 
     // Register + publish BEFORE the session resolve, not after: a client can

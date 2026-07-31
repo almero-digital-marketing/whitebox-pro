@@ -109,3 +109,58 @@ describe('sessions.onResolve — the hook a plugin uses to piggyback data on ses
     expect(arg.req).toBeTruthy()   // the express request — e.g. for req.ip
   })
 })
+
+// resolve() is the "get me this passport's visit" API that every plugin and the
+// socket handshake call. It used to fall through to start(null) when handed no
+// passport, minting a row that belonged to nobody — 37 of 57 sessions on the dev
+// database, each with a `session.started` event carrying no person.
+describe('resolve() — no passport, no session', () => {
+  it('returns null instead of minting an orphan session', async () => {
+    const notify = vi.fn(async () => {})
+    await sessions.init({ db, passports, notify })
+
+    expect(await sessions.resolve(null)).toBeNull()
+    expect(await sessions.resolve(undefined)).toBeNull()
+    expect(await sessions.resolve('')).toBeNull()
+
+    // nothing written, and — the part that reached the Live feed — nothing emitted
+    const { count } = await db('whitebox_sessions').count('* as count').first()
+    expect(Number(count)).toBe(0)
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('still opens a visit for a real passport, and reuses the active one', async () => {
+    const notify = vi.fn(async () => {})
+    await sessions.init({ db, passports, notify })
+    const passportId = await newPassport()
+
+    const first = await sessions.resolve(passportId, { utm_source: 'google' })
+    expect(first?.id).toBeTruthy()
+    expect(first.passport_id).toBe(passportId)
+    expect(first.utm_source).toBe('google')
+
+    // second call finds the active one rather than opening another
+    const second = await sessions.resolve(passportId)
+    expect(second.id).toBe(first.id)
+
+    const { count } = await db('whitebox_sessions').count('* as count').first()
+    expect(Number(count)).toBe(1)
+  })
+
+  // The event that made this visible. A session.started with no passport_id is
+  // what the Live feed showed, and it is inbound traffic attributed to nobody.
+  it('emits session.started carrying the passport it belongs to', async () => {
+    const notify = vi.fn(async () => {})
+    await sessions.init({ db, passports, notify })
+    const passportId = await newPassport()
+
+    await sessions.resolve(passportId)
+    expect(notify).toHaveBeenCalledWith('session.started', expect.objectContaining({
+      type: 'session.started',
+      // snake_case: the event registry persists payload.data.passport_id and
+      // nothing else, so this is the field that decides whether the row has a
+      // person on it
+      data: expect.objectContaining({ passport_id: passportId }),
+    }))
+  })
+})

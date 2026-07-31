@@ -126,3 +126,52 @@ describe('transport (socket.io)', () => {
     expect(_fakeSocket.disconnect).toHaveBeenCalled()
   })
 })
+
+// The handshake has to carry the CURRENT passport, not the one we had when the
+// socket was constructed. `query` is captured once by socket.io; `auth` is
+// re-evaluated before every connection attempt — and that difference is why a page
+// whose /sessions/resolve failed used to stay anonymous for its whole life, even
+// after the retry on `transport:connected` acquired a real passport.
+describe('handshake identity', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('sends the passport as a re-evaluated auth callback', async () => {
+    const { io } = await import('socket.io-client')
+    let passport = null            // none yet — the outage case
+    const t = createTransport({
+      url: 'http://test',
+      getSessionId: () => null,
+      getPassportId: () => passport,
+      emitter: createEmitter(),
+      logger: { warn: () => {} },
+    })
+    await t.open()
+
+    const { auth } = io.mock.calls[0][1]
+    expect(typeof auth).toBe('function')
+
+    // first attempt: nothing to send, which is honest
+    let sent
+    auth(v => { sent = v })
+    expect(sent).toEqual({ passport: '' })
+
+    // the passport arrives later (resolveSession retry) — the NEXT attempt must
+    // pick it up without a page reload
+    passport = 'p-late'
+    auth(v => { sent = v })
+    expect(sent).toEqual({ passport: 'p-late' })
+  })
+
+  it('still puts the open-time passport in query, for a server that reads only that', async () => {
+    const { io } = await import('socket.io-client')
+    const t = createTransport({
+      url: 'http://test',
+      getSessionId: () => null,
+      getPassportId: () => 'p-1',
+      emitter: createEmitter(),
+      logger: { warn: () => {} },
+    })
+    await t.open()
+    expect(io.mock.calls[0][1].query).toEqual({ passport: 'p-1' })
+  })
+})
