@@ -44,7 +44,7 @@ export default function conversionsPlugin(options = {}) {
     name: 'conversions',
 
     install(core) {
-      const { http, queue, consent, logger, getPassportId } = core
+      const { http, queue, consent, logger, getPassportId, getSessionId } = core
       const pixels = createPixels({ networks: networkSelect, logger })
       // See the catch in emit(): one warning per outage, not one per event.
       let sendFailed = false
@@ -94,7 +94,17 @@ export default function conversionsPlugin(options = {}) {
               // (GA4 client_id is required; _fbp/_fbc/_ttp improve CAPI matching).
               // Collected per the selected networks' declarative specs (not a
               // hardcoded list) — same vocabulary the server adapters declare.
-              body: { passport_id: getPassportId?.(), events: [event], signals: collectSignals(networkSelect) },
+              body: {
+                passport_id: getPassportId?.(),
+                // The visit this happened in. Core has always exposed it and this
+                // plugin never sent it, so every conversion was recorded against a
+                // null session — which is what the awareness timeline LEFT JOINs to
+                // reach the UTMs. The attribution existed on the session the whole
+                // time; nothing could get from the event back to it.
+                session_id: getSessionId?.() ?? null,
+                events: [event],
+                signals: collectSignals(networkSelect),
+              },
             })
             // A success ends the outage, so the next failure is news again.
             sendFailed = false

@@ -107,6 +107,11 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
   // only gates the ad-network fan-out below.
   await awareness.record({
     passport_id: passportId,
+    // The visit, so this row can reach the session's UTMs. Every conversions
+    // exposure was recorded with a null session — 182 of them on the dev database
+    // — which is why attribution never appeared in a person's activity timeline:
+    // that view LEFT JOINs exposures to sessions, and there was nothing to join to.
+    session_id:  reqCtx.sessionId ?? null,
     ts:          when,
     channel:     'web',
     direction:   'conversion',

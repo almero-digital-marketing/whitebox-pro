@@ -14,6 +14,12 @@ import * as store from './store.js'
 
 const ingestSchema = z.object({
   passport_id: z.string().min(1).optional(),
+  // The visit this happened in. Optional — an older client doesn't send it, and a
+  // conversion without a session is still worth recording — but when it IS sent it
+  // is what connects the event to the session's UTMs: the awareness timeline
+  // reaches attribution by joining exposures to sessions, so a null session_id
+  // means a row that can never show where the person came from.
+  session_id:  z.union([z.string(), z.number()]).optional(),
   events:      z.array(z.record(z.string(), z.unknown())).min(1).max(50),
   signals:     z.record(z.string(), z.unknown()).optional(),
 })
@@ -26,7 +32,7 @@ export function mountRoutes(app, { requireAuth, logger }) {
     const parsed = ingestSchema.safeParse(req.body)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
 
-    const { passport_id: passportId, events, signals } = parsed.data
+    const { passport_id: passportId, session_id: sessionId, events, signals } = parsed.data
     // No passport ⇒ nothing to attribute. Accept-but-ignore (202) so a beacon
     // fired before /sessions/resolve completes doesn't surface as an error.
     if (!passportId) return res.status(202).json({ reason: 'no_passport' })
@@ -34,6 +40,7 @@ export function mountRoutes(app, { requireAuth, logger }) {
     try {
       const results = await ingest.ingestBatch(passportId, events, {
         signals: signals || {},
+        sessionId: sessionId ?? null,
         ip: req.ip,
         user_agent: req.get('user-agent') || null,
       })

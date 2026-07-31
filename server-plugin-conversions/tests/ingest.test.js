@@ -189,3 +189,24 @@ describe('what the conversion embeds', () => {
     expect(JSON.stringify(canonical)).not.toContain('A page')
   })
 })
+
+// Attribution lives on the SESSION. The awareness timeline reaches it by joining
+// exposures to sessions, so an exposure with a null session_id can never show
+// where the person came from — and every conversions row had one (182 of them on
+// the dev database) because the client knew its session and never sent it.
+describe('the session a conversion happened in', () => {
+  it('records the session, so the row can reach that visit attribution', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, { standard: 'page_view', event_id: 's1' }, { sessionId: 42 })
+    expect(awareness.record.mock.calls[0][0].session_id).toBe(42)
+  })
+
+  // An older client doesn't send one, and a conversion without a session is still
+  // worth recording — it just can't be attributed.
+  it('still records the conversion when no session was sent', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, { standard: 'page_view', event_id: 's2' })
+    expect(awareness.record).toHaveBeenCalledOnce()
+    expect(awareness.record.mock.calls[0][0].session_id).toBeNull()
+  })
+})
