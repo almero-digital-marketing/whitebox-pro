@@ -18,10 +18,10 @@
 // view is simply omitted. A people browser must not require the whole suite.
 import { z } from 'zod'
 
-let passports, facts, awareness, journeys, audiences, logger
+let passports, facts, awareness, journeys, audiences, sessions, logger
 
 export function init(deps) {
-  ({ passports, facts, awareness, journeys, audiences, logger } = deps)
+  ({ passports, facts, awareness, journeys, audiences, sessions, logger } = deps)
 }
 
 const bad = (message, status = 400) => { const e = new Error(message); e.status = status; throw e }
@@ -66,7 +66,7 @@ export async function get(id) {
   const person = await passports.get(id, { facts })
   if (!person) notFound()
 
-  const [recent, enrollments, suppressed, segments] = await Promise.all([
+  const [recent, enrollments, suppressed, segments, history] = await Promise.all([
     // core's own per-passport exposure history — already merge-resolving, and
     // returns [] when awareness is disabled, so no capability check needed
     awareness?.timeline
@@ -83,6 +83,13 @@ export async function get(id) {
     audiences?.passportLists
       ? audiences.passportLists(person.id).catch(() => null)
       : Promise.resolve(null),
+    // How many times they have come back. `last_seen_at` says they were here; this
+    // says whether it was their first visit or their ninth, which is a different
+    // question and the one nothing else on this record answers. Optional in the
+    // same way as the rest: an older core has no historyFor().
+    sessions?.historyFor
+      ? sessions.historyFor(person.id).catch(() => null)
+      : Promise.resolve(null),
   ])
 
   return {
@@ -93,6 +100,14 @@ export async function get(id) {
     enrollments,
     suppressed,
     segments,
+    // Flattened onto the person rather than nested, because this belongs to them
+    // the same way last_seen_at does. Null when core is too old to answer, which
+    // the UI tells apart from a genuine zero.
+    //
+    // historyFor() also returns `first_session_at`; it is deliberately NOT forwarded,
+    // because nothing renders it and a field on a payload that nothing reads is the
+    // kind of dead weight that later looks like coverage.
+    sessions: history?.sessions ?? null,
   }
 }
 

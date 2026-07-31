@@ -91,6 +91,24 @@ export async function findActive(passportId) {
   return session
 }
 
+// How many visits this person has made, and when the first one was.
+//
+// Merge-resolving like findActive, so an absorbed id reports the SURVIVOR's history
+// rather than the empty tombstone it was folded into — the whole point of the merge
+// chain is that an old id keeps answering.
+//
+// `first_seen` comes from the sessions table rather than the passport's created_at:
+// they differ, and the difference is the interesting part. A passport is minted the
+// first time the SDK sees a browser; a session is a visit. Someone with one passport
+// and nine sessions has come back eight times.
+export async function historyFor(passportId) {
+  const resolvedId = passportId ? await passports.resolve(passportId) : null
+  if (!resolvedId) return { sessions: 0, first_session_at: null }
+  const row = await db(TABLE).where({ passport_id: resolvedId })
+    .count('* as n').min('started_at as first').first()
+  return { sessions: Number(row?.n || 0), first_session_at: row?.first ?? null }
+}
+
 export async function findById(id) {
   const session = await db(TABLE).where({ id }).first()
   return session

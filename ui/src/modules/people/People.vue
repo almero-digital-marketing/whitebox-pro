@@ -346,6 +346,14 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
             <div class="blk-head">Passport</div>
             <p class="pane-tip">
               <code>{{ current.id }}</code> · first seen {{ fmt(current.created_at) }} · last seen {{ fmt(current.last_seen_at) }}
+              <!-- How many times they came BACK. `last_seen_at` says they were here;
+                   this says whether it was their first visit or their ninth, which
+                   nothing else on this record answered. `!= null` rather than a
+                   truthy test: 0 sessions is a real state (a passport minted by an
+                   identify with no visit yet), and null means core can't answer. -->
+              <template v-if="current.sessions != null">
+                · {{ current.sessions }} {{ current.sessions === 1 ? 'session' : 'sessions' }}
+              </template>
             </p>
           </div>
 

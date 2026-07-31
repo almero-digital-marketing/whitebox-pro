@@ -67,6 +67,10 @@ export function people(options = {}) {
         passports: ctx.passports,
         facts: ctx.facts,
         awareness: ctx.awareness,
+        // Core's own sessions, for the visit count on a person — see the note at
+        // historyFor(). Not optional in practice (core always has it), but read
+        // from ctx the same way as the rest.
+        sessions: ctx.sessions,
         journeys,
         audiences,
         logger,

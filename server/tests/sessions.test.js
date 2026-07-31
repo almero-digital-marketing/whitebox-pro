@@ -164,3 +164,45 @@ describe('resolve() — no passport, no session', () => {
     }))
   })
 })
+
+// How many times someone came back. `last_seen_at` says they were here; nothing on
+// a person record said whether it was their first visit or their ninth.
+describe('historyFor() — the visit count', () => {
+  it('counts this passport sessions and reports the first', async () => {
+    await sessions.init({ db, passports })
+    const passportId = await newPassport()
+
+    expect(await sessions.historyFor(passportId)).toEqual({ sessions: 0, first_session_at: null })
+
+    await sessions.start(passportId)
+    await db('whitebox_sessions').update({ ended_at: new Date() })   // close it so the next is new
+    await sessions.start(passportId)
+
+    const h = await sessions.historyFor(passportId)
+    expect(h.sessions).toBe(2)
+    expect(h.first_session_at).toBeTruthy()
+  })
+
+  // 0 and "no such person" are different answers, and a caller rendering a count
+  // needs to tell them apart from a crash.
+  it('answers zero for an unknown or missing passport rather than throwing', async () => {
+    await sessions.init({ db, passports })
+    expect(await sessions.historyFor(null)).toEqual({ sessions: 0, first_session_at: null })
+    expect((await sessions.historyFor(crypto.randomUUID())).sessions).toBe(0)
+  })
+
+  // The merge chain is the point of resolve(): an absorbed id must keep answering
+  // with the survivor's history rather than reporting the empty tombstone.
+  it('follows the merge chain, so an absorbed id reports the survivor history', async () => {
+    const survivor = await newPassport()
+    const absorbed = await newPassport()
+    await sessions.init({
+      db,
+      // passports.resolve is the stub in this suite; point the absorbed id at the
+      // survivor the way a real merge would.
+      passports: { ...passports, resolve: async (id) => (id === absorbed ? survivor : id) },
+    })
+    await sessions.start(survivor)
+    expect((await sessions.historyFor(absorbed)).sessions).toBe(1)
+  })
+})

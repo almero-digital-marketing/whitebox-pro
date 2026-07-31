@@ -486,8 +486,15 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                   <span class="ri-name">{{ feedPersonName }}</span>
                   <span class="ri-sub">
                     <span class="material-symbols-outlined">person</span>
-                    <span v-if="feedPerson?.last_seen_at">last seen {{ fmtTime(feedPerson.last_seen_at) }}</span>
-                    <span v-else>{{ short(feedPassport) }}</span>
+                    <!-- Visit count beside last-seen: on a live board "they were just
+                         here" is a given, so how many times they have come back is
+                         the part that isn't. `!= null` — 0 is a real state, null
+                         means core didn't answer. -->
+                    <span v-if="feedPerson?.sessions != null">
+                      {{ feedPerson.sessions }}{{ feedPerson.sessions === 1 ? ' session' : ' sessions' }}
+                    </span>
+                    <span v-if="feedPerson?.last_seen_at">· last seen {{ fmtTime(feedPerson.last_seen_at) }}</span>
+                    <span v-if="!feedPerson">{{ short(feedPassport) }}</span>
                   </span>
                 </span>
               </div>
