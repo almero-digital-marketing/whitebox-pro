@@ -25,7 +25,7 @@ export function init(deps) {
 //
 // Nothing here is windowed: the totals are process-lifetime and `subscribers` is
 // read from socket.io now, so every metric is `live`.
-export async function status({ since } = {}) {
+export async function status({ since, passport } = {}) {
   const s = streamStats?.() ?? null
 
   // No stream at all is a different claim from a stream that has carried nothing,
@@ -63,9 +63,16 @@ export async function status({ since } = {}) {
   let traffic = null
   let recorded = 0
   try {
+    // Scoped to the selected person when there is one. These five metrics are
+    // PINNED to the top of the board, so they are the first thing anyone reads —
+    // and they were the last thing still answering for everybody while every card
+    // and the feed below them had narrowed to one person. Two panels disagreeing
+    // about what you are looking at, with the louder one wrong.
     const [counts, active] = await Promise.all([
-      eventRegistry.countsByType({ since }),
-      eventRegistry.activePassports ? eventRegistry.activePassports({ since }) : Promise.resolve(0),
+      eventRegistry.countsByType({ since, passportId: passport || null }),
+      eventRegistry.activePassports
+        ? eventRegistry.activePassports({ since, passportId: passport || null })
+        : Promise.resolve(0),
     ])
     const byDirection = Object.fromEntries(DIRECTIONS.map(d => [d, 0]))
     let total = 0
@@ -243,13 +250,17 @@ function collapseTypes(counts) {
 // degrade to "shim", not to a false "unmonitored".
 const OBSERVERS = new Set(['live', 'console-events'])
 
-async function collectStatus(since) {
+// `passport` reaches a plugin's status() as an extra key, which every other
+// plugin ignores — mail's queue depth is not a per-person number and cannot be
+// scoped. Only live's own traffic metrics use it, and they must: they are the
+// board's headline figures.
+async function collectStatus(since, passport) {
   const all = Object.entries(plugins || {})
   const entries = all.filter(([, api]) => typeof api?.service?.status === 'function')
 
   const results = await Promise.all(entries.map(async ([module, api]) => {
     try {
-      const s = await api.service.status({ since })
+      const s = await api.service.status({ since, passport: passport || null })
       if (!s) return null
       return {
         module,
@@ -295,21 +306,27 @@ async function collectStatus(since) {
  * refreshes as a whole, so splitting it across endpoints would only guarantee
  * the cards disagree with each other by a second or two.
  */
-export async function summary({ window: w, dir, chan } = {}) {
+// `passport` is a THIRD filter axis, and it works differently from the other two
+// on purpose. Direction and channel are derived from (type, payload), so they are
+// applied after the fact to grouped counts (see makeFilter). A passport is a
+// column on the row — it can't be derived from a type — so it is pushed down into
+// the QUERY, which is also the only way the counts can be right: filtering grouped
+// totals afterwards can't tell you how much of a group belonged to one person.
+export async function summary({ window: w, dir, chan, passport } = {}) {
   const secs = parseWindow(w)
   const from = since(secs)
   // Dashboard-wide: the same filter the feed uses, applied to the aggregates too.
   const filter = makeFilter({ dir, chan })
 
   const [counts, active, lastAt, status] = await Promise.all([
-    eventRegistry.countsByType({ since: from }),
-    eventRegistry.activePassports({ since: from }),
+    eventRegistry.countsByType({ since: from, passportId: passport || null }),
+    eventRegistry.activePassports({ since: from, passportId: passport || null }),
     // Unwindowed on purpose: an empty window is ambiguous, and this is what
     // resolves it. Optional so an older core doesn't break the whole read.
     eventRegistry.lastEventAt ? eventRegistry.lastEventAt().catch(() => null) : Promise.resolve(null),
     // Soft: a deployment without the mail plugin still gets every other card,
     // and `null` says "not wired" rather than a zero that reads as "healthy".
-    collectStatus(from),
+    collectStatus(from, passport),
   ])
 
   // Fold type counts into the three directions, and into channels.
@@ -525,7 +542,7 @@ const MIN_POINTS = 12
 const MAX_POINTS = 600
 const DEFAULT_POINTS = 120
 
-export async function timeseries({ window: w, points, dir, chan } = {}) {
+export async function timeseries({ window: w, points, dir, chan, passport } = {}) {
   const secs = parseWindow(w)
   const filter = makeFilter({ dir, chan })
   const wanted = Math.min(MAX_POINTS, Math.max(MIN_POINTS, Math.floor(Number(points) || DEFAULT_POINTS)))
@@ -533,7 +550,7 @@ export async function timeseries({ window: w, points, dir, chan } = {}) {
   // bars, at the finest readable granularity that satisfies it.
   const bucketSeconds = BUCKET_STEPS.find(s => secs / s <= wanted) ?? BUCKET_STEPS[BUCKET_STEPS.length - 1]
   const from = since(secs)
-  const rows = await eventRegistry.series({ since: from, bucketSeconds })
+  const rows = await eventRegistry.series({ since: from, bucketSeconds, passportId: passport || null })
 
   // Pre-seed EVERY bucket in the window at zero. The query only returns buckets
   // that had events, so without this a quiet window renders as a handful of bars
@@ -577,9 +594,15 @@ export async function timeseries({ window: w, points, dir, chan } = {}) {
  * Backfill for the feed. The dashboard opens with this so a quiet system reads
  * as "measured, nothing happening" rather than as a broken pipe.
  */
-export async function recent({ limit = 100, window: w } = {}) {
+export async function recent({ limit = 100, window: w, passport } = {}) {
   const from = since(parseWindow(w))
-  const rows = await eventRegistry.recent({ limit: Math.min(Number(limit) || 100, 500) })
+  // Scoped at the query when a passport is selected — not by filtering the page
+  // afterwards. Someone with three events in a busy window would otherwise get
+  // three rows out of the most recent hundred and look like they had gone quiet.
+  const rows = await eventRegistry.recent({
+    limit: Math.min(Number(limit) || 100, 500),
+    passportId: passport || null,
+  })
   // Windowed like every other read on this board. Without it the feed showed
   // 24h of rows under a "30m" selector, directly contradicting a strip that
   // said "no traffic in this window" — two panels disagreeing about what

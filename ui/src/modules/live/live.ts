@@ -134,9 +134,9 @@ export interface Series { window: WindowKey; bucket_seconds: number; buckets: { 
  * prefixed to exclude (`dir=-internal`, `chan=mail,sms`). Empty strings are dropped
  * so an unfiltered board sends no params at all.
  */
-export interface BoardFilter { dir?: string; chan?: string }
+export interface BoardFilter { dir?: string; chan?: string; passport?: string }
 const filterQS = (f?: BoardFilter) =>
-  [['dir', f?.dir], ['chan', f?.chan]]
+  [['dir', f?.dir], ['chan', f?.chan], ['passport', f?.passport]]
     .filter(([, v]) => v)
     .map(([k, v]) => `&${k}=${encodeURIComponent(String(v))}`)
     .join('')
@@ -153,7 +153,12 @@ export const liveClient = {
     req(`/timeseries?window=${w}${points ? `&points=${points}` : ''}${filterQS(f)}`) as Promise<Series>,
   utm: (w: WindowKey) => req(`/utm?window=${w}`) as Promise<Utm>,
   content: (w: WindowKey) => req(`/content?window=${w}`) as Promise<Content>,
-  recent: (w: WindowKey, limit = 100) => req(`/recent?limit=${limit}&window=${w}`) as Promise<{ events: FeedEvent[] }>,
+  // /recent takes the filter too, and only needs the passport half of it: dir and
+  // chan are applied to the rows client-side (instantly, from what's already in
+  // hand), but a passport scope has to reach the QUERY or the backfill returns the
+  // most recent hundred rows of everyone and shows three of them.
+  recent: (w: WindowKey, limit = 100, f?: BoardFilter) =>
+    req(`/recent?limit=${limit}&window=${w}${filterQS({ passport: f?.passport })}`) as Promise<{ events: FeedEvent[] }>,
 }
 
 // The two series colours are VALIDATED, not chosen by eye — teal-600 / indigo-600

@@ -172,7 +172,7 @@ const RECORDED_DIRECTION = `data -> 'data' ->> 'direction'`
 const RECORDED_CHANNEL = `data -> 'data' ->> 'channel'`
 
 // How many of each type since `since` — the breakdown behind every card.
-export async function countsByType({ since } = {}) {
+export async function countsByType({ since, passportId } = {}) {
   const q = db(TABLE)
     .select('type')
     .select(db.raw(`${RECORDED_DIRECTION} AS recorded_direction`))
@@ -181,6 +181,10 @@ export async function countsByType({ since } = {}) {
     .groupByRaw(`type, ${RECORDED_DIRECTION}, ${RECORDED_CHANNEL}`)
     .orderBy('n', 'desc')
   if (since) q.where('occurred_at', '>=', since instanceof Date ? since : new Date(since))
+  // Scope every aggregate to one person, so the cards and the feed can agree
+  // while you are looking at a single passport (see server-plugin-live's
+  // makeFilter). An indexed column, and always paired with the window.
+  if (passportId) q.where({ passport_id: passportId })
   return (await q).map(r => ({
     type: r.type,
     count: Number(r.n),
@@ -193,7 +197,7 @@ export async function countsByType({ since } = {}) {
 // rather than bound because date_trunc/to_timestamp arithmetic can't take a
 // parameter there — so it's coerced to an integer first and never reaches SQL
 // as caller-supplied text.
-export async function series({ since, bucketSeconds = 60 } = {}) {
+export async function series({ since, bucketSeconds = 60, passportId } = {}) {
   const secs = Math.max(1, Math.floor(Number(bucketSeconds) || 60))
   const bucket = `to_timestamp(floor(extract(epoch from occurred_at) / ${secs}) * ${secs})`
   const q = db(TABLE)
@@ -207,6 +211,7 @@ export async function series({ since, bucketSeconds = 60 } = {}) {
     .groupByRaw(`${bucket}, type, ${RECORDED_DIRECTION}, ${RECORDED_CHANNEL}`)
     .orderBy('bucket', 'asc')
   if (since) q.where('occurred_at', '>=', since instanceof Date ? since : new Date(since))
+  if (passportId) q.where({ passport_id: passportId })
   return (await q).map(r => ({
     bucket: r.bucket,
     type: r.type,
@@ -249,9 +254,13 @@ export async function countsByPayloadField({ since, type, field, limit = 20 } = 
 // Distinct people touched in the window — "N active right now". Counts only
 // rows that carry a passport; plenty of events are about the system, not a
 // person, and folding those in would inflate it.
-export async function activePassports({ since } = {}) {
+export async function activePassports({ since, passportId } = {}) {
   const q = db(TABLE).whereNotNull('passport_id').countDistinct('passport_id as n')
   if (since) q.where('occurred_at', '>=', since instanceof Date ? since : new Date(since))
+  // Trivially 1 when scoped to one passport, but computed rather than assumed:
+  // the answer is 0 if that passport did nothing in the window, and a header
+  // reading "1 active" for someone who was idle would be a small lie.
+  if (passportId) q.where({ passport_id: passportId })
   const [row] = await q
   return Number(row.n)
 }
@@ -267,9 +276,13 @@ export async function lastEventAt() {
 // The actual occurrences — optionally scoped to one event type — most recent
 // first. This is the point of being a log rather than just a registry: you
 // can see what really happened, not just that something did.
-export async function recent({ type, limit = 50 } = {}) {
+export async function recent({ type, limit = 50, passportId } = {}) {
   let q = db(TABLE).where('occurred_at', '>=', retentionCutoff()).orderBy('occurred_at', 'desc').limit(limit)
   if (type) q = q.andWhere({ type })
+  // Scoped at the QUERY, not by filtering the page afterwards: a passport with
+  // three events in a busy window would otherwise return three rows out of the
+  // most recent fifty and look like it had gone quiet.
+  if (passportId) q = q.andWhere({ passport_id: passportId })
   const rows = await q
   return rows.map(r => ({ ...r, data: p(r.data) }))
 }

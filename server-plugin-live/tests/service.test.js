@@ -771,3 +771,58 @@ describe('summary().by_direction_channel — the in/out manifest', () => {
     expect(s.by_direction_channel.out).toEqual({})
   })
 })
+
+// The third filter axis, and the one that works differently from the other two.
+// Direction and channel are derived from (type, payload), so they are applied
+// after the fact to grouped counts. A passport is a COLUMN on the row — it can't
+// be derived from a type, and grouped totals can't be narrowed to one person
+// after the fact — so it is pushed into the query instead.
+describe('the passport filter', () => {
+  const registryWithSpy = () => {
+    const seen = {}
+    return {
+      seen,
+      registry: {
+        countsByType: vi.fn(async (a) => { seen.counts = a; return [{ type: 'mail.sent', count: 3 }] }),
+        activePassports: vi.fn(async (a) => { seen.active = a; return 1 }),
+        series: vi.fn(async (a) => { seen.series = a; return [] }),
+        recent: vi.fn(async (a) => { seen.recent = a; return [] }),
+      },
+    }
+  }
+
+  it('scopes every aggregate to that person, at the query', async () => {
+    const { seen, registry } = registryWithSpy()
+    service.init({ eventRegistry: registry, logger: console })
+    await service.summary({ window: '30m', passport: 'p-1' })
+    expect(seen.counts).toMatchObject({ passportId: 'p-1' })
+    expect(seen.active).toMatchObject({ passportId: 'p-1' })
+  })
+
+  it('scopes the traffic strip too, so the cards and the chart agree', async () => {
+    const { seen, registry } = registryWithSpy()
+    service.init({ eventRegistry: registry, logger: console })
+    await service.timeseries({ window: '30m', passport: 'p-1' })
+    expect(seen.series).toMatchObject({ passportId: 'p-1' })
+  })
+
+  // Not filtered after the fact: someone with three events in a busy window would
+  // otherwise get three rows out of the most recent hundred and read as quiet.
+  it('scopes the feed backfill at the query rather than filtering the page', async () => {
+    const { seen, registry } = registryWithSpy()
+    service.init({ eventRegistry: registry, logger: console })
+    await service.recent({ window: '30m', passport: 'p-1' })
+    expect(seen.recent).toMatchObject({ passportId: 'p-1' })
+  })
+
+  // An unset filter must send null, not undefined or '' — the registry branches on
+  // truthiness, and a stray empty string would add `WHERE passport_id = ''`.
+  it('asks for everyone when no passport is selected', async () => {
+    const { seen, registry } = registryWithSpy()
+    service.init({ eventRegistry: registry, logger: console })
+    await service.summary({ window: '30m' })
+    expect(seen.counts.passportId).toBeNull()
+    await service.summary({ window: '30m', passport: '' })
+    expect(seen.counts.passportId).toBeNull()
+  })
+})

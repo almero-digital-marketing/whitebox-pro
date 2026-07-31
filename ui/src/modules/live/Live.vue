@@ -24,7 +24,7 @@ import './live.css'
 
 const store = useLiveStore()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
-  feedChanModes, directionCounts, channelCounts, feedFiltered,
+  feedChanModes, feedPassport, directionCounts, channelCounts, feedFiltered,
   feedView, feedCounts,
   connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
@@ -388,9 +388,28 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <span class="lv-ev-ch">{{ e.channel }}</span>
           <!-- a deep link out, so the firehose is a starting point rather than
                a dead end -->
-          <RouterLink v-if="e.passport_id" class="lv-ev-who" :to="`/people/${e.passport_id}`">
-            {{ short(e.passport_id) }}
-          </RouterLink>
+          <!-- Click SCOPES the board to this person; the arrow opens their record.
+               Two actions, two targets, because they are genuinely different
+               intents: "what else did they just do" is answered here, in context,
+               while "who are they" is a page away. Making the id itself the filter
+               puts the common one under the cursor already on it. -->
+          <!-- ONE grid cell: the feed row is a subgrid with a fixed column count,
+               so both controls live inside it rather than as siblings. -->
+          <span v-if="e.passport_id" class="lv-ev-who-cell">
+            <button type="button" class="lv-ev-who"
+              :class="{ on: feedPassport === e.passport_id }"
+              :title="feedPassport === e.passport_id
+                ? 'Showing only this person — click to clear'
+                : 'Show only this person'"
+              @click="store.togglePassport(e.passport_id)">{{ short(e.passport_id) }}</button>
+            <!-- The People module's own icon (shell/modules.ts), not a generic
+                 arrow — it says WHERE the link goes, and matches the sidebar
+                 entry it lands on. -->
+            <RouterLink class="lv-ev-open" :to="`/people/${e.passport_id}`"
+              title="Open this person in People">
+              <span class="material-symbols-outlined">contacts</span>
+            </RouterLink>
+          </span>
           <span v-else class="lv-ev-who muted">—</span>
         </li>
         <!-- Three different empty states, because they mean three different
@@ -501,6 +520,25 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               <p v-if="!channelCounts.length" class="lv-srow-d">
                 Nothing has come through in this window yet.
               </p>
+            </div>
+
+            <!-- A passport scope is applied from a FEED ROW, so without this the
+                 only evidence the whole board is narrowed to one person would be a
+                 row that has probably already scrolled away. Shown here, with the
+                 same pane's own section heading, so the filter panel is a complete
+                 answer to "why am I seeing this". -->
+            <div v-if="feedPassport" class="lv-sgroup">
+              <div class="lv-sgroup-head"><span class="lv-dl-ch">Person</span></div>
+              <div class="lv-srow">
+                <span class="lv-srow-t">
+                  <span class="lv-srow-top">
+                    <RouterLink class="lv-person-id" :to="`/people/${feedPassport}`"
+                      title="Open this person">{{ short(feedPassport) }}</RouterLink>
+                  </span>
+                </span>
+                <Button label="Clear" text severity="secondary" size="small"
+                  @click="store.togglePassport(null)" />
+              </div>
             </div>
 
             <div class="save-bar">

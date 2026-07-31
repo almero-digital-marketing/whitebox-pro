@@ -71,6 +71,11 @@ export const useLiveStore = defineStore('live', () => {
   const feedQuery = ref('')
   const feedDirModes = ref<Map<string, Mode>>(new Map([['internal', 'exclude']]))
   const feedChanModes = ref<Map<string, Mode>>(new Map())
+  // One person, set by clicking their id on a feed row. A third filter axis, but
+  // a single value rather than a tri-state set: "everyone except this person" is
+  // not a question anyone asks, while "only this person" is the first thing you
+  // want after spotting an odd row.
+  const feedPassport = ref<string | null>(null)
 
   function axisMatch(value: string, modes: Map<string, Mode>) {
     if (modes.get(value) === 'exclude') return false
@@ -95,6 +100,9 @@ export const useLiveStore = defineStore('live', () => {
   const visibleFeed = computed(() => feed.value.filter(e =>
     axisMatch(e.direction, feedDirModes.value) &&
     axisMatch(e.channel, feedChanModes.value) &&
+    // Applied locally too, not just in the query, so a live event arriving off the
+    // socket for somebody else never appears while you are scoped to one person.
+    (!feedPassport.value || e.passport_id === feedPassport.value) &&
     matchesText(e, feedQuery.value)))
 
   // From the SERVER's facet counts (`summary.axes`), not from the feed rows.
@@ -136,10 +144,15 @@ export const useLiveStore = defineStore('live', () => {
   const boardFilter = computed(() => ({
     dir: encodeAxis(feedDirModes.value),
     chan: encodeAxis(feedChanModes.value),
+    // Sent as a plain id: the server pushes this one into the WHERE clause rather
+    // than applying it after classification, because a passport is a column on the
+    // row and grouped counts can't be narrowed to one person after the fact.
+    passport: feedPassport.value || '',
   }))
 
   const DEFAULT_DIR: [string, Mode][] = [['internal', 'exclude']]
   const feedFiltered = computed(() => Boolean(feedQuery.value.trim())
+    || Boolean(feedPassport.value)
     || feedChanModes.value.size > 0
     || feedDirModes.value.size !== 1
     || feedDirModes.value.get('internal') !== 'exclude')
@@ -188,13 +201,37 @@ export const useLiveStore = defineStore('live', () => {
   //
   // The feed itself stays instant — it is filtered locally from rows already in
   // hand, so narrowing feels immediate while the cards catch up on the next tick.
-  watch(() => `${boardFilter.value.dir}|${boardFilter.value.chan}`, () => {
+  watch(() => `${boardFilter.value.dir}|${boardFilter.value.chan}|${boardFilter.value.passport}`, () => {
     if (summary.value) refreshAggregates()
   })
+
+  // The passport axis ALSO refetches the backfill, where dir and chan don't.
+  //
+  // Those two narrow rows already in hand, which is why they feel instant. A
+  // passport can't work that way: the feed holds the most recent few hundred
+  // events across everyone, so scoping to one person locally would show whatever
+  // handful of theirs happened to be in the buffer and read as "they did almost
+  // nothing" — when the window may hold plenty of their history the buffer had
+  // already evicted. Only a query can answer that.
+  watch(feedPassport, () => { if (summary.value) refreshFeed() })
+
+  async function refreshFeed() {
+    try {
+      const r = await client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value)
+      feed.value = r.events
+    } catch { /* keep what we have rather than blanking the feed on a hiccup */ }
+  }
   function clearFeedFilters() {
     feedQuery.value = ''
     feedChanModes.value = new Map()
     feedDirModes.value = new Map(DEFAULT_DIR)
+    feedPassport.value = null
+  }
+
+  // Clicking the same person again releases the scope — the control that applied
+  // it is the control that removes it, so there is nothing to hunt for.
+  function togglePassport(id: string | null) {
+    feedPassport.value = !id || feedPassport.value === id ? null : id
   }
 
   // ── list vs count ────────────────────────────────────────────────────────
@@ -337,7 +374,7 @@ export const useLiveStore = defineStore('live', () => {
         client.content(window.value),
         // Backfill deliberately smaller than MAX_FEED, so live events have room to
         // arrive without immediately evicting the history we just fetched.
-        client.recent(window.value, Math.round(MAX_FEED * 0.6)),
+        client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value),
       ])
       summary.value = s; series.value = t; utm.value = u; content.value = c; feed.value = r.events
     } catch (e: any) {
@@ -385,6 +422,7 @@ export const useLiveStore = defineStore('live', () => {
     feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
+    feedPassport, togglePassport,
     isDirOn, isChanOn, setDirection, setChannel,
     loading, connected, dropped,
     failing, maxFeed: MAX_FEED,

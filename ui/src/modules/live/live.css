@@ -296,22 +296,51 @@
    rows inherit them makes `max-content` mean "the longest type in the list",
    which is what it was always meant to say.
    The detail/bar column still takes every pixel the fixed ones don't need. */
-.lv-feed.is-list { display: grid; grid-template-columns: 16px 74px minmax(90px, max-content) minmax(0, 1fr) 66px 76px; align-content: start; }
+/* The last column carries the passport id AND the open-in-People icon, so it is
+   wider than the id alone needs: at 76px the icon pushed an 8-character
+   monospace id into an ellipsis on every row. */
+.lv-feed.is-list { display: grid; grid-template-columns: 16px 74px minmax(90px, max-content) minmax(0, 1fr) 66px 100px; align-content: start; }
 .lv-feed.is-count { display: grid; grid-template-columns: 16px minmax(90px, max-content) minmax(0, 1fr) 66px 56px; align-content: start; }
 .lv-ev, .lv-agg { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1;
   align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
 /* an empty state is a sentence, not a row of columns */
 .lv-feed > .lv-empty { grid-column: 1 / -1; }
 .lv-ev:last-child { border-bottom: none; }
+
+/* Row hover, painted on the ROW. `.lv-ev` is itself a grid item spanning
+   `grid-column: 1 / -1`, so its own background already covers the full width —
+   including the gaps between columns. Shading the children instead (`> *`) paints
+   each cell separately and leaves those gaps clear, which reads as a row split
+   into stripes. */
+.lv-ev:hover { background: var(--panel-2); }
 .lv-ev-dir { font-weight: 700; text-align: center; }
 .lv-ev-at { color: var(--muted); font-variant-numeric: tabular-nums; }
 .lv-ev-type { font-family: ui-monospace, monospace; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-ev-detail { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-ev-detail.muted { color: var(--muted); }
 .lv-ev-ch { color: var(--muted); }
-.lv-ev-who { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none; }
+/* The passport cell holds two controls in one grid column (the feed row is a
+   subgrid): the id SCOPES the board to that person, the arrow opens their record.
+   flex-grow on the id, fixed on the arrow — the id truncates, the affordance
+   never does. */
+.lv-ev-who-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.lv-ev-who { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none;
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  background: none; border: none; padding: 0; font-size: inherit; text-align: left; cursor: pointer; }
 .lv-ev-who:hover { text-decoration: underline; }
 .lv-ev-who.muted { color: var(--muted); }
+/* Scoped to this person: the row you clicked stays visibly the reason the board
+   narrowed, so the way out is where the way in was. */
+.lv-ev-who.on { font-weight: 700; text-decoration: underline; }
+.lv-ev-open { flex: 0 0 auto; color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; }
+.lv-ev-open .material-symbols-outlined { font-size: 15px; line-height: 1; }
+.lv-ev-open:hover { color: var(--accent); }
+
+/* The active person scope, shown in the filter pane's own row shape so it reads as
+   one more filter rather than a special case. Monospace to match the id in the
+   feed row it came from. */
+.lv-person-id { font-family: ui-monospace, monospace; color: var(--accent); text-decoration: none; }
+.lv-person-id:hover { text-decoration: underline; }
 
 /* The pool sits under the three channel rows, separated like they are, and
    reuses the .lv-bar track from the direction cards — a gauge is a gauge. */

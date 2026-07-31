@@ -11,6 +11,7 @@ export function register(app, { service, requireRead }) {
   // content kinds) that a direction has no bearing on.
   read('/summary', async (req) => service.summary({
     window: req.query.window, dir: req.query.dir, chan: req.query.chan,
+    passport: req.query.passport,
   }))
   // Attribution for the window, from session.started's own payload.
   read('/utm', async (req) => service.utm({ window: req.query.window, limit: req.query.limit }))
@@ -21,10 +22,18 @@ export function register(app, { service, requireRead }) {
   // and snapped to a readable bucket size (see service.timeseries).
   read('/timeseries', async (req) => service.timeseries({
     window: req.query.window, points: req.query.points,
-    dir: req.query.dir, chan: req.query.chan,
+    dir: req.query.dir, chan: req.query.chan, passport: req.query.passport,
   }))
   // Backfill for the feed, so a quiet system reads as measured rather than dead.
-  read('/recent', async (req) => ({ events: await service.recent({ limit: req.query.limit, window: req.query.window }) }))
+  // `passport` scopes the whole board to one person — a third filter axis, but
+  // pushed into the query rather than applied after classification (see
+  // service.summary). /recent takes it too, so the backfill matches the cards
+  // instead of showing a hundred rows the header says aren't there.
+  read('/recent', async (req) => ({
+    events: await service.recent({
+      limit: req.query.limit, window: req.query.window, passport: req.query.passport,
+    }),
+  }))
 }
 
 const wrap = (fn) => async (req, res) => {
