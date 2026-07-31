@@ -29,6 +29,35 @@ export function mail(options = {}) {
   return {
     name: 'mail',
 
+    // What our events mean (see server/src/event-catalog.js).
+    //
+    // The split that matters: delivered/bounced are the provider reporting on a
+    // message WE sent, so they belong to the outbound leg — not a reply. What the
+    // RECIPIENT does is inbound: an open, a click ('engaged'), a complaint. That
+    // is deliberately a different reading from how the same open is recorded in
+    // awareness, where it counts as `exposure` (content reaching them) — because
+    // "was this seen" and "did someone react" are different questions.
+    //
+    // The tracked statuses are exactly what tracking.js's statusMap produces —
+    // delivered, opened, engaged, bounced, complained. Enumerated rather than
+    // declared as a `'mail.'` prefix on purpose: a prefix would swallow a new
+    // event type silently, and an unclassified one showing up as `unknown` is
+    // the signal that it needs a decision here.
+    events: {
+      'mail.queued': 'out',
+      'mail.sent': 'out',
+      'mail.failed': 'out',
+      'mail.delivered': 'out',
+      'mail.bounced': 'out',
+      'mail.bulk.queued': 'out',
+      // Nothing left the building — a cancelled batch is bookkeeping.
+      'mail.bulk.cancelled': 'internal',
+      'mail.received': 'in',
+      'mail.opened': 'in',
+      'mail.engaged': 'in',
+      'mail.complained': 'in',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

@@ -20,6 +20,18 @@ export function crm(options = {}) {
   return {
     name: 'crm',
 
+    // What our events mean (see server/src/event-catalog.js). A PREFIX, not a
+    // list, and that is the honest declaration here: we emit `crm.${kind}` where
+    // the kind is whatever record type the host system pushes (booking, deal,
+    // client, subscription, …). There is no closed set to enumerate — the
+    // vocabulary belongs to the CRM on the other side, not to us.
+    //
+    // Inbound in every case: a push from an external system is the outside world
+    // telling us something happened, which is the same thing a reply is.
+    events: {
+      'crm.': 'in',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

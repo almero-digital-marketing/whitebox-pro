@@ -45,6 +45,26 @@ export function journeys(options = {}) {
   return {
     name: 'journeys',
 
+    // What our events mean (see server/src/event-catalog.js). Note the types are
+    // `journey.*` SINGULAR while the plugin is named `journeys` — live carried a
+    // defensive `'journeys.'` alias for years that could never match anything,
+    // and offered `journey` as a channel filter option as a result.
+    //
+    // All three are `internal`, and this is the case `internal` exists for: an
+    // enrollment is not traffic. Nobody outside was touched — a journey STEP that
+    // sends something delegates to mail/sms, which emit their own outbound event.
+    // Counting an enrollment as either direction inflates a number an operator is
+    // using to judge whether the system is talking to anyone at all.
+    //
+    // `journey.step.webhook` is deliberately not here: it is a webhook PAYLOAD
+    // type (executor.js), never passed to notify(), so it never reaches the event
+    // log and declaring it would describe an event that doesn't exist.
+    events: {
+      'journey.enrolled': 'internal',
+      'journey.completed': 'internal',
+      'journey.exited': 'internal',
+    },
+
     permissions: {
       items: [
         { key: 'journeys:read', label: 'View Journeys', description: 'View journeys, their steps, and enrollment status' },

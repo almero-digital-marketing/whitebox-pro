@@ -21,6 +21,23 @@ export function voip(options = {}) {
     name: 'voip',
     options,   // exposed for read-only introspection (e.g. scripts/probe-ari.js)
 
+    // What our events mean, for anything reading the event log (see
+    // server/src/event-catalog.js). Ours, because only we know what we emit —
+    // this list was previously a guess inside server-plugin-live, and it had
+    // voip.click missing entirely, so click-to-call was classified `unknown`.
+    //
+    // A ring and a completed call are inbound: someone rang us. A click is too —
+    // it's the visitor reaching for the number, the strongest intent signal the
+    // web side produces, and the event that precedes the call. A PICK is us
+    // answering: nothing crossed the boundary that wasn't already counted by the
+    // ring, so counting it as traffic would double it.
+    events: {
+      'voip.ring': 'in',
+      'voip.click': 'in',
+      'voip.call': 'in',
+      'voip.pick': 'internal',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

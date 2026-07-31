@@ -25,6 +25,13 @@ export function shortener(options = {}) {
   return {
     name: 'shortener',
 
+    // What our events mean (see server/src/event-catalog.js). One event, and it's
+    // inbound: a claim is somebody following a short link we handed out. The link
+    // going out was mail's or sms's send; this is the click coming back.
+    events: {
+      'shortener.claimed': 'in',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

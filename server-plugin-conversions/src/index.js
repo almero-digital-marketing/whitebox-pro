@@ -27,6 +27,35 @@ export function conversions(options = {}) {
   return {
     name: 'conversions',
 
+    // What our events mean (see server/src/event-catalog.js). We emit two
+    // genuinely different things and they must not be conflated:
+    //
+    //   conversion.${name}   the VISITOR converted. Inbound. A prefix because the
+    //                        name is the host's (purchase, lead, view_content, or
+    //                        anything they invent) — there is no closed set.
+    //                        NB the type is singular; live used to declare
+    //                        'conversions.' plural, which matched nothing, so
+    //                        every conversion classified as `unknown`.
+    //
+    //   adnetwork.${status}  OUR server-to-server call to Meta/TikTok/GA4.
+    //                        Outbound even when it fails — the call left the
+    //                        building, which is exactly what makes a rejection
+    //                        worth seeing in a monitoring view rather than only
+    //                        in a log. The conversion already counted as a
+    //                        success, so it cannot express this.
+    //
+    // Enumerated for adnetwork because the vocabulary is OURS: reporter.js only
+    // notifies for adapters it actually called, with res.status ∈ accepted |
+    // rejected | error. `skipped` is deliberately absent — an ineligible network
+    // `continue`s before the notify, so no adnetwork.skipped event has ever
+    // existed. It's a counter in our status(), not an event.
+    events: {
+      'conversion.': 'in',
+      'adnetwork.accepted': 'out',
+      'adnetwork.rejected': 'out',
+      'adnetwork.error': 'out',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

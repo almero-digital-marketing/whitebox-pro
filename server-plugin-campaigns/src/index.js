@@ -43,6 +43,19 @@ export function campaigns(options = {}) {
   return {
     name: 'campaigns',
 
+    // What our events mean (see server/src/event-catalog.js). Both `internal`,
+    // including `campaigns.sent` — which is the one worth explaining. A campaign
+    // never delivers anything itself: it hands the send to mail or sms, and THEY
+    // emit the outbound events, one per message. Classifying this as `out` too
+    // would count the same send twice and make the outbound number a figure
+    // nobody can reconcile against the outbox.
+    //
+    // This is what `internal` is for: orchestration that touched nobody outside.
+    events: {
+      'campaigns.activated': 'internal',
+      'campaigns.sent': 'internal',
+    },
+
     permissions: {
       items: [
         { key: 'campaigns:read', label: 'View Campaigns', description: 'View campaigns and their delivery status' },

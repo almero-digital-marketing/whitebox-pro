@@ -3,7 +3,7 @@
 //
 // Everything is windowed, and the window is the only parameter that matters —
 // "47/min" is meaningless without saying over what.
-import { direction, channel, DIRECTIONS, CHANNELS } from './classify.js'
+import { direction, channel, DIRECTIONS, channels } from './classify.js'
 import { describe } from './describe.js'
 
 let eventRegistry, plugins, pluginNames, logger, streamStats
@@ -326,11 +326,16 @@ export async function summary({ window: w, dir, chan } = {}) {
   // A filter list is not a report: the options used to be whatever had happened
   // lately, so a quiet window offered nothing to filter BY — you could switch a
   // channel off only after it got busy. A channel is a thing the system HAS.
-  // Unioned with whatever the window contains, so a channel classify.js has never
-  // heard of still appears rather than being silently unfilterable.
+  // Unioned with whatever the window contains, so a channel nobody declared still
+  // appears rather than being silently unfilterable.
+  //
+  // The list comes from the plugins themselves now (each declares `events` /
+  // `channels`; see server/src/event-catalog.js), which is what removed three
+  // options that could never match a row — `audiences` and `engagement` emit no
+  // events at all, and nothing has ever emitted `webhook.*`.
   const axes = {
     direction: Object.fromEntries(DIRECTIONS.map(d => [d, 0])),
-    channel: Object.fromEntries(CHANNELS.map(c => [c, 0])),
+    channel: Object.fromEntries(channels().map(c => [c, 0])),
   }
   // Counts keyed by BOTH facets, which is what "Coming in" and "Going out" actually
   // need. The UI used to carry its own two lists of which channels are inbound and

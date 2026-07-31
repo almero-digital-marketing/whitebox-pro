@@ -24,6 +24,21 @@ export function sms(options = {}) {
   return {
     name: 'sms',
 
+    // What our events mean (see server/src/event-catalog.js). Same reading as
+    // mail: a delivery report is the provider telling us about OUR send, so it
+    // stays on the outbound leg; only a reply is genuinely inbound. SMS has no
+    // open or click to speak of, so `sms.received` is the whole inbound side.
+    events: {
+      'sms.queued': 'out',
+      'sms.sent': 'out',
+      'sms.failed': 'out',
+      'sms.delivered': 'out',
+      'sms.bounced': 'out',
+      'sms.bulk.queued': 'out',
+      'sms.bulk.cancelled': 'internal',
+      'sms.received': 'in',
+    },
+
     async migrate(db) {
       await db.migrate.latest({
         directory: path.join(__dirname, 'migrations'),

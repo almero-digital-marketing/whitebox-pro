@@ -8,6 +8,7 @@
     ".": "./src/server.js",
     "./auth": "./src/auth.js",
     "./notify": "./src/notify.js",
+    "./event-catalog": "./src/event-catalog.js",
     "./logger": "./src/logger.js",
     "./ai": "./src/ai.js",
     "./pagination": "./src/pagination.js",

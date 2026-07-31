@@ -55,6 +55,16 @@ WhiteBox internals.
 9. **[09 · Deployment](09-deployment.md)** — production setup, webhooks, scaling,
    migrations, and data/GDPR operations.
 
+The two contracts a plugin implements so that generic surfaces can render it
+without knowing anything about it — read these before adding a plugin, or before
+adding per-plugin knowledge to something that shouldn't have any:
+
+10. **[10 · The `status()` contract](10-plugin-status.md)** — how a plugin reports
+    its own health counters, and how monitoring discovers them generically.
+11. **[11 · The `events` manifest](11-plugin-events.md)** — how a plugin declares
+    what its events mean (direction, channel), and why that can't live in the
+    plugin doing the reading.
+
 The **surface** plugins each document themselves in their own package, because
 each is a product area rather than a transport:
 [audiences](../server-plugin-audiences/docs/) ·

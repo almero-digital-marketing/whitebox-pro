@@ -1,5 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as service from '../src/service.js'
+import * as classify from '../src/classify.js'
+import { catalog } from './catalog.js'
+
+// Classification is declared by the plugins that emit the events and aggregated
+// by core (server/src/event-catalog.js); live is handed the result. Every test
+// below reads it, so install it once — see catalog.js for why it's a fixture and
+// not an import of the real plugins.
+beforeEach(() => classify.init({ eventCatalog: catalog() }))
 
 const registry = (counts = [], active = 0, series = []) => ({
   countsByType: vi.fn(async () => counts),

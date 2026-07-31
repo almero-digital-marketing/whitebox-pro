@@ -1,4 +1,5 @@
 import logger from './logger.js'
+import * as eventCatalog from './event-catalog.js'
 
 // Plugins are built in whitebox.config.js — each plugin package exports a named
 // factory (`engagement`, `crm`, …) that is imported there and called with its
@@ -30,6 +31,14 @@ async function load(app, ctx) {
   // `permissions` is a static field on its factory's return value — no
   // register() call needed to read it.
   ctx.permissions = { catalog: ctx.config.plugins.filter(p => p?.permissions).map(p => ({ module: p.name, ...p.permissions })) }
+
+  // Same pre-pass, same reasoning, for what each plugin's EVENTS mean — the
+  // direction they flow and the channel they belong to. Read from the static
+  // `events` field, so this needs no register() call and no ordering: live can
+  // register before the plugins it reports on and still classify all of them.
+  // See event-catalog.js for the contract and for why this is not a map inside
+  // server-plugin-live.
+  ctx.eventCatalog = eventCatalog.build(ctx.config.plugins, { logger })
 
   for (const plugin of ctx.config.plugins) {
     if (!plugin || typeof plugin.register !== 'function') {
