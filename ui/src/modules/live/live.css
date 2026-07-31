@@ -9,8 +9,12 @@
    340px, not People's 400: these rows are a switch plus two short words, where a
    profile form needs room for inputs. */
 .live-console { display: flex; height: 100%; min-height: 0; }
+/* `container-type: inline-size` so the card grid below can ask how wide THE BOARD
+   is rather than how wide the window is — see .lv-grid. Inline-size only: a `size`
+   container would need a fixed height and this scrolls. */
 .live-board { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 12px;
-  display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+  display: flex; flex-direction: column; gap: 10px; background: var(--bg);
+  container-type: inline-size; container-name: board; }
 
 /* No padding of its own: the Accordion's header and content bring their own, the
    same as People's `.ppl-side`. */
@@ -213,7 +217,23 @@
   --lv-row-gap: 7px;                                   /* .lv-bars gap */
   --lv-body-h: calc(var(--lv-rows) * var(--lv-row-h) + (var(--lv-rows) - 1) * var(--lv-row-gap));
 }
-@media (min-width: 720px) { .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* TWO columns when two columns fit — never three, and decided by the width the
+   board actually has rather than by the window's.
+
+   This was `@media (min-width: 720px)`, and a media query is the wrong instrument:
+   it measures the WINDOW, while the board is only what's left after a fixed icon
+   rail and a right pane several hundred pixels wide. At a 724px viewport the query
+   fired and the board itself was 308px — two 149px cards, each with 121px of
+   content, holding an Attribution switch whose three words are intrinsically
+   205px. The spill was silent rather than loud: `.lv-seg` is `overflow: hidden`,
+   so it clipped mid-word instead of showing a scrollbar.
+   A container query asks the right question. `auto-fit` would too, but it answers
+   a different one — it packs in as many columns as fit, which gave three at 1440px
+   and broke the pairing the cards are laid out for (Attribution beside Content).
+   530px = two 260px columns + the 10px gap. */
+@container board (min-width: 530px) {
+  .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* The list gets exactly that height whether it holds one row or twenty, which is
    also what stops an empty card collapsing — every card's empty state is an <li>
@@ -485,8 +505,18 @@
 .lv-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 /* Attribution card. The dimension switch reuses .lv-win (the window picker's
-   button) rather than a new control — same shape, same affordance, one style. */
-.lv-utm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+   button) rather than a new control — same shape, same affordance, one style.
+
+   Wraps, for the same reason .lv-feed-head's filters do: the switch is three
+   WORDS, so its width is a property of the language, not a number this file can
+   know — a translation makes it wider and no breakpoint here would learn that.
+   The grid above is what guarantees the room (see .lv-grid); this is what makes
+   the card degrade legibly if it ever runs out anyway, instead of clipping. */
+.lv-utm-head { display: flex; align-items: center; justify-content: space-between; gap: 6px 8px; flex-wrap: wrap; }
+/* Never the thing that gives: shrinking a segmented control clips its own
+   buttons, because .lv-seg is `overflow: hidden` to keep its rounded ends. The
+   title yields instead — it wraps, and it re-reads fine. */
+.lv-utm-head .lv-seg { flex: none; }
 /* (segmented container: see .lv-seg) */
 /* Unattributed traffic is real but not a campaign — muted so the eye reads the
    named rows first, without hiding it. */
