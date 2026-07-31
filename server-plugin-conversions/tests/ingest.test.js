@@ -124,3 +124,68 @@ describe('ingestBatch', () => {
     expect(awareness.record).toHaveBeenCalledTimes(2)
   })
 })
+
+// The awareness `text` is what gets EMBEDDED, and it used to be the event name
+// and nothing else — "Conversion: page view", identical on every row and every
+// page. So the one question this data exists to answer ("who looked at the
+// booking page?") could not be answered by recall at all, while an engagement row
+// beside it embedded the sentence the person actually read.
+describe('what the conversion embeds', () => {
+  const textOf = (awareness) => awareness.record.mock.calls[0][0].text
+
+  it('names the page, so two different page views do not embed the same sentence', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'page_view', event_id: 'p1',
+      url: 'https://gpoint.bg/booking', title: 'Запазване на час',
+    })
+    expect(textOf(awareness)).toBe('Conversion: page view — Запазване на час')
+  })
+
+  // A url is not language: `/%D0%B7%D0%B0%D0%BF…` embeds as noise. The decoded
+  // path is the fallback when the client sends no title.
+  it('falls back to the decoded path when there is no title', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'page_view', event_id: 'p2',
+      url: 'https://gpoint.bg/%D0%B7%D0%B0%D0%BF%D0%B0%D0%B7%D0%B2%D0%B0%D0%BD%D0%B5-%D1%87%D0%B0%D1%81',
+    })
+    expect(textOf(awareness)).toBe('Conversion: page view — /запазване-час')
+  })
+
+  it('adds nothing for the homepage, which the path cannot describe', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, { standard: 'page_view', event_id: 'p3', url: 'https://gpoint.bg/' })
+    expect(textOf(awareness)).toBe('Conversion: page view')
+  })
+
+  // Recall relies on the verb being present — "who purchased?" has to match.
+  it('keeps the event name first, because that is what recall matches on', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'purchase', event_id: 'p4', url: 'https://gpoint.bg/checkout',
+      title: 'Checkout', value: 120, currency: 'BGN',
+    })
+    expect(textOf(awareness)).toBe('Conversion: purchase — Checkout — 120 BGN')
+  })
+
+  it('does not repeat the page when content_name already says it', async () => {
+    const { awareness } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'view_content', event_id: 'p5', url: 'https://gpoint.bg/x',
+      title: 'Laser hair removal', content_name: 'Laser hair removal',
+    })
+    expect(textOf(awareness)).toBe('Conversion: view content — Laser hair removal')
+  })
+
+  // `title` must not reach the network payload — it is context for us, not part
+  // of any network's event schema.
+  it('never sends the title on to the ad networks', async () => {
+    const { reporter } = setup()
+    await ingest.ingestEvent(PID, {
+      standard: 'page_view', event_id: 'p6', url: 'https://gpoint.bg/x', title: 'A page',
+    })
+    const canonical = reporter.report.mock.calls[0][1]
+    expect(JSON.stringify(canonical)).not.toContain('A page')
+  })
+})

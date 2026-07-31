@@ -23,15 +23,50 @@ export function init(deps) {
 }
 
 // A readable, embeddable one-liner so the conversion is queryable via recall
-// ("who purchased?", "interest in whitening"). This is what gets embedded.
-function describe(name, p) {
+// ("who purchased?", "interest in whitening"). This is what gets EMBEDDED, and
+// what a monitoring feed shows as the event's preview.
+//
+// It used to be the event name and nothing else. A page view recorded the text
+// "Conversion: page view" — identical on every row, on every page, forever — so
+// the one question this data exists to answer ("who looked at the booking page?")
+// could not be answered by recall at all. Compare an engagement row, which embeds
+// the sentence the person actually read.
+//
+// So WHAT they were looking at goes in, from the page title the client sends
+// (client-plugin-conversions), falling back to the decoded path. The url alone is
+// not a fix: `/%D0%B7%D0%B0%D0%BF%D0%B0%D0%B7…` is not language and embeds as
+// noise, while "Запазване на час" is the thing someone would actually search for.
+//
+// The "Conversion: <name>" prefix stays, and stays first: recall relies on the
+// verb ("who purchased?") being in the text. Core strips that leading echo for
+// DISPLAY (see stripTypeEcho in event-catalog.js), so the feed shows the
+// substance while the embedding keeps both.
+function describe(name, p, ctx = {}) {
   const bits = [`Conversion: ${name.replace(/_/g, ' ')}`]
+  const where = ctx.title || decodedPath(ctx.url)
+  if (where)                  bits.push(where)
   if (p.value != null)        bits.push(`${p.value}${p.currency ? ' ' + String(p.currency).toUpperCase() : ''}`)
   if (p.num_items != null)    bits.push(`${p.num_items} item${p.num_items === 1 ? '' : 's'}`)
-  if (p.content_name)         bits.push(p.content_name)
+  // Skipped when it would just repeat the title — a caller that sets
+  // content_name to the page name shouldn't produce it twice.
+  if (p.content_name && p.content_name !== where) bits.push(p.content_name)
   if (p.content_ids?.length)  bits.push(p.content_ids.join(', '))
   if (p.search_string)        bits.push(`"${p.search_string}"`)
   return bits.join(' — ')
+}
+
+// The path, percent-decoded, so a Bulgarian route reads as words rather than as
+// escape sequences. Local to ingest because this feeds the EMBEDDING, where
+// event-format's display cap and hostname fallback are both wrong.
+function decodedPath(url) {
+  if (!url) return null
+  try {
+    const { pathname } = new URL(url)
+    if (pathname === '/') return null            // the homepage adds nothing here
+    return decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
 }
 
 // Process one raw wire event for a passport.
@@ -43,10 +78,12 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
   // for the awareness record, audit row, and ad-network fan-out alike.
   if (resolvePassport) passportId = await resolvePassport(passportId)
 
-  const { standard, event: customName, ts, url, ...payloadIn } = raw
+  const { standard, event: customName, ts, url, title, ...payloadIn } = raw
 
-  // Validate against the right schema (unknown keys — standard/ts/url — are
+  // Validate against the right schema (unknown keys — standard/ts/url/title are
   // already destructured out; the schema strips anything else into nothing).
+  // `title` rides alongside `url` for exactly that reason: it is context about
+  // where the event happened, not part of any network's event schema.
   let name, kind, clean
   if (standard) {
     name = standard; kind = 'standard'
@@ -76,7 +113,7 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
     source:      'conversion',
     content_id:  `conversion:${name}:${eventId}`,
     content_url: url || null,
-    text:        describe(name, clean),
+    text:        describe(name, clean, { url, title }),
     meta:        { kind, event_id: eventId, ...clean },
   }).catch(err => logger?.warn?.({ err }, 'conversions: awareness.record failed'))
 

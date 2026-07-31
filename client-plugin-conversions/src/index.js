@@ -77,6 +77,14 @@ export default function conversionsPlugin(options = {}) {
           event_id: eventId,
           ts: new Date().toISOString(),
           url: typeof window !== 'undefined' ? window.location.href : null,
+          // The page's own title, as the human-readable anchor for this event.
+          // Without it a page view records the text "Conversion: page view" and
+          // nothing else — the same sentence on every row, which is what gets
+          // EMBEDDED, so "who looked at the booking page?" cannot be answered by
+          // recall. A url alone doesn't fix that: `/%D0%B7%D0%B0%D0%BF…` is not
+          // language. Sent separately from `content_name`, which is the caller's
+          // to set and must not be overwritten.
+          title: typeof document !== 'undefined' ? (document.title || null) : null,
         }
         const run = async () => {
           try {
