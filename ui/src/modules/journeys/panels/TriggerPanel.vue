@@ -22,6 +22,7 @@ const props = defineProps<{
   draft: any
   audiences: any[]
   eventsRegistry: any[]
+  eventFamilies?: any[]
   canAudiences?: boolean
   disabled?: boolean
   empty?: boolean          // no journey open — show the tip instead of the form
@@ -101,7 +102,7 @@ const setOp = (op: 'any' | 'all') => { if (!props.disabled) props.draft.trigger.
     <div v-if="draft.trigger.kind === 'event'" class="trig-fields">
       <span class="event-group-label">Events that trigger this journey</span>
       <p class="pane-tip">Any journey can also be enrolled into directly via the API/MCP, regardless of its trigger.</p>
-      <EventPicker :selected="draft.trigger.event" :events-registry="eventsRegistry"
+      <EventPicker :selected="draft.trigger.event" :events-registry="eventsRegistry" :event-families="eventFamilies"
         :disabled="disabled" @toggle="toggleEvent" />
     </div>
 

@@ -23,6 +23,7 @@ import * as ai from './ai.js'
 import * as templates from './templates.js'
 import * as awareness from './awareness/index.js'
 import * as eventRegistry from './event-registry/index.js'
+import * as eventCatalogModule from './event-catalog.js'
 import createNotify from './notify.js'
 import * as facts from './facts/index.js'
 import * as selector from './selector/index.js'
@@ -48,6 +49,13 @@ async function start() {
   const config = await loadConfig({ argv: process.argv, env: process.env })
   initLogger({ config })
   logger.info('Starting whitebox v2')
+
+  // What every event MEANS, folded from each plugin's static `events` declaration
+  // (see event-catalog.js). Built HERE rather than in the plugin loader's pre-pass
+  // because it is a property of the CONFIG — it needs nothing but the built plugin
+  // list, and the event registry needs it before any plugin has registered, so it
+  // can offer declared-but-never-yet-seen types to a picker.
+  const eventCatalog = eventCatalogModule.build(config.plugins || [], { logger })
 
   await db.init({ config })
   await redis.init({ config })
@@ -84,7 +92,7 @@ async function start() {
   // event `type` strings (not a declared catalog — see event-registry/index.js
   // header comment for why). Initialized before awareness/plugins so its
   // record() is available to every notify() call from the start.
-  eventRegistry.init({ db: db.get(), logger, config })
+  eventRegistry.init({ db: db.get(), logger, config, eventCatalog })
   await eventRegistry.migrate()
   eventRegistry.initQueue(queue)
   await eventRegistry.startSweep()
@@ -152,6 +160,7 @@ async function start() {
     template,
     awareness,
     eventRegistry,
+    eventCatalog,
     facts,
     selector,
     context,

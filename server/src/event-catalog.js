@@ -354,6 +354,31 @@ export function build(plugins = [], { logger } = {}) {
     channels: [...channels].sort(),
     conflicts,
     orphanDetail,
+
+    // ── the enumerable vocabulary ──────────────────────────────────────────
+    //
+    // Anything that offers event types to a human needs a LIST, and the only
+    // list available used to be "types seen in the log" — so the journeys
+    // trigger picker could not offer an event until it had already happened.
+    // You could not build "when a booking arrives, do X" on a fresh install,
+    // because crm.booking had never fired. Same flaw the channel filter had.
+    //
+    // `types` fixes it for everything declared exactly.
+    types: [...byType.keys()].sort(),
+
+    // `families` is the answer for everything that ISN'T predefined. A prefix
+    // declaration means "there will be types under here that I cannot list" —
+    // crm emits `crm.${kind}` where the kind is the host CRM's vocabulary, and
+    // conversions emits `conversion.${name}` where the name is whatever the site
+    // invents. Neither can ever be enumerated in advance.
+    //
+    // Publishing the families rather than pretending they don't exist is what
+    // makes that ACTIONABLE: a picker can offer free-text entry under a known
+    // prefix instead of a dead end, and it can say WHO owns the namespace. The
+    // alternative — waiting for one to occur — is the bug.
+    families: [...byPrefix.entries()]
+      .map(([prefix, spec]) => ({ prefix, module: spec.module, direction: typeof spec.direction === 'string' ? spec.direction : null }))
+      .sort((a, b) => a.prefix.localeCompare(b.prefix)),
   }
 }
 

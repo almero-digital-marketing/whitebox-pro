@@ -1,15 +1,22 @@
-// A real, per-occurrence log of recently-published events — NOT a
-// declared/curated catalog (plugins can't enumerate every event they might
-// ever publish up front; some, like conversions/crm, forward client- or
-// external-system-supplied names). Populated purely by observation: notify.js
-// calls record(type, payload) the instant an event actually publishes, storing
-// the full payload (and, when present, the passport it happened to) as its
-// own row — not just bumping a per-type counter. Retention-pruned (see
-// sweep()) rather than kept forever, since this reflects recent activity, not
-// permanent history. list() derives the same {type, count, first/last_seen}
-// shape the Journeys trigger picker already consumes, via a GROUP BY over the
-// log; recent() exposes the actual occurrences for anyone who needs to see
-// what really happened, not just that it happened.
+// A real, per-occurrence LOG of published events. Populated purely by
+// observation: notify.js calls record(type, payload) the instant an event
+// actually publishes, storing the full payload (and, when present, the passport
+// it happened to) as its own row — not just bumping a per-type counter.
+// Retention-pruned (see sweep()) rather than kept forever, since this reflects
+// recent activity, not permanent history. recent() exposes the actual
+// occurrences for anyone who needs to see what really happened, not just that it
+// happened.
+//
+// The log is still not a catalog, and it cannot be: plugins can't enumerate every
+// event they might ever publish, because some — conversions, crm — forward names
+// supplied by the client or an external system. That observation was right, but
+// the conclusion drawn from it was wrong. Observation was made the ONLY source of
+// the type vocabulary, so anything offering event types to a human could offer
+// only what had already happened, and the journeys trigger picker was unusable
+// for a new install.
+//
+// list() therefore merges this log with the DECLARED catalog and publishes the
+// open-ended prefixes separately. See list() for what each source answers.
 
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -20,12 +27,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TABLE = 'whitebox_event_registry'
 const OPEN = (req, res, next) => next()
 
-let db, logger, retentionDays, sweepIntervalMs
+let db, logger, retentionDays, sweepIntervalMs, eventCatalog
 let sweepQueue
 
 export function init(deps) {
   db = deps.db
   logger = deps.logger
+  // Optional: without it list() degrades to observation only, which is what this
+  // was before. Held as DATA — the registry still has no opinion about what a
+  // type means (see the note below aggregation); it only needs the vocabulary.
+  eventCatalog = deps.eventCatalog ?? null
   const cfg = deps.config?.eventRegistry || {}
   retentionDays = cfg.retentionDays ?? 90
   sweepIntervalMs = cfg.sweepIntervalMs ?? 24 * 60 * 60_000
@@ -65,14 +76,75 @@ export async function record(type, payload) {
   })
 }
 
-// The aggregate view — same shape the Journeys trigger picker already
-// consumes, now derived from the log rather than stored as its own row.
+// The vocabulary anything offering event types to a human needs: DECLARED and
+// OBSERVED, together, plus the families that can never be enumerated.
+//
+// This used to be observation alone, and that made the journeys trigger picker
+// unusable for exactly the events people most want to automate on. Its empty
+// state read "trigger one anywhere in the app and it'll show up here to pick
+// from" — so you could not build "when a booking arrives, do X" until a booking
+// had already arrived. Same flaw the Live channel filter had: a list derived from
+// what happened lately means the control is useless precisely when it's new.
+//
+// So three sources, and each answers something the others can't:
+//
+//   declared   every exact type a loaded plugin says it emits — offerable on a
+//              fresh install, before anything has happened.
+//   observed   what has actually occurred, with counts. The only source for a
+//              type from an OPEN vocabulary (crm.booking, conversion.signup),
+//              and the only thing that can say "this is really being used".
+//   families   the prefixes — `crm.`, `conversion.` — whose members are the host
+//              system's vocabulary, not ours. Nothing can list them in advance;
+//              publishing the prefix lets a caller offer free-text entry under it
+//              instead of a dead end. This is the answer to "what about the
+//              events that aren't predefined".
+//
+// A row's `count` distinguishes them without the caller needing to care: 0 means
+// declared but never seen.
 export async function list() {
   const rows = await db(TABLE).where('occurred_at', '>=', retentionCutoff())
     .groupBy('type').select('type')
     .min('occurred_at as first_seen_at').max('occurred_at as last_seen_at').count('* as count')
     .orderBy('type')
-  return rows.map(r => ({ ...r, count: Number(r.count) }))
+
+  const observed = rows.map(r => ({ ...r, count: Number(r.count) }))
+  const seen = new Set(observed.map(r => r.type))
+  const declaredTypes = eventCatalog?.types ?? []
+
+  const unseen = declaredTypes
+    .filter(t => !seen.has(t))
+    .map(type => ({ type, count: 0, first_seen_at: null, last_seen_at: null }))
+
+  // `module` and `direction` come free from the catalog and save every caller
+  // re-deriving them from the type string — grouping by the dot-prefix is what
+  // the picker was doing, and that is not the same as the owning module
+  // (`journey.*` is owned by `journeys`).
+  const declared = new Set(declaredTypes)
+  const annotate = (e) => {
+    const spec = eventCatalog ? lookupSpec(e.type) : null
+    return {
+      ...e,
+      declared: declared.has(e.type),
+      module: spec?.module ?? null,
+      direction: typeof spec?.direction === 'string' ? spec.direction : null,
+    }
+  }
+
+  return {
+    events: [...observed, ...unseen].map(annotate).sort((a, b) => a.type.localeCompare(b.type)),
+    families: eventCatalog?.families ?? [],
+  }
+}
+
+// The catalog's own matching rule, without importing its lookup() — the registry
+// takes the catalog as data and has no opinion about what a type MEANS (see the
+// note below aggregation).
+function lookupSpec(type) {
+  if (eventCatalog.byType?.has(type)) return eventCatalog.byType.get(type)
+  for (const p of eventCatalog.prefixes ?? []) {
+    if (type === p || type.startsWith(p)) return eventCatalog.byPrefix.get(p)
+  }
+  return null
 }
 
 // ── aggregation, for monitoring reads ───────────────────────────────────────

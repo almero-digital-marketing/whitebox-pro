@@ -177,6 +177,48 @@ describe('the channel list', () => {
   })
 })
 
+// Anything offering event types to a human needs a LIST, and the only list that
+// used to exist was "types seen in the log" — so the journeys trigger picker could
+// not offer an event until it had already happened.
+describe('the enumerable vocabulary', () => {
+  it('lists every exactly-declared type, so it can be offered before it fires', () => {
+    const cat = build([
+      { name: 'voip', events: { 'voip.click': 'in', 'voip.ring': 'in' } },
+      { name: 'mail', events: { 'mail.sent': 'out' } },
+    ])
+    expect(cat.types).toEqual(expect.arrayContaining(['mail.sent', 'voip.click', 'voip.ring']))
+    // core's own too — they exist whatever is installed
+    expect(cat.types).toEqual(expect.arrayContaining(['passport.created', 'session.started']))
+  })
+
+  it('keeps prefixes out of the type list, because a prefix is not a pickable event', () => {
+    const cat = build([{ name: 'crm', events: { 'crm.': 'in' } }])
+    expect(cat.types).not.toContain('crm.')
+  })
+
+  // The answer for everything that ISN'T predefined: crm emits `crm.${kind}` where
+  // the kind is the host CRM's vocabulary, conversions emits `conversion.${name}`
+  // where the name is whatever the site invents. Publishing the prefix, rather than
+  // pretending it doesn't exist, is what lets a picker offer free-text entry under
+  // it instead of a dead end.
+  it('publishes the open-ended families, with who owns each one', () => {
+    const cat = build([
+      { name: 'crm', events: { 'crm.': 'in' } },
+      { name: 'conversions', events: { 'conversion.': 'in', 'adnetwork.accepted': 'out' } },
+    ])
+    expect(cat.families).toEqual([
+      { prefix: 'conversion.', module: 'conversions', direction: 'in' },
+      { prefix: 'crm.', module: 'crm', direction: 'in' },
+    ])
+    // an exactly-declared type is not a family
+    expect(cat.families.map(f => f.prefix)).not.toContain('adnetwork.accepted')
+  })
+
+  it('has no families when every declaration is exact', () => {
+    expect(build([{ name: 'voip', events: { 'voip.click': 'in' } }]).families).toEqual([])
+  })
+})
+
 describe("core's own declarations", () => {
   it('gives every core event a usable direction', () => {
     const cat = build([])

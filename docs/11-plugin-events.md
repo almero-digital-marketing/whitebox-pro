@@ -183,6 +183,54 @@ its own events, so its traffic already arrives as `awareness.recorded` under
 whatever channel the touch happened on. Declaring `'engagement.'` (as live once
 did) classified nothing — it just added a filter option that could never match.
 
+## Events that can't be predefined
+
+Some types only exist at runtime. `crm.${kind}` takes the host CRM's record types;
+`conversion.${name}` takes whatever the site invents. A prefix declaration
+classifies them — but anything that offers event types **to a human** needs a
+*list*, and a prefix isn't one.
+
+That gap had a real cost. `GET /events/registry` used to return observed types
+only, so the journeys trigger picker could offer an event **only after it had
+already fired**. Its empty state said as much: *"trigger one anywhere in the app
+and it'll show up here to pick from."* You could not build "when a booking arrives,
+do X" on a fresh install. The same flaw the Live channel filter had.
+
+The route now merges three sources, because no one of them is sufficient:
+
+| source | answers | how to spot it |
+| --- | --- | --- |
+| **declared** | every exact type a loaded plugin emits — offerable on a fresh install | `declared: true`, `count: 0` if never seen |
+| **observed** | what has actually happened, and the *only* source for a runtime type like `crm.booking` | `count > 0` |
+| **families** | the prefixes whose members belong to an outside system | the `families` array |
+
+```json
+{
+  "events": [
+    { "type": "mail.sent",   "count": 0, "declared": true,  "module": "mail", "direction": "out" },
+    { "type": "crm.booking", "count": 2, "declared": false, "module": "crm",  "direction": "in" }
+  ],
+  "families": [
+    { "prefix": "crm.",        "module": "crm",         "direction": "in" },
+    { "prefix": "conversion.", "module": "conversions", "direction": "in" }
+  ]
+}
+```
+
+`count: 0` is how a caller tells "declared but never fired" from "in use" without
+needing to care where the row came from. `declared: false` with a `module` means
+the type came from an open family — nobody named it, but its owner is known.
+
+**Publishing the families is the point.** A namespace nobody can enumerate isn't a
+gap to hide; it's a namespace an outside system owns. Saying so lets a UI offer
+free-text entry under a fixed prefix — which works before the event has ever
+happened — instead of a dead end. The journeys picker does exactly that.
+
+Nothing validates a trigger against this list, incidentally, and nothing should:
+the journeys schema takes `z.array(z.string().min(1))`, because a type from an open
+vocabulary is legitimate before it has ever been seen. The list is there to help a
+person choose, not to constrain them.
+
 ## Undeclared events
 
 An event nobody declares classifies as `unknown` — deliberately, and never as

@@ -53,7 +53,7 @@ const authStore = useAuthStore()
 // `enrollments` is read here only for the accordion header's count — the
 // panel itself gets it from the store directly. Loaded eagerly on select, so
 // the count is right while the panel is still collapsed.
-const { journeys, eventsRegistry, stepCounts, enrollments } = storeToRefs(store)
+const { journeys, eventsRegistry, eventFamilies, stepCounts, enrollments } = storeToRefs(store)
 const { audiences, segments } = storeToRefs(audStore)
 const { campaigns } = storeToRefs(campStore)
 const canWrite = computed(() => authStore.hasPermission('journeys:write'))
@@ -473,7 +473,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
         <AccordionPanel value="trigger">
           <AccordionHeader>Trigger</AccordionHeader>
           <AccordionContent>
-            <TriggerPanel :draft="draft" :audiences="audiences" :events-registry="eventsRegistry"
+            <TriggerPanel :draft="draft" :audiences="audiences" :events-registry="eventsRegistry" :event-families="eventFamilies"
               :can-audiences="canAudiences" :disabled="!isEditable || !canWrite" :empty="!working" />
           </AccordionContent>
         </AccordionPanel>
@@ -481,7 +481,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
         <AccordionPanel value="goal">
           <AccordionHeader>Goal</AccordionHeader>
           <AccordionContent>
-            <GoalPanel :draft="draft" :events-registry="eventsRegistry"
+            <GoalPanel :draft="draft" :events-registry="eventsRegistry" :event-families="eventFamilies"
               :disabled="!isEditable || !canWrite" :empty="!working" />
           </AccordionContent>
         </AccordionPanel>

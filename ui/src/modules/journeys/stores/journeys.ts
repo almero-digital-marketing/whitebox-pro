@@ -18,6 +18,11 @@ export const useJourneysStore = defineStore('journeys', () => {
   const enrollments = ref<any[]>([])
   const currentEnrollment = ref<any | null>(null)
   const eventsRegistry = ref<any[]>([])
+  // The open-ended namespaces — `crm.`, `conversion.` — whose members are the host
+  // system's vocabulary, not ours, so nothing can list them in advance. Offered as
+  // free-text entry in the picker, because the alternative is what this used to be:
+  // waiting for the event to happen before you could automate on it.
+  const eventFamilies = ref<any[]>([])
   const stepCounts = ref<Record<string, number>>({})
   // Fetched per open journey rather than cached on the list row: the numbers
   // move on their own (a goal event fires days after the enrollment did), so a
@@ -29,7 +34,11 @@ export const useJourneysStore = defineStore('journeys', () => {
     try { journeys.value = (await client.list({ limit: CATALOGUE_MAX })).rows } catch (e: any) { error.value = e.message; notifyError(`Couldn't load journeys: ${e.message}`) }
   }
   async function loadEventsRegistry() {
-    try { eventsRegistry.value = await client.eventsRegistry() } catch (e: any) { notifyError(`Couldn't load the event registry: ${e.message}`) }
+    try {
+      const res = await client.eventsRegistry()
+      eventsRegistry.value = res?.events ?? []
+      eventFamilies.value = res?.families ?? []
+    } catch (e: any) { notifyError(`Couldn't load the event registry: ${e.message}`) }
   }
   const getJourney = (id: string) => client.get(id)
 
@@ -73,7 +82,7 @@ export const useJourneysStore = defineStore('journeys', () => {
   return {
     rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
     pageSize: rail.pageSize, searchJourneys: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
-    journeys, enrollments, currentEnrollment, eventsRegistry, stepCounts, results, error,
+    journeys, enrollments, currentEnrollment, eventsRegistry, eventFamilies, stepCounts, results, error,
     loadJourneys, getJourney, createJourney, patchJourney, removeJourney,
     activateJourney, pauseJourney, enrollPassport,
     loadEnrollments, loadEnrollmentDetail, exitEnrollment, loadResults,

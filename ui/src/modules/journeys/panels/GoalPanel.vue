@@ -18,6 +18,7 @@ import './panel.css'
 const props = defineProps<{
   draft: any
   eventsRegistry: any[]
+  eventFamilies?: any[]
   disabled?: boolean
   empty?: boolean
 }>()
@@ -58,7 +59,7 @@ function setWindow(raw: string) {
          a third uppercase label sat directly on top of an identical one and
          made the two levels indistinguishable -->
     <div class="goal-sec">
-      <EventPicker :selected="events" :events-registry="eventsRegistry" :disabled="disabled"
+      <EventPicker :selected="events" :events-registry="eventsRegistry" :event-families="eventFamilies" :disabled="disabled"
         empty="No events observed yet — a goal is measured against real events, so trigger one first."
         @toggle="toggleEvent" />
     </div>

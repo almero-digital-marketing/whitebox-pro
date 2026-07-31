@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import * as eventRegistry from '../../src/event-registry/index.js'
+import { build } from '../../src/event-catalog.js'
 
 // A shared, chainable, thenable query-builder fake — every method records the
 // call and returns itself so the real chain shapes (`.insert(...)`,
@@ -74,12 +75,12 @@ describe('event-registry: record() — a real log row per occurrence, not an ups
   })
 })
 
-describe('event-registry: list() — aggregate view derived from the log', () => {
+describe('event-registry: list() — the type vocabulary', () => {
   it('groups by type and derives count + first/last seen, filtered to the retention window', async () => {
     const { db, log } = makeDb({ resolved: [{ type: 'mail.sent', first_seen_at: new Date(), last_seen_at: new Date(), count: '3' }] })
     eventRegistry.init({ db, logger: console, config: { eventRegistry: { retentionDays: 30 } } })
-    const rows = await eventRegistry.list()
-    expect(rows).toEqual([expect.objectContaining({ type: 'mail.sent', count: 3 })])   // string count coerced to a number
+    const { events } = await eventRegistry.list()
+    expect(events).toEqual([expect.objectContaining({ type: 'mail.sent', count: 3 })])   // string count coerced to a number
 
     const whereCall = log.find(([m]) => m === 'where')
     const [col, op, cutoff] = whereCall[1]
@@ -88,6 +89,72 @@ describe('event-registry: list() — aggregate view derived from the log', () =>
     const daysAgo = (Date.now() - cutoff.getTime()) / (24 * 60 * 60_000)
     expect(daysAgo).toBeCloseTo(30, 0)
     expect(log.some(([m]) => m === 'groupBy')).toBe(true)
+  })
+
+  // Observation alone made the journeys trigger picker unusable on a fresh
+  // install: you could not automate on an event until it had already happened,
+  // which is precisely backwards for "when a booking arrives, do X".
+  it('offers a declared type that has never been observed', async () => {
+    const { db } = makeDb({ resolved: [] })
+    eventRegistry.init({
+      db, logger: console, config: {},
+      eventCatalog: build([{ name: 'voip', events: { 'voip.click': 'in' } }]),
+    })
+    const { events } = await eventRegistry.list()
+    const click = events.find(e => e.type === 'voip.click')
+    // count 0 is how a caller tells "declared but never fired" from "in use"
+    expect(click).toMatchObject({ type: 'voip.click', count: 0, declared: true, module: 'voip', direction: 'in' })
+    expect(click.last_seen_at).toBeNull()
+  })
+
+  it('keeps the observed count for a type that is both declared and seen', async () => {
+    const { db } = makeDb({ resolved: [{ type: 'voip.click', first_seen_at: new Date(), last_seen_at: new Date(), count: '7' }] })
+    eventRegistry.init({
+      db, logger: console, config: {},
+      eventCatalog: build([{ name: 'voip', events: { 'voip.click': 'in' } }]),
+    })
+    const { events } = await eventRegistry.list()
+    expect(events.filter(e => e.type === 'voip.click')).toHaveLength(1)   // not duplicated
+    expect(events.find(e => e.type === 'voip.click')).toMatchObject({ count: 7, declared: true })
+  })
+
+  // The answer to "what about events that aren't predefined". crm emits
+  // `crm.${kind}` where the kind is the host CRM's vocabulary — it can never be
+  // enumerated, so the PREFIX is published and a caller offers free-text under it.
+  it('publishes the open-ended families rather than pretending they do not exist', async () => {
+    const { db } = makeDb({ resolved: [] })
+    eventRegistry.init({
+      db, logger: console, config: {},
+      eventCatalog: build([{ name: 'crm', events: { 'crm.': 'in' } }]),
+    })
+    const { events, families } = await eventRegistry.list()
+    expect(families).toEqual(expect.arrayContaining([{ prefix: 'crm.', module: 'crm', direction: 'in' }]))
+    // …and a prefix is NOT offered as a pickable type, because it isn't one
+    expect(events.map(e => e.type)).not.toContain('crm.')
+  })
+
+  // A runtime type from an open family is only knowable by observation, and it
+  // still has to be annotated with who owns it.
+  it('annotates an observed type from an open family with its owning module', async () => {
+    const { db } = makeDb({ resolved: [{ type: 'crm.booking', first_seen_at: new Date(), last_seen_at: new Date(), count: '2' }] })
+    eventRegistry.init({
+      db, logger: console, config: {},
+      eventCatalog: build([{ name: 'crm', events: { 'crm.': 'in' } }]),
+    })
+    const { events } = await eventRegistry.list()
+    // `declared: false` — nobody named this type; the family covers it
+    expect(events.find(e => e.type === 'crm.booking'))
+      .toMatchObject({ type: 'crm.booking', count: 2, declared: false, module: 'crm', direction: 'in' })
+  })
+
+  it('degrades to observation only when no catalog was handed over', async () => {
+    const { db } = makeDb({ resolved: [{ type: 'mail.sent', first_seen_at: new Date(), last_seen_at: new Date(), count: '1' }] })
+    eventRegistry.init({ db, logger: console, config: {} })
+    const { events, families } = await eventRegistry.list()
+    // exactly what was observed — core's declared types are NOT invented here,
+    // because without a catalog there is nothing to merge
+    expect(events).toHaveLength(1)
+    expect(families).toEqual([])
   })
 })
 
