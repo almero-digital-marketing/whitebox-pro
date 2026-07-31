@@ -30,6 +30,7 @@ import * as ai from '../src/ai.js'
 import * as context from '../src/context.js'
 import * as awareness from '../src/awareness/index.js'
 import * as eventRegistry from '../src/event-registry/index.js'
+import * as eventCatalogModule from '../src/event-catalog.js'
 import * as facts from '../src/facts/index.js'
 import * as selector from '../src/selector/index.js'
 import * as mcp from '../src/mcp.js'
@@ -150,6 +151,33 @@ const peoplePlugin = people({
 // acts. Registered last so mail/sms are already in ctx.plugins for its
 // delivery-health card (both soft — absent just omits that card).
 const livePlugin = live({ auth: scopeAuth('live:read') })
+
+// The SECOND hand-rolled pre-pass, for the same reason as the permissions one
+// below: what each plugin's EVENTS mean, folded into one catalog.
+//
+// server.js builds this from `config.plugins` before anything registers. This
+// script names its plugins by hand, so without this it simply never got built —
+// and every consumer degraded silently rather than failing. The Journeys trigger
+// picker fell back to observation alone, which is the exact defect the catalog
+// was introduced to fix (you could not automate on `booking.created` until a
+// booking had already happened). Live logged `ctx.eventCatalog is missing`,
+// classified everything as `unknown`, showed an empty channel filter and a feed
+// with no detail. Both had been correct code reading an absent manifest.
+//
+// Built here because that is the earliest point where every plugin INSTANCE
+// exists — campaigns' factory needs the audiences service, so the list cannot be
+// assembled before registration begins (see above).
+const eventCatalog = eventCatalogModule.build(
+  [audiencesPlugin, campaignsPlugin, analyticsPlugin, oauthPlugin, mailPlugin, smsPlugin, journeysPlugin, peoplePlugin, livePlugin],
+  { logger },
+)
+ctx.eventCatalog = eventCatalog
+// Re-init rather than move the original call: the registry has to be live from
+// the very first notify() (see its init above, before awareness and plugins),
+// but the catalog cannot exist that early here. init() is pure assignment, so
+// the second call only fills in what the first could not — migrate/queue/sweep
+// are separate calls and are NOT repeated.
+eventRegistry.init({ db: db.get(), logger, config, eventCatalog })
 
 // Aggregate every plugin's declared permission catalog BEFORE oauth
 // registers (it reads ctx.permissions.catalog at register time) — mirrors
