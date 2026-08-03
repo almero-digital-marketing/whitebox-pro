@@ -20,6 +20,17 @@ function init(options) {
 
   io = new Server(options.server, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
+    // Where the engine listens. Default `/socket.io`, which is right both for a
+    // root-mounted server and for a reverse proxy that STRIPS its prefix before
+    // forwarding (`proxy_pass http://host:port/` — the trailing slash) — the
+    // server never sees the prefix, so it needs to know nothing about it.
+    //
+    // Set it only for a proxy that PRESERVES the prefix, where the server does see
+    // `/whitebox/socket.io/…` and would otherwise 404 it. The client derives the
+    // same value from its `url` on its own (client/src/transport.js), so these two
+    // agree without being configured twice — as long as the proxy's behaviour and
+    // this setting match.
+    ...(options.path ? { path: options.path } : {}),
   })
 
   io.on('connection', async socket => {

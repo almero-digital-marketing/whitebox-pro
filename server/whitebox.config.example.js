@@ -58,6 +58,20 @@ export default async (runtime) => ({
   // trusted address/subnet — NEVER a bare `true` (see docs/04-configuration.md).
   // trustProxy: 1,
 
+  // Where socket.io's engine listens. Needed ONLY when the server is mounted under
+  // a path prefix by a proxy that PRESERVES that prefix when forwarding — e.g.
+  // `location /whitebox/ { proxy_pass http://127.0.0.1:3000; }` (no trailing slash
+  // on proxy_pass), where the server receives `/whitebox/socket.io/…` and would
+  // otherwise 404 it. The SDK derives the same value from the `url` it is given, so
+  // this is the only end that needs telling.
+  //
+  // Leave it unset for a root mount, and for the more common prefix-STRIPPING proxy
+  // (`proxy_pass http://127.0.0.1:3000/` — note the trailing slash), where the
+  // server never sees the prefix at all. Everything else in the server is already
+  // path-agnostic; the socket is the exception because socket.io reads a url's path
+  // as a namespace rather than a prefix.
+  // connect: { path: '/whitebox/socket.io' },
+
   logger: {
     level: process.env.WB_LOG_LEVEL || 'info',   // trace | debug | info | warn | error | fatal
     // transport: null                            // set to null to disable pretty-print in production

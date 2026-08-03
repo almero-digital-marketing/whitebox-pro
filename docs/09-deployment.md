@@ -15,7 +15,11 @@ services:
 
 Run it with a process manager (systemd, PM2, a container orchestrator). The server
 binds `WB_PORT`. Front it with TLS (reverse proxy) — webhooks and MCP must be
-HTTPS.
+HTTPS. Set [`trustProxy`](04-configuration.md#trust-proxy) when you do, or every
+visitor geolocates to the proxy. It can live on its own subdomain or on a path of a
+shared origin — see [mounting under a path
+prefix](04-configuration.md#mounting-under-a-path-prefix), which also has the nginx
+`location` block (including the two WebSocket upgrade headers the socket needs).
 
 ```bash
 cd whitebox-pro-server

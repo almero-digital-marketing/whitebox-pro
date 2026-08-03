@@ -124,7 +124,10 @@ async function start() {
   const app = createApp({ trustProxy: config.trustProxy })
   const server = http.createServer(app)
 
-  connect.init({ server, events, sessions })
+  // `config.connect.path` only for a reverse proxy that preserves its path prefix
+  // — see the note in connect.init(). Unset is correct for a root mount and for
+  // the usual prefix-stripping proxy.
+  connect.init({ server, events, sessions, path: config.connect?.path })
   registerHealth(app, { db: db.get(), redis: redis.get() })
   sessions.register(app)
   passports.register(app)

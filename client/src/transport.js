@@ -4,6 +4,35 @@
 // on demand the first time the transport opens. Sites that only use HTTP plugins
 // (e.g. just the mail contact form) can opt out by passing `transport: false`.
 
+// Split the configured url into the ORIGIN to connect to and the engine PATH.
+//
+// socket.io does not treat the path part of a url as a prefix — it reads it as a
+// NAMESPACE. So `io('https://example.com/whitebox')` connects to
+// `https://example.com`, asks for namespace `/whitebox`, and puts the engine at
+// `/socket.io` — not `/whitebox/socket.io`. Behind a reverse proxy that only
+// forwards `/whitebox/*` that request never reaches the server, and the namespace
+// isn't one the server serves either. The HTTP half of the SDK keeps working
+// (`${baseUrl}${path}` needs no help), so the failure is silent: tracking looks
+// fine and realtime just never connects.
+//
+// Hence this: connect to the origin, and move the prefix into `path`, which is
+// what socket.io's option is for.
+//
+// A url with no path is the overwhelming case and is unchanged — origin as given,
+// `/socket.io`, no namespace.
+export function socketTarget(url) {
+  try {
+    const u = new URL(url)
+    const prefix = u.pathname.replace(/\/+$/, '')   // '' for '/' or ''
+    return { origin: u.origin, path: `${prefix}/socket.io` }
+  } catch {
+    // Not an absolute url (a relative base, or something odd). Pass it through
+    // rather than guessing — the previous behaviour, and a same-origin relative
+    // base already resolves correctly.
+    return { origin: url, path: '/socket.io' }
+  }
+}
+
 export default function createTransport({ url, getSessionId, getPassportId, emitter, logger }) {
   let socket = null
   let connected = false
@@ -14,7 +43,14 @@ export default function createTransport({ url, getSessionId, getPassportId, emit
 
     const { io } = await import('socket.io-client')
 
-    socket = io(url, {
+    const { origin, path } = socketTarget(url)
+    socket = io(origin, {
+      // Where the engine lives on the PUBLIC url. Derived from `url` above, so a
+      // prefix-STRIPPING proxy (`proxy_pass http://host:port/` — note the trailing
+      // slash) needs nothing configured: the server never sees the prefix and stays
+      // path-agnostic. A proxy that PRESERVES the prefix needs the server told the
+      // matching value too — `connect: { path }` in whitebox.config.js.
+      path,
       transports: ['websocket', 'polling'],
       // `auth` as a FUNCTION, because socket.io re-evaluates it before every
       // connection attempt — where `query` is captured once, at construction.

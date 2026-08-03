@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import createTransport from '../src/transport.js'
+import createTransport, { socketTarget } from '../src/transport.js'
 import createEmitter from '../src/emitter.js'
 
 // Mock socket.io-client at the module level so the dynamic import in transport.js
@@ -173,5 +173,46 @@ describe('handshake identity', () => {
     })
     await t.open()
     expect(io.mock.calls[0][1].query).toEqual({ passport: 'p-1' })
+  })
+})
+
+// A url with a path prefix. socket.io reads a url's path as a NAMESPACE, not a
+// prefix — so passing the configured url straight to io() puts the engine at the
+// ORIGIN root, outside whatever the proxy forwards, and asks for a namespace the
+// server doesn't serve. Silently: the HTTP half of the SDK is unaffected, so
+// tracking keeps working and only realtime is dead.
+describe('socketTarget', () => {
+
+  it('moves a path prefix out of the origin and into the engine path', () => {
+    expect(socketTarget('https://gpoint.bg/whitebox'))
+      .toEqual({ origin: 'https://gpoint.bg', path: '/whitebox/socket.io' })
+  })
+
+  it('ignores a trailing slash, so both spellings of the same url agree', () => {
+    expect(socketTarget('https://gpoint.bg/whitebox/'))
+      .toEqual({ origin: 'https://gpoint.bg', path: '/whitebox/socket.io' })
+  })
+
+  it('keeps a multi-segment prefix whole', () => {
+    expect(socketTarget('https://a.bg/deep/er'))
+      .toEqual({ origin: 'https://a.bg', path: '/deep/er/socket.io' })
+  })
+
+  it('leaves a root-mounted url exactly as it was — the overwhelming case', () => {
+    expect(socketTarget('https://wb.example.com'))
+      .toEqual({ origin: 'https://wb.example.com', path: '/socket.io' })
+    expect(socketTarget('http://localhost:3100'))
+      .toEqual({ origin: 'http://localhost:3100', path: '/socket.io' })
+  })
+
+  it('treats a bare / as no prefix rather than emitting //socket.io', () => {
+    expect(socketTarget('http://localhost:3100/'))
+      .toEqual({ origin: 'http://localhost:3100', path: '/socket.io' })
+  })
+
+  it('passes a non-absolute url through instead of guessing', () => {
+    // A relative base already resolves same-origin, which is what it did before.
+    expect(socketTarget('/rel')).toEqual({ origin: '/rel', path: '/socket.io' })
+    expect(socketTarget('')).toEqual({ origin: '', path: '/socket.io' })
   })
 })

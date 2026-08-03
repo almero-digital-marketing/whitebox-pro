@@ -34,6 +34,7 @@ the factory form is preferred.
 | `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, concurrency) |
 | `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
 | `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
+| `connect` | mounted under a path prefix a proxy preserves | `{ path }` — where socket.io's engine listens — see below |
 
 ## The plugin pattern
 
@@ -124,6 +125,71 @@ A hop count of `1` means "trust exactly the immediate one hop, ignore anything
 further left in the header" — see [Express's `trust proxy`
 docs](https://expressjs.com/en/guide/behind-proxies.html) for the full value
 grammar (hop count, IP/subnet, or a custom function).
+
+## Mounting under a path prefix
+
+You can serve WhiteBox from a path on a shared origin (`https://example.com/whitebox`)
+rather than its own subdomain. One origin means one DNS lookup, one TLS handshake, no
+CORS preflight on `/sessions/resolve` — which sits on the critical path before the
+socket opens — and HTTP/2 multiplexing over a single connection.
+
+Point the SDK at the prefixed url and it works:
+
+```js
+whitebox({ url: 'https://example.com/whitebox' })
+```
+
+Everything in the SDK's HTTP half is already prefix-relative. The **socket** is the
+one thing that needs care, because socket.io reads a url's path as a **namespace**,
+not a prefix: `io('https://example.com/whitebox')` connects to the origin, asks for
+namespace `/whitebox`, and puts its engine at `https://example.com/socket.io` — off
+the end of whatever the proxy forwards, and a namespace the server doesn't serve.
+The SDK handles this for you by splitting the url into an origin and an engine
+`path` (`socketTarget()` in `client/src/transport.js`), so you don't configure it.
+
+It's worth knowing the failure mode it avoids, because it is **silent**: the HTTP
+half keeps working, so page views, sessions and conversions all land normally and
+only realtime is dead.
+
+What still matters is which of the two proxy shapes you use, because they differ in
+what the server sees:
+
+**Stripping the prefix** (the usual one — note the trailing slash on `proxy_pass`,
+which is what makes nginx strip):
+
+```nginx
+location /whitebox/ {
+  proxy_pass http://127.0.0.1:3000/;
+
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;      # without these two the socket
+  proxy_set_header Connection "upgrade";       # silently falls back to polling
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+The server never sees `/whitebox` and needs **no configuration at all** — it stays
+path-agnostic, and the same server can be mounted at a different prefix, or at a
+root, without a redeploy. Prefer this.
+
+**Preserving the prefix** (`proxy_pass` with no trailing slash) sends the server
+`/whitebox/socket.io/…`, which it would 404. Tell it where to listen:
+
+```js
+export default async (runtime) => ({
+  connect: { path: '/whitebox/socket.io' },
+  // …
+})
+```
+
+This must match the SDK's `url` — the two are derived from the same prefix but
+configured at opposite ends, so a mismatch here is the one way to reintroduce the
+silent no-realtime failure. Leave `connect` unset for a root mount or a stripping
+proxy.
+
+Set [`trustProxy`](#trust-proxy) either way.
 
 ## Auth model
 
