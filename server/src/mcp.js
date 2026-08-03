@@ -19,6 +19,35 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 
+// The `mcp:use` scope, declared for the permission catalog in the same shape a
+// plugin uses — so it is GRANTABLE. Without this the scope existed only in the
+// comment above and in the `scope` gate of whoever configured it: the catalog is
+// what the console's user editor lists and what expands the '*' bootstrap
+// sentinel, so a scope missing from it can be enforced but never handed to
+// anyone. Gating this endpoint on an ungrantable scope denies everybody, which
+// looks exactly like a broken deployment.
+//
+// It belongs to core rather than a plugin because core mounts the endpoint —
+// the same reason server-plugin-people declares `people:read`. plugins.js folds
+// it in ahead of the plugin entries; see the note there.
+//
+// NOT in `defaults`, deliberately. One MCP session reaches every tool the
+// holder's other scopes allow, in one place, driven by a model — that is a
+// deliberate grant, not a starting condition. (Compare people, also `[]`;
+// analytics defaults its own read/write because that is a screen a user opens,
+// not a programmable surface.)
+export const PERMISSIONS = {
+  module: 'mcp',
+  items: [
+    {
+      key: 'mcp:use',
+      label: 'Use MCP',
+      description: 'Connect an AI agent to whitebox over MCP. Which tools it may then invoke is decided by this user\'s other permissions.',
+    },
+  ],
+  defaults: [],
+}
+
 // Dependencies + state captured once via init() — module-level singleton, no
 // wrapping factory closure. Matches the core pattern (passports, sessions, …).
 // init() resets the registration ledger every call: the SDK throws if a tool

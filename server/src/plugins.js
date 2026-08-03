@@ -1,4 +1,5 @@
 import logger from './logger.js'
+import * as mcp from './mcp.js'
 
 // Plugins are built in whitebox.config.js — each plugin package exports a named
 // factory (`engagement`, `crm`, …) that is imported there and called with its
@@ -29,7 +30,25 @@ async function load(app, ctx) {
   // campaigns' entries even if oauth is registered first). A plugin's
   // `permissions` is a static field on its factory's return value — no
   // register() call needed to read it.
-  ctx.permissions = { catalog: ctx.config.plugins.filter(p => p?.permissions).map(p => ({ module: p.name, ...p.permissions })) }
+  //
+  // CORE's own entries come first. Core enforces scopes too — `mcp:use` gates the
+  // MCP endpoint core mounts — and a scope that never reaches this catalog can be
+  // enforced but not GRANTED: the catalog is what the console's user editor lists
+  // and what expands the '*' bootstrap sentinel into real keys. So core declaring
+  // nothing here meant `mcp: { auth: … }` on `mcp:use` denied every caller,
+  // indistinguishably from a misconfiguration.
+  //
+  // This mirrors the event catalog (see the note just below, and CORE_EVENTS in
+  // event-catalog.js): core declares alongside plugins rather than being a special
+  // case the consumers have to know about. Ordering is cosmetic — the console
+  // renders groups in array order — but core-then-plugins reads better than an
+  // 'mcp' group appearing between two plugin names.
+  ctx.permissions = {
+    catalog: [
+      mcp.PERMISSIONS,
+      ...ctx.config.plugins.filter(p => p?.permissions).map(p => ({ module: p.name, ...p.permissions })),
+    ],
+  }
 
   // `ctx.eventCatalog` — what each plugin's EVENTS mean — arrives already built,
   // from server.js. Same idea as the permission catalog above and read from the

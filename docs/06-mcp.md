@@ -78,6 +78,30 @@ Any OAuth resource-server verifier can be dropped in the same way; Auth0 is an
 external-provider example, the built-in server a first-party one. See
 [Integrations](08-integrations.md).
 
+### Two layers: `mcp:use`, then per-tool scopes
+
+`mcp:use` above gates only **whether a client may speak MCP at all**. Which
+capabilities it can then invoke is a separate check: `tool()` and `resource()` take
+their own `scope`, verified against the same token's `scope` claim. So
+`server-plugin-people` registers its erase tool under `people:erase`, and an agent
+that reached the endpoint still cannot erase anyone unless the token carries it.
+
+An agent's reach is therefore the **intersection of the human's own permissions**
+with what MCP exposes — not a second, parallel authorization system to keep in sync.
+A tool registered with no `scope` is `mcp:use`-only.
+
+`mcp:use` must be **granted**, not merely configured. Core declares it into the
+permission catalog (`PERMISSIONS` in `server/src/mcp.js`, folded in by the loader
+alongside each plugin's), which is what makes it appear in the console's user editor
+and what the `'*'` bootstrap admin expands into. Gate the endpoint on a scope that
+isn't in the catalog and every caller gets a 403 that looks like a broken
+deployment — there would be no way to hand the scope to anyone.
+
+With the built-in server, grant it per user in the console (**Users → permissions**);
+the bootstrap admin created by `create-admin.mjs` holds `'*'` and so already has it.
+With Auth0 or another external issuer, `mcp:use` has to be in the scopes that issuer
+puts in the token — the catalog governs WhiteBox's own server, not a third party's.
+
 ## Connecting a client
 
 - **With a static token:** point your MCP client at `https://your-host/mcp` and

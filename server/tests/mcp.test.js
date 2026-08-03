@@ -104,6 +104,23 @@ describe('mcp registry', () => {
     expect(() => mcp.prompt({})).toThrow(/name/)
   })
 
+  // The scope that gates the endpoint has to be GRANTABLE, not just enforceable.
+  // It lived only in a comment until this declaration existed, so configuring
+  // `mcp: { auth: scopeAuth('mcp:use') }` denied every caller — the console had no
+  // way to hand the scope to anyone, and '*' didn't expand into it either.
+  it('declares mcp:use for the permission catalog, in the shape a plugin uses', () => {
+    expect(mcp.PERMISSIONS.module).toBe('mcp')
+    expect(mcp.PERMISSIONS.items.map(i => i.key)).toEqual(['mcp:use'])
+    for (const item of mcp.PERMISSIONS.items) {
+      expect(item.label).toBeTruthy()
+      expect(item.description).toBeTruthy()
+    }
+  })
+
+  it('does not put mcp:use in defaults — one session reaches every tool the holder can', () => {
+    expect(mcp.PERMISSIONS.defaults).toEqual([])
+  })
+
   it('inspect() reflects current state', () => {
     const mcp = createMcp({ logger })
     mcp.tool({ name: 'a', inputSchema: {}, handler: async () => ({}) })
