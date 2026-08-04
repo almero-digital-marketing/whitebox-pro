@@ -28,6 +28,38 @@ export async function createClient({ name, redirectUris }) {
   return row
 }
 
+// The first-party console's client, with a WELL-KNOWN id rather than a generated one.
+//
+// The console is shipped as a published package (whitebox-pro-ui), so its client_id cannot
+// be a per-install UUID: it would have to be baked in at build time, and the build happens
+// once, for everyone. A stable id is safe here — clients are public (no secret), PKCE proves
+// possession of the original request, and redirect_uri is still matched exactly against the
+// list below, so a predictable id grants nothing on its own.
+//
+// Idempotent, and it MERGES redirect URIs rather than replacing them: a deployment that
+// moves its appUrl should keep working on the old one until DNS and links catch up, and an
+// operator who added a URI by hand must not silently lose it on the next boot.
+export const CONSOLE_CLIENT_ID = 'whitebox-console'
+
+export async function ensureConsoleClient({ redirectUris }) {
+  const existing = await getClient(CONSOLE_CLIENT_ID)
+  if (!existing) {
+    const [row] = await db('whitebox_oauth_clients')
+      .insert({ client_id: CONSOLE_CLIENT_ID, name: 'WhiteBox console', redirect_uris: JSON.stringify(redirectUris) })
+      .returning(['client_id', 'name', 'redirect_uris'])
+    return { row, created: true }
+  }
+  const current = typeof existing.redirect_uris === 'string' ? JSON.parse(existing.redirect_uris) : existing.redirect_uris
+  const merged = [...new Set([...(current || []), ...redirectUris])]
+  if (merged.length === (current || []).length) return { row: existing, created: false }
+  await db('whitebox_oauth_clients')
+    .where({ client_id: CONSOLE_CLIENT_ID })
+    .update({ redirect_uris: JSON.stringify(merged) })
+  // Re-read rather than RETURNING: an update's returning clause is Postgres-specific, and
+  // reading back is both portable and obviously correct.
+  return { row: await getClient(CONSOLE_CLIENT_ID), created: false, added: merged.length - (current || []).length }
+}
+
 // redirect_uri must match one of the client's registered URIs EXACTLY — no
 // prefix/wildcard matching (RFC 6749 §3.1.2, and a classic real-world
 // bypass when implementations get this loose).

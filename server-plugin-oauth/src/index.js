@@ -86,6 +86,23 @@ export function oauth(options = {}) {
         }
       }
 
+      // The console's own OAuth client, with a well-known id. Without this a fresh install
+      // reaches the login screen and fails with "Unknown client_id": whitebox-pro-ui is a
+      // published bundle, so it cannot carry a per-install client_id, and there is no
+      // Dynamic Client Registration to fall back on. See store.ensureConsoleClient.
+      //
+      // Keyed on appUrl because that is where the console is served from, and the callback
+      // must be an exact match. Skipped when appUrl is unset — a deployment with no console
+      // needs no client for it.
+      if (appUrl) {
+        const base = appUrl.replace(/\/+$/, '')
+        const { created, added } = await store.ensureConsoleClient({ redirectUris: [`${base}/callback`] })
+        if (created) logger.info('Registered the console client %s for %s/callback', store.CONSOLE_CLIENT_ID, base)
+        else if (added) logger.info('Added %d redirect URI(s) to the console client', added)
+      } else {
+        logger.debug('appUrl is not set — no console OAuth client registered')
+      }
+
       // Lazy lookup so plugin load order doesn't matter (mail may register
       // after oauth) — mirrors server-plugin-mail's own getShortener.
       const getMail = () => ctx.plugins?.mail?.service

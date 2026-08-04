@@ -295,3 +295,39 @@ describe('store — status descriptions', () => {
     }
   })
 })
+
+// The console ships as a PUBLISHED bundle, so its client_id cannot be a per-install UUID —
+// it would have to be baked in at build time, once, for every install. A fresh install hit
+// "Unknown client_id" for exactly that reason.
+describe('ensureConsoleClient', () => {
+
+  it('creates the client with the well-known id on first call', async () => {
+    const { row, created } = await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'] })
+    expect(created).toBe(true)
+    expect(row.client_id).toBe('whitebox-console')
+    expect(await store.getClient('whitebox-console')).toBeTruthy()
+  })
+
+  it('is idempotent — a restart must not churn the row', async () => {
+    await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'] })
+    const { created } = await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'] })
+    expect(created).toBe(false)
+  })
+
+  // A deployment that moves its appUrl should keep working on the old one until DNS and
+  // links catch up, and an operator who added a URI by hand must not lose it on next boot.
+  it('MERGES redirect URIs instead of replacing them', async () => {
+    await store.ensureConsoleClient({ redirectUris: ['https://old.example.com/callback'] })
+    await store.ensureConsoleClient({ redirectUris: ['https://new.example.com/callback'] })
+    const client = await store.getClient('whitebox-console')
+    expect(store.redirectUriAllowed(client, 'https://old.example.com/callback')).toBe(true)
+    expect(store.redirectUriAllowed(client, 'https://new.example.com/callback')).toBe(true)
+  })
+
+  it('still matches redirect_uri exactly, so a predictable client_id grants nothing', async () => {
+    await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'] })
+    const client = await store.getClient('whitebox-console')
+    expect(store.redirectUriAllowed(client, 'https://evil.example.com/callback')).toBe(false)
+    expect(store.redirectUriAllowed(client, 'https://wb.example.com/callback/../x')).toBe(false)
+  })
+})

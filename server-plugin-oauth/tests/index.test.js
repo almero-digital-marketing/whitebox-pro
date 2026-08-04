@@ -43,7 +43,7 @@ describe('oauth().register() — admin auto-bootstrap from ADMIN_EMAIL/ADMIN_PAS
 
   beforeEach(() => {
     db = makeFakeDb()
-    logger = { child: () => logger, info: () => {}, warn: () => {}, error: () => {} }
+    logger = { child: () => logger, debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
     delete process.env.ADMIN_EMAIL
     delete process.env.ADMIN_PASSWORD
   })
@@ -96,7 +96,7 @@ describe('oauth().register() — admin auto-bootstrap from ADMIN_EMAIL/ADMIN_PAS
 describe('oauth().register() — monitoring surface', () => {
   it('returns store.status as service.status, so a board can discover it (docs/10-plugin-status.md)', async () => {
     const db = makeFakeDb()
-    const logger = { child: () => logger, info: () => {}, warn: () => {}, error: () => {} }
+    const logger = { child: () => logger, debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
     const registered = await oauth({ issuer: 'http://x/oauth', audience: 'a' })
       .register(express(), { db, logger, permissions: { catalog: [] } })
 

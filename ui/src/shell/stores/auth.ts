@@ -10,7 +10,22 @@ import { ref, computed } from 'vue'
 import { randomVerifier, randomState, challengeFromVerifier } from '../pkce'
 import { API_BASE } from '../apiBase'
 
-const CLIENT_ID = (import.meta as any).env?.VITE_OAUTH_CLIENT_ID || ''
+// The console's OAuth client. A CONSTANT, deliberately not a build-time env var.
+//
+// server-plugin-oauth registers a client with exactly this id on boot, from its configured
+// appUrl. It has to be a constant because this console ships as a PUBLISHED package: anything
+// read from the environment at build time is baked in once, for every install — and each
+// install generates its own client rows.
+//
+// It was VITE_OAUTH_CLIENT_ID, and that is precisely how a developer's local
+// `ui/.env.local` ended up published inside whitebox-pro-ui@0.1.0, hardcoding a client id
+// that existed only in their database. Every other install then failed with "Unknown
+// client_id". Vite loads .env.local in EVERY mode, including production, so
+// `npm run build` could not avoid it.
+//
+// Safe to be predictable: the client is public (no secret), PKCE proves possession of the
+// original authorization request, and redirect_uri is still matched exactly server-side.
+const CLIENT_ID = 'whitebox-console'
 const OAUTH_BASE = `${API_BASE}/oauth`
 const REFRESH_KEY = 'wb_refresh_token'
 const VERIFIER_KEY = 'wb_pkce_verifier'
