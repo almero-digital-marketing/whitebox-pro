@@ -96,10 +96,19 @@ everywhere; it just falls back to showing its raw key.
 
 ## Trust proxy
 
-Behind a reverse proxy (nginx, an ALB, Cloudflare — virtually any real
-deployment), Express's `req.ip` and `req.hostname` reflect the **proxy**, not
-the visitor, unless you tell Express how many hops to trust. Two features
-depend on this being set correctly:
+**You usually don't need to set this.** Core defaults `trust proxy` to
+`loopback, linklocal, uniquelocal`, which believes `X-Forwarded-For` only when the
+immediate peer is loopback, link-local or a private range — something that cannot be
+a client from the internet. So a proxy on the same host or the same private network
+is trusted automatically, and a server exposed directly to the internet ignores the
+header entirely. Set `trustProxy` explicitly only when your proxy reaches WhiteBox
+from a **public** address (a CDN or load balancer outside your network), or to
+narrow the default.
+
+That default exists because getting it wrong is silent. Behind a reverse proxy
+(nginx, Caddy, an ALB, Cloudflare — virtually any real deployment), Express's
+`req.ip` and `req.hostname` reflect the **proxy**, not the visitor. Two features
+depend on it:
 
 - **`server-plugin-geolocation`** reads `req.ip` to look up the visitor's
   location — without `trustProxy`, every visitor resolves to your proxy's own
@@ -107,17 +116,20 @@ depend on this being set correctly:
 - **`server-plugin-shortener`** reads `req.hostname` to detect the public host
   for the bare `/:code` redirect.
 
-Set it in `whitebox.config.js`:
+Override it in `whitebox.config.js` when the default doesn't fit:
 
 ```js
 export default async (runtime) => ({
-  trustProxy: 1,   // exactly one reverse proxy in front of this server
+  trustProxy: 1,                      // a proxy reaching us from a PUBLIC address
+  // trustProxy: '10.0.0.0/8',        // narrower than the default
+  // trustProxy: false,               // no proxy at all; ignore the header
   // …
 })
 ```
 
 **Use a hop count or an explicit trusted address/subnet list — never a bare
-`true`.** `true` makes Express trust whatever `X-Forwarded-For` value arrives
+`true`.** Note a hop count trusts the immediate peer *whatever it is*, which is
+precisely why it isn't the default: `true` makes Express trust whatever `X-Forwarded-For` value arrives
 with no verification; if there's no proxy in front actually stripping a
 client-supplied header first (or if a request reaches this server directly,
 bypassing your proxy), anyone can forge that header and spoof an arbitrary IP.

@@ -2,18 +2,39 @@ import express from 'express'
 import { randomUUID } from 'crypto'
 import logger from './logger.js'
 
+// Trust X-Forwarded-For, but ONLY from a peer that cannot be a visitor.
+//
+// Behind a reverse proxy — nginx, Caddy, an ALB, Cloudflare, virtually any real
+// deployment — `req.ip` is the PROXY's address, because that is who opened the
+// connection. The visitor's address arrives in X-Forwarded-For instead, and Express
+// ignores that header unless told to trust it. Left untrusted, everything that reads
+// an address silently reads the proxy's: server-plugin-geolocation resolves every
+// visitor to one place (or to nothing, from a loopback proxy), and the shortener's
+// bare /:code redirect stops matching because req.hostname comes from the same
+// mechanism. Both fail by doing nothing, which reads as "the feature is broken".
+//
+// The default below trusts the header only when the immediate peer is loopback,
+// link-local or a private range — i.e. something that cannot be a client from the
+// internet. So:
+//
+//   proxy on the same host or private network  →  header trusted, real visitor IP
+//   server exposed directly to the internet    →  peer is public, header IGNORED
+//
+// That is what makes a default safe here. Defaulting to a hop count would trust
+// whatever X-Forwarded-For a directly-connected client sent, letting anyone claim
+// any address — in a system that records addresses against people.
+const PRIVATE_PEERS = 'loopback, linklocal, uniquelocal'
+
 function createApp({ trustProxy } = {}) {
   const app = express()
 
-  // Behind a reverse proxy (nginx, an ALB, Cloudflare — virtually any real
-  // deployment), req.ip/req.hostname otherwise reflect the PROXY, not the
-  // visitor — silently breaking anything that reads them (geolocation's IP
-  // lookup, the shortener's public-host detection). Set via config.trustProxy
-  // in whitebox.config.js. Use a hop count (e.g. 1 for exactly one reverse
-  // proxy) or an explicit trusted address/subnet list — NEVER a bare `true`,
-  // which trusts whatever X-Forwarded-For arrives with no proxy to have
-  // stripped a client-forged one first. See docs/04-configuration.md.
-  if (trustProxy !== undefined) app.set('trust proxy', trustProxy)
+  // An explicit config.trustProxy always wins: a hop count (1 = exactly one reverse
+  // proxy), or an address/subnet list. NEVER a bare `true` — that trusts the whole
+  // chain with nothing having stripped a forged entry. See docs/04-configuration.md.
+  app.set('trust proxy', trustProxy === undefined ? PRIVATE_PEERS : trustProxy)
+  if (trustProxy === undefined) {
+    logger.debug('trust proxy defaulted to %s (set config.trustProxy to override)', PRIVATE_PEERS)
+  }
 
   // Embeddable browser SDK, arbitrary customer origins — same permissive
   // policy as the socket.io transport in connect.js. Express auto-answers
