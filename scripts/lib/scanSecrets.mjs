@@ -34,6 +34,22 @@ const CONTENT_PATTERNS = [
     re: /\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*['"][^'"$]{8,}['"]/i },
 ]
 
+// Literals that MATCH a pattern above but are provably NOT credentials.
+//
+// Every entry needs a reason, because an allowlist is how a scanner quietly stops working.
+// Keep them exact and narrow: the check is a substring test on the matched text, so a real
+// secret would have to literally contain one of these strings to slip through.
+//
+// These exist because whitebox-pro-ui publishes a BUNDLE — the first package here whose
+// shipped content includes third-party code, which then gets scanned as if it were ours.
+const ALLOWED_LITERALS = [
+  // @tinymce/tinymce-vue's fallback when no cloud key is supplied — literally the ABSENCE
+  // of a key: `var apiKey = props.apiKey ? props.apiKey : 'no-api-key'` (Editor.js). Without
+  // this, every single publish of the console would need --force, which is how a team learns
+  // to pass --force without reading the finding.
+  'no-api-key',
+]
+
 const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.wasm', '.mp3', '.mp4', '.pdf'])
 
 // Docs are full of illustrative placeholder values ("secret: 'your-token'")
@@ -68,8 +84,14 @@ export async function scanPackage(dir) {
       continue   // unreadable/binary — nothing to scan as text
     }
     for (const pat of CONTENT_PATTERNS) {
-      const m = pat.re.exec(text)
-      if (m) findings.push({ file: rel, kind: 'content', what: pat.name, snippet: m[0].slice(0, 60) })
+      // Scan ALL matches, not just the first: with the allowlist below, stopping at match
+      // one would let an allowed literal mask a real finding later in the same file — and in
+      // a 4 MB bundle that is a lot of file to hide in.
+      for (const m of text.matchAll(new RegExp(pat.re.source, pat.re.flags.includes('g') ? pat.re.flags : pat.re.flags + 'g'))) {
+        if (ALLOWED_LITERALS.some(lit => m[0].includes(lit))) continue
+        findings.push({ file: rel, kind: 'content', what: pat.name, snippet: m[0].slice(0, 60) })
+        break   // one finding per pattern per file is enough to block and to report
+      }
     }
   }
 

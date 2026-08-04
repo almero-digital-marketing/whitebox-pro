@@ -81,6 +81,21 @@ describe('admin console', () => {
     expect(res.status).toBe(404)
   })
 
+  it('serves the shell at / for ANY client, so a bare curl does not look like an outage', async () => {
+    const res = await get('/', { Accept: '*/*' })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toMatch(/html/)
+  })
+
+  // The classic SPA cache trap: hashed assets can live forever, index.html must not, or a
+  // browser keeps requesting the previous build's filenames and never sees an update.
+  it('never long-caches the shell, whose filename does not change', async () => {
+    for (const path of ['/', '/users']) {
+      const res = await get(path)
+      expect(res.headers.get('cache-control'), path).not.toMatch(/immutable|max-age=31536000/)
+    }
+  })
+
   it('serves hashed assets as immutable, since their names change every build', async () => {
     const shell = await get('/').then(r => r.text())
     const asset = (shell.match(/\/assets\/[A-Za-z0-9._-]+\.js/) || [])[0]

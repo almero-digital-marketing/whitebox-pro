@@ -46,7 +46,24 @@ function mount(app, { enabled = true, dist: distOverride } = {}) {
     return false
   }
 
-  app.use(express.static(dist, { index: false, maxAge: '1y', immutable: true }))
+  // Hashed filenames (index-CdLTWLO-.js) change on every build, so they can be cached
+  // forever. This must NOT extend to index.html, whose name never changes: a browser that
+  // cached it for a year would keep asking for the previous build's asset filenames, and a
+  // console update would silently never arrive. That is the classic SPA cache trap, and it
+  // is why the two are separate handlers rather than one with a blanket maxAge.
+  app.use('/assets', express.static(path.join(dist, 'assets'), { maxAge: '1y', immutable: true }))
+
+  // Everything else in dist — logo.svg, favicon — revalidates. Cheap: a 304 is a header
+  // exchange, and these change without their names changing.
+  app.use(express.static(dist, { index: false, maxAge: 0 }))
+
+  // `no-cache` means "revalidate", not "never store", so a repeat visit still gets a 304.
+  const shell = (res) => res.set('Cache-Control', 'no-cache').sendFile(index)
+
+  // The root is unambiguous — no API route lives at `/` — so serve the shell whatever the
+  // client asked for. Otherwise a bare `curl https://host/` gets a 404 from the accepts()
+  // test below and reads as "the site is down".
+  app.get('/', (req, res) => shell(res))
 
   // SPA fallback for client-side routes (/users, /people/:id, …), which exist only in the
   // browser's router and have no file behind them.
@@ -59,7 +76,7 @@ function mount(app, { enabled = true, dist: distOverride } = {}) {
   // through to the 404 it deserves.
   app.get(/.*/, (req, res, next) => {
     if (req.accepts(['json', 'html']) !== 'html') return next()
-    res.sendFile(index)
+    shell(res)
   })
 
   logger.info('Admin console mounted at / (from %s)', dist)
