@@ -1,13 +1,13 @@
 {
   "name": "whitebox-pro-ui",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "WhiteBox UI shell — a VS Code-style activity bar over feature modules (analytics, campaigns, …).",
+  "description": "WhiteBox admin console \u2014 a Vue 3 SPA served automatically by whitebox-pro-server when installed.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@codemirror/lang-html": "^6.4.11",
@@ -33,5 +33,8 @@
     "@vitejs/plugin-vue": "^5.0.0",
     "typescript": "^5.4.0",
     "vite": "^5.2.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -4,11 +4,11 @@
 
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/journeys')
+const req = createClient('/journeys')
 // The event registry is core-mounted (not under /journeys) — a rolling,
 // retention-pruned list of recently-observed event `type` strings across
 // the whole app, not just journeys. See server/src/event-registry.
-const eventsReq = createClient('/api/events')
+const eventsReq = createClient('/events')
 
 // Every rail asks the same question — a page of rows matching a term — so the
 // query string is built the same way everywhere. Empty values are dropped so a

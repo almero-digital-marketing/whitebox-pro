@@ -8,9 +8,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { randomVerifier, randomState, challengeFromVerifier } from '../pkce'
+import { API_BASE } from '../apiBase'
 
 const CLIENT_ID = (import.meta as any).env?.VITE_OAUTH_CLIENT_ID || ''
-const OAUTH_BASE = '/api/oauth'
+const OAUTH_BASE = `${API_BASE}/oauth`
 const REFRESH_KEY = 'wb_refresh_token'
 const VERIFIER_KEY = 'wb_pkce_verifier'
 const STATE_KEY = 'wb_oauth_state'

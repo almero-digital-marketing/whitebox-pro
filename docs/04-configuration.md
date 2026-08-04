@@ -35,6 +35,7 @@ the factory form is preferred.
 | `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
 | `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
 | `connect` | mounted under a path prefix a proxy preserves | `{ path }` — where socket.io's engine listens — see below |
+| `console` | no | `{ enabled }` — set `false` to install `whitebox-pro-ui` but not serve it |
 
 ## The plugin pattern
 
@@ -202,6 +203,34 @@ silent no-realtime failure. Leave `connect` unset for a root mount or a strippin
 proxy.
 
 Set [`trustProxy`](#trust-proxy) either way.
+
+## Admin console
+
+`npm install whitebox-pro-ui` and the console is served at the **root of the same origin as
+the API**. Nothing to build, no static host, no reverse proxy. Omit the package and the
+server is API-only — the absence is not an error.
+
+```js
+export default async (runtime) => ({
+  // console: { enabled: false },   // installed but do not serve it
+  // …
+})
+```
+
+Same origin is the point, not a convenience. The console holds an OAuth access token and
+talks to a dozen plugin surfaces; served from a different origin it would need CORS with
+credentials on every one of them, plus its own proxy to reach them. Serving it from the
+process that owns those routes removes all of that.
+
+It is mounted **last**, after every plugin, and cannot shadow an API route: the static
+handler only answers for files that exist, and the SPA fallback defers anything that is not
+a browser navigation. That last part is deliberate — the fallback asks whether the client
+*prefers* HTML over JSON, so `Accept: */*` from a `curl` resolves to JSON and a mistyped API
+path still returns a 404 instead of the console's HTML with a 200.
+
+To develop against a server on another host, the console reads `VITE_WB_API_BASE`; with it
+unset, a build talks to its own origin and `npm run dev` talks to `/api` through Vite's
+proxy.
 
 ## Auth model
 

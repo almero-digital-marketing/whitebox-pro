@@ -30,6 +30,7 @@ import * as selector from './selector/index.js'
 import * as query from './query/index.js'
 import * as context from './context.js'
 import * as mcp from './mcp.js'
+import * as adminConsole from './console.js'
 import { resolveAuth } from './auth.js'
 import { register as registerHealth } from './health.js'
 import { load as loadPlugins } from './plugins.js'
@@ -179,6 +180,11 @@ async function start() {
   // auth0({ … }) from an external package. Omitted ⇒ no auth (dev only).
   const mcpAuth = resolveAuth(config.mcp?.auth, { logger })
   await mcp.mount(app, { path: config.mcp?.path ?? '/mcp', auth: mcpAuth })
+
+  // The admin console, if whitebox-pro-ui is installed. LAST on purpose: its static
+  // handler and SPA fallback must sit behind every API route, so a plugin can never be
+  // shadowed by a file or by the fallback. See console.js.
+  adminConsole.mount(app, { enabled: config.console?.enabled })
 
   await new Promise((resolve, reject) => {
     server.listen(config.port, err => err ? reject(err) : resolve())

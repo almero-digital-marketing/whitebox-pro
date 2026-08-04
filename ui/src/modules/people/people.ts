@@ -3,7 +3,7 @@
 // session token (see shell/apiClient.ts).
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/people')
+const req = createClient('/people')
 
 export interface Identity {
   id: number | string

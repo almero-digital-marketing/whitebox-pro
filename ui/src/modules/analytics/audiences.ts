@@ -4,7 +4,7 @@
 
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/audiences')
+const req = createClient('/audiences')
 
 // A segment `source` is the rule-shaped predicate: { select } | { funnel, slot, status }.
 // Every rail asks the same question — a page of rows matching a term — so the

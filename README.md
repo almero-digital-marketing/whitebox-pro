@@ -127,7 +127,7 @@ channel is its own plug‑in package.
 
 | package | what it does |
 |---|---|
-| [`whitebox-pro-ui`](ui) | The operator UI over the surface plugins — analytics, audiences, campaigns, journeys, people, users. **Not** an npm workspace: `cd ui && npm install && npm run dev` |
+| [`whitebox-pro-ui`](ui) | The operator UI over the surface plugins — analytics, audiences, campaigns, journeys, people, users. **Install it and it appears**: whitebox-pro-server serves it at the root of the same origin as the API, with nothing to build or proxy. Omit it and the server is API-only. For working ON it: `cd ui && npm install && npm run dev` (not an npm workspace — it carries primevue/tinymce/echarts that the server has no business installing) |
 
 ### Client · browser SDK
 

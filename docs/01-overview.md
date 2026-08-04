@@ -83,7 +83,7 @@ is the useful way to think about which plugin you reach for.
 | Core | `whitebox-pro-server` | HTTP server, passports, sessions, awareness, facts, the query/selector engine, event registry, MCP, plugin loader |
 | Channels | `whitebox-pro-server-plugin-*` | mail, sms, voip, engagement, crm, conversions, geolocation, shortener |
 | Surfaces | `whitebox-pro-server-plugin-*` | analytics, audiences, campaigns, journeys, people, oauth |
-| Admin console | `whitebox-pro-ui` | Vue 3 + PrimeVue SPA over the surface plugins (not an npm workspace — installed separately) |
+| Admin console | `whitebox-pro-ui` | Vue 3 + PrimeVue SPA over the surface plugins. An ordinary dependency: install it and the server serves it at `/` — see [Configuration](04-configuration.md#admin-console) |
 | Browser SDK | `whitebox-pro-client` + `whitebox-pro-client-plugin-*` | identity, consent, engagement/voip/mail/conversions/crm/geolocation/shortener |
 | Providers | `whitebox-pro-mail-*`, `whitebox-pro-sms-*`, `whitebox-pro-adnetworks-*`, `whitebox-pro-auth-auth0`, `whitebox-geolocation-maxmind` | transport adapters, in their own repos |
 

@@ -2,7 +2,7 @@
 // and never changes it, so there is nothing here but GETs.
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/live')
+const req = createClient('/live')
 
 export type Direction = 'in' | 'out' | 'internal' | 'unknown'
 export type WindowKey = '5m' | '30m' | '1h' | '24h'

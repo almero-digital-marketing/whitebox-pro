@@ -6,10 +6,13 @@
 // error to the user.
 import { useAuthStore } from './stores/auth'
 
+export { API_BASE } from './apiBase'
+import { API_BASE } from './apiBase'
+
 export function createClient(base: string) {
   async function call(path: string, opts: any = {}, retried = false): Promise<any> {
     const authStore = useAuthStore()
-    const res = await fetch(base + path, {
+    const res = await fetch(API_BASE + base + path, {
       ...opts,
       headers: {
         'content-type': 'application/json',

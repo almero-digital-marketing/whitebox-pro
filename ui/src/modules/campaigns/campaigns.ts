@@ -4,7 +4,7 @@
 
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/campaigns')
+const req = createClient('/campaigns')
 
 // Every rail asks the same question — a page of rows matching a term — so the
 // query string is built the same way everywhere. Empty values are dropped so a

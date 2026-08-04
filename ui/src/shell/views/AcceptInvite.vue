@@ -2,6 +2,7 @@
 // Reached only via the emailed invite link (?token=…) — public, no session.
 // Calls server-plugin-oauth's public GET/POST /oauth/invite/:token[...]
 // directly rather than going through the authenticated apiClient.
+import { API_BASE } from '../apiBase'
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -23,7 +24,7 @@ const valid = ref(false)
 onMounted(async () => {
   if (!token) { error.value = 'Missing invite token.'; loading.value = false; return }
   try {
-    const res = await fetch(`/api/oauth/invite/${token}`)
+    const res = await fetch(`${API_BASE}/oauth/invite/${token}`)
     if (!res.ok) throw new Error('This invite link is invalid or has expired.')
     email.value = (await res.json()).email
     valid.value = true
@@ -40,7 +41,7 @@ async function submit() {
   if (password.value !== confirmPassword.value) { error.value = 'Passwords do not match.'; return }
   saving.value = true
   try {
-    const res = await fetch(`/api/oauth/invite/${token}/accept`, {
+    const res = await fetch(`${API_BASE}/oauth/invite/${token}/accept`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         password: password.value,

@@ -6,6 +6,7 @@
 // own auto-bootstrap on server boot — this one needs no shell access at all.
 // Public, no session, same posture as AcceptInvite.vue: calls the oauth
 // plugin's public routes directly rather than going through apiClient.
+import { API_BASE } from '../apiBase'
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -27,7 +28,7 @@ onMounted(async () => {
   // moment ago, and a direct navigation here should catch that immediately
   // rather than trust a value cached before this tab even opened.
   try {
-    const res = await fetch('/api/oauth/setup-required')
+    const res = await fetch(`${API_BASE}/oauth/setup-required`)
     stillRequired.value = res.ok && !!(await res.json()).required
   } catch {
     stillRequired.value = false
@@ -42,7 +43,7 @@ async function submit() {
   if (password.value !== confirmPassword.value) { error.value = 'Passwords do not match.'; return }
   saving.value = true
   try {
-    const res = await fetch('/api/oauth/setup', {
+    const res = await fetch(`${API_BASE}/oauth/setup`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: email.value.trim(), password: password.value }),
     })

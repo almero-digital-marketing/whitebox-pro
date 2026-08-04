@@ -6,7 +6,7 @@
 
 import { createClient } from '../../shell/apiClient'
 
-const req = createClient('/api/analytics')
+const req = createClient('/analytics')
 
 export const api = {
   listReports: () => req('/reports'),
