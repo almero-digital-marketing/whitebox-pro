@@ -2,14 +2,16 @@
 // Add a module here and it appears as an icon on the left. Analytics is first;
 // Campaigns (email/SMS planning + execution) is next. Each module is a self-
 // contained folder under src/modules/<id>/ with its own components/api/styles.
-import { markRaw, type Component } from 'vue'
-import Analytics from '../modules/analytics/Analytics.vue'
-import Audiences from '../modules/audiences/Audiences.vue'
-import Campaigns from '../modules/campaigns/Campaigns.vue'
-import Journeys from '../modules/journeys/Journeys.vue'
-import People from '../modules/people/People.vue'
-import Live from '../modules/live/Live.vue'
-import Users from '../modules/users/Users.vue'
+import { defineAsyncComponent, markRaw, type Component } from 'vue'
+
+// Modules load ON DEMAND, one chunk each. Statically importing all seven produced a single
+// 3.9 MB script — which the browser must fetch completely before ANYTHING renders, and which
+// carried echarts, tinymce and vue-flow even for someone who only opens Live.
+//
+// It also made a partial download fatal rather than annoying: with `immutable` caching, a
+// browser holding a truncated copy of one enormous script keeps using it and a plain reload
+// will not dislodge it — a blank page that looks like a server fault.
+const lazy = (loader: () => Promise<any>) => markRaw(defineAsyncComponent(loader))
 
 export interface ModuleDef {
   id: string
@@ -39,11 +41,11 @@ export const modules: ModuleDef[] = [
   // modules[0]. Opening on the monitoring view answers "is anything wrong?"
   // before you've clicked anything, which is the question you'd otherwise have
   // to remember to go and ask.
-  { id: 'live', label: 'Live', icon: 'sensors', component: markRaw(Live), requiresAnyPermission: ['live:read'] },
-  { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: markRaw(Analytics), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
-  { id: 'audiences', label: 'Audiences', icon: 'group', component: markRaw(Audiences), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
-  { id: 'campaigns', label: 'Campaigns', icon: 'send', component: markRaw(Campaigns), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },
-  { id: 'journeys', label: 'Journeys', icon: 'account_tree', component: markRaw(Journeys), subPath: ':journeyId?', requiresAnyPermission: ['journeys:read', 'journeys:write'] },
-  { id: 'people', label: 'People', icon: 'contacts', component: markRaw(People), subPath: ':personId?', requiresAnyPermission: ['people:read', 'people:write'] },
-  { id: 'users', label: 'Users', icon: 'manage_accounts', component: markRaw(Users), subPath: ':userId?', requiresAnyPermission: ['users:manage'] },
+  { id: 'live', label: 'Live', icon: 'sensors', component: lazy(() => import('../modules/live/Live.vue')), requiresAnyPermission: ['live:read'] },
+  { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: lazy(() => import('../modules/analytics/Analytics.vue')), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
+  { id: 'audiences', label: 'Audiences', icon: 'group', component: lazy(() => import('../modules/audiences/Audiences.vue')), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
+  { id: 'campaigns', label: 'Campaigns', icon: 'send', component: lazy(() => import('../modules/campaigns/Campaigns.vue')), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },
+  { id: 'journeys', label: 'Journeys', icon: 'account_tree', component: lazy(() => import('../modules/journeys/Journeys.vue')), subPath: ':journeyId?', requiresAnyPermission: ['journeys:read', 'journeys:write'] },
+  { id: 'people', label: 'People', icon: 'contacts', component: lazy(() => import('../modules/people/People.vue')), subPath: ':personId?', requiresAnyPermission: ['people:read', 'people:write'] },
+  { id: 'users', label: 'Users', icon: 'manage_accounts', component: lazy(() => import('../modules/users/Users.vue')), subPath: ':userId?', requiresAnyPermission: ['users:manage'] },
 ]
