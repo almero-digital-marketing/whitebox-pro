@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-journeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhiteBox server — journeys plugin. Multi-step, trigger-driven customer automation: when a passport does X, wait, send, branch, notify externally, and repeat. A thin orchestration layer over the audiences/mail/sms plugins — it never reimplements sending, targeting, or consent/suppression.",
   "type": "module",
   "main": "./src/index.js",

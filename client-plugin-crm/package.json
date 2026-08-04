@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-client-plugin-crm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhiteBox browser client — CRM plugin: report client-observed facts (observations) about the current passport.",
   "type": "module",
   "main": "./src/index.js",
@@ -16,7 +16,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "whitebox-pro-client": "^0.2.0"
+    "whitebox-pro-client": ">=0.2.0 <1.0.0"
   },
   "devDependencies": {
     "happy-dom": "^15.0.0",

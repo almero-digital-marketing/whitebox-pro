@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-people",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhiteBox server — people plugin. A browse/search/detail surface over the core passport, identity and fact primitives: look a person up, see every identity and fact held about them, fix a wrong identity, merge duplicates, and honour a right-to-be-forgotten erasure. Owns no tables of its own.",
   "type": "module",
   "main": "./src/index.js",
@@ -19,7 +19,7 @@
     "zod": "^4.4.0"
   },
   "peerDependencies": {
-    "whitebox-pro-server": "^2.1.0"
+    "whitebox-pro-server": "^2.2.0"
   },
   "devDependencies": {
     "vitest": "^2.1.0"

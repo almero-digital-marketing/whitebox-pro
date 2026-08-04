@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-client-plugin-conversions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Whitebox browser client — conversions plugin",
   "type": "module",
   "main": "./src/index.js",
@@ -19,7 +19,7 @@
     "whitebox-pro-adnetworks": "^0.1.0"
   },
   "peerDependencies": {
-    "whitebox-pro-client": "^0.2.0"
+    "whitebox-pro-client": ">=0.2.0 <1.0.0"
   },
   "devDependencies": {
     "happy-dom": "^15.0.0",
