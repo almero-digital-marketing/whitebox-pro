@@ -293,6 +293,79 @@ describe('voip/ari', () => {
     expect(calls.pick).not.toHaveBeenCalled()
   })
 
+  // Regression: a real 69-second call (+359894229776, 2026-08-05 06:35Z) was recorded as
+  // `missed`. It reached Stasis already 'Up' — a redirect — so no transition to Up ever
+  // followed, ChannelStateChange never fired, picked_at stayed null, and calls.end()
+  // reads exactly that one field to choose 'ended' vs 'missed'.
+  it('on ChannelEnteredBridge: marks pick for a channel that arrived already answered', async () => {
+    const deps = makeDeps()
+    await ari.init(deps)
+
+    // 'Up' on arrival — the case the state-change path structurally cannot see.
+    const channel = {
+      id: 'ch-1', linkedid: 'L-1', state: 'Up',
+      caller: { number: '+359894229776' },
+      dialplan: { exten: '+35924374792' },
+    }
+    emitAriEvent('StasisStart', channel, { args: [] })
+    await new Promise(r => setImmediate(r))
+    calls.pick.mockClear()
+
+    // Nothing has picked it yet: there was no transition to observe.
+    expect(calls.pick).not.toHaveBeenCalled()
+
+    emitAriEvent('ChannelEnteredBridge', { id: 'ch-1', caller: { number: '+359894229776' } },
+      { bridge: { id: 'br-1', bridge_type: 'mixing' } })
+    await new Promise(r => setImmediate(r))
+
+    expect(calls.pick).toHaveBeenCalledWith(expect.objectContaining({ vaultId: expect.any(String) }))
+  })
+
+  it('ignores a HOLDING bridge — music-on-hold is nobody answering', async () => {
+    const deps = makeDeps()
+    await ari.init(deps)
+
+    const channel = {
+      id: 'ch-1', linkedid: 'L-1',
+      caller: { number: '+359888001122' },
+      dialplan: { exten: '+35921234567' },
+    }
+    emitAriEvent('StasisStart', channel, { args: [] })
+    await new Promise(r => setImmediate(r))
+    calls.pick.mockClear()
+
+    emitAriEvent('ChannelEnteredBridge', { id: 'ch-1' },
+      { bridge: { id: 'br-1', bridge_type: 'holding' } })
+    await new Promise(r => setImmediate(r))
+
+    expect(calls.pick).not.toHaveBeenCalled()
+  })
+
+  it('records only one pick when both signals fire', async () => {
+    const deps = makeDeps()
+    await ari.init(deps)
+
+    const channel = {
+      id: 'ch-1', linkedid: 'L-1',
+      caller: { number: '+359888001122' },
+      dialplan: { exten: '+35921234567' },
+    }
+    emitAriEvent('StasisStart', channel, { args: [] })
+    await new Promise(r => setImmediate(r))
+    calls.pick.mockClear()
+
+    emitAriEvent('ChannelStateChange', { id: 'ch-1', state: 'Up', caller: { number: '+359888001122' } })
+    await new Promise(r => setImmediate(r))
+    emitAriEvent('ChannelEnteredBridge', { id: 'ch-1' },
+      { bridge: { id: 'br-1', bridge_type: 'mixing' } })
+    await new Promise(r => setImmediate(r))
+
+    // The whole point of adding a second signal is that it must not double-count. The
+    // first to arrive wins, so behaviour on a PBX where the transition already fires is
+    // unchanged.
+    expect(calls.pick).toHaveBeenCalledTimes(1)
+  })
+
   it('on ChannelDestroyed: marks the call ended even when recording fetch fails', async () => {
     const deps = makeDeps()
     await ari.init(deps)

@@ -136,6 +136,9 @@ function connectWebSocket(appName) {
 const EVENT_HANDLERS = {
   StasisStart:        (event, channel) => wrap(onStasisStart)(event, channel),
   ChannelStateChange:  (event, channel) => wrap(onStateChange)(event, channel),
+  // Reaches us for a channel that has left Stasis because onStasisStart subscribes to it
+  // explicitly — the same subscription ChannelDestroyed already depends on.
+  ChannelEnteredBridge: (event, channel) => wrap(onEnteredBridge)(event, channel),
   StasisEnd:           (event, channel) => wrap(onStasisEnd)(event, channel),
   ChannelDestroyed:    (event, channel) => wrap(onChannelDestroyed)(event, channel),
 }
@@ -299,7 +302,18 @@ async function onStasisStart(event, channel) {
   await calls.ring({ vaultId: v, passportId, sessionId: visitor?.sessionId || null, caller, line, tag, date })
 
   logger.info(
-    { vaultId: v, caller, line, tag, passportId, attributed: !!visitor },
+    // channelState is here to make a known failure mode visible rather than inferred.
+    // picked_at is written only on a ChannelStateChange to Up, and the thing that
+    // normally causes that transition is OUR OWN answerChannel() below — so a channel
+    // that is ALREADY 'Up' on arrival produces no transition, never gets picked_at, and
+    // is recorded as `missed` however long someone talked on it. That is exactly what
+    // happened to +359894229776 on 2026-08-05 06:35Z: a Call ring and a Call ended 69s
+    // apart with no Call picked between them, and no answer error either.
+    //
+    // 'Ring'/'Ringing' here means the transition is available; 'Up' means it is not, and
+    // this call's status will be wrong. Log it on every ring so the next occurrence is a
+    // fact in the log instead of a deduction from an absence.
+    { vaultId: v, caller, line, tag, passportId, attributed: !!visitor, channelState: channel.state },
     'Call ring: %s → %s (%s)', caller, line, tag,
   )
 
@@ -384,9 +398,42 @@ function continueInDialplan(channel) {
     .catch(err => logger.warn({ err, channelId: channel.id }, 'continueInDialplan failed'))
 }
 
-// Track the moment the call is actually picked up (state == Up).
+// One of two pick signals: the channel transitioning to Up.
+//
+// Note what this can and cannot see. The transition is normally caused by our OWN
+// answerChannel() a few milliseconds after the ring, so on this path `waitMs` says
+// nothing about how long a caller waited — and a channel that arrives ALREADY 'Up'
+// produces no transition at all, so this signal never fires for it.
 async function onStateChange(event, channel) {
   if (channel.state !== 'Up') return
+  await recordPick(channel, 'answered')
+}
+
+// The other signal, and the only one that survives an already-answered channel.
+//
+// A real 69-second call (+359894229776, 2026-08-05 06:35Z) was filed as `missed`: a ring
+// and an end with no pick between them, and no answer error either. The channel reached
+// Stasis already 'Up' — a redirect — so there was no transition for onStateChange to see,
+// picked_at stayed null, and calls.end() reads exactly that one field to choose between
+// 'ended' and 'missed'.
+//
+// A caller entering a MIXING bridge means it is connected to another party, which is the
+// closest thing ARI offers to "a human took this call", and it holds regardless of who
+// answered the channel or when. bridge_type is checked because a HOLDING bridge means the
+// opposite — music-on-hold while the ring group is still ringing, i.e. nobody yet.
+//
+// Additive by construction: recordPick() is idempotent per call, so where the transition
+// already fires it wins on timing and nothing changes. This can only add a pick where
+// there is none today; it can never turn a picked call into a missed one.
+async function onEnteredBridge(event, channel) {
+  if (event?.bridge?.bridge_type !== 'mixing') return
+  await recordPick(channel, 'bridged')
+}
+
+// `via` is recorded because the two signals mean materially different things and the row
+// cannot otherwise tell them apart: 'answered' may be our own answer (meaningless
+// waitMs), while 'bridged' is a genuine connection to another party.
+async function recordPick(channel, via) {
   const entry = calls_.get(channel.id)
   if (!entry || entry.pickDate) return                  // not ours / already picked
   const date = new Date()
@@ -400,8 +447,9 @@ async function onStateChange(event, channel) {
   await calls.pick({ vaultId: entry.vaultId, destination, date })
 
   logger.info(
-    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, destination, waitMs: entry.ringDate ? date - entry.ringDate : null },
-    'Call picked: %s', entry.caller,
+    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, destination, via,
+      waitMs: entry.ringDate ? date - entry.ringDate : null },
+    'Call picked: %s (%s)', entry.caller, via,
   )
 
   const call = await calls.find(entry.vaultId)
