@@ -34,7 +34,7 @@ const router = useRouter()
 const paramStr = (p: any): string => (Array.isArray(p) ? p[0] : p) || ''
 const store = useUsersStore()
 const authStore = useAuthStore()
-const { users, catalog, logins } = storeToRefs(store)
+const { users, catalog, logins, agents } = storeToRefs(store)
 const allPermissionKeys = computed(() => catalog.value.flatMap((m: any) => m.items.map((i: any) => i.key)))
 
 // The rail is a SERVER query now, not a filter over a list already in memory:
@@ -53,30 +53,8 @@ const justInvited = ref<any>(null)  // the just-created/resent invite response �
 onActivated(async () => {
   await Promise.all([store.loadUsers(), store.searchUsers(), store.loadCatalog()])
   applyRoute()
-  store.loadMcpSetup()
 })
 
-// ── the MCP endpoint, for connecting an agent ─────────────────────────────────
-//
-// One value, because that is now genuinely all it takes: Claude's Connectors UI asks for a URL
-// and nothing else, then registers itself (RFC 7591) and runs the sign-in. This block used to
-// print two shell commands; they still work, but they are the long way round for the person
-// this screen is for — an admin who has just granted someone mcp:use and needs to tell them how
-// to connect.
-//
-// Fetched from the server rather than built from location.origin: the endpoint's path is
-// configurable (config.mcp.path) and the console can be served from a different origin than the
-// API, so only the server knows its own address.
-//
-// Null when MCP isn't mounted, which is what hides the block.
-const { mcpSetup, agents } = storeToRefs(store)
-
-const mcpUrl = computed(() => mcpSetup.value?.url ?? '')
-
-// Only meaningful for someone who can actually use MCP: without mcp:use the flow succeeds and
-// then every tool call 403s, so handing them the endpoint would be a trap.
-const canUseMcp = computed(() =>
-  !!working.value && (working.value.permissions?.includes('*') || working.value.permissions?.includes('mcp:use')))
 
 const revoking = ref('')
 function revokeAgent(agent: any) {
@@ -98,20 +76,6 @@ function revokeAgent(agent: any) {
   })
 }
 
-const mcpCopied = ref(false)
-let copiedTimer: ReturnType<typeof setTimeout> | undefined
-async function copyMcpUrl() {
-  try {
-    await navigator.clipboard.writeText(mcpUrl.value)
-    mcpCopied.value = true
-    clearTimeout(copiedTimer)
-    copiedTimer = setTimeout(() => { mcpCopied.value = false }, 2000)
-  } catch {
-    // Clipboard access can be denied (insecure origin, permissions). The URL is on screen and
-    // selectable, so saying nothing is worse than saying it plainly.
-    error.value = 'Couldn’t copy — select the URL and copy it manually.'
-  }
-}
 
 function applyRoute() {
   if (route.name !== 'users') return
@@ -453,32 +417,6 @@ function fmtDateTime(iso?: string) {
             </ul>
           </div>
 
-          <!-- Connecting an AI agent. Lives here because this is where mcp:use is granted:
-               having just given someone that permission, the next thing you need is what to
-               send them. Hidden entirely when MCP isn't mounted (mcpSetup stays null). -->
-          <div v-if="mcpSetup" class="mcp-block">
-            <div class="logins-head">
-              Connect an AI agent
-              <span v-if="!canUseMcp" class="badge">needs “Use MCP”</span>
-            </div>
-            <template v-if="canUseMcp">
-              <p class="tip">
-                In Claude: <strong>Settings → Connectors → Add custom connector</strong>, and paste
-                this. Leave Client ID and Secret empty — the connector registers itself.
-              </p>
-              <pre class="cmd-box">{{ mcpUrl }}</pre>
-              <Button :label="mcpCopied ? 'Copied' : 'Copy'" text size="small" @click="copyMcpUrl">
-                <template #icon><span class="material-symbols-outlined">{{ mcpCopied ? 'check' : 'content_copy' }}</span></template>
-              </Button>
-            </template>
-            <!-- Deliberately not showing the command in this state: the login would succeed
-                 and then every tool call would 403, which is a far more confusing failure
-                 than not having the command yet. -->
-            <p v-else class="tip">
-              Grant <strong>Use MCP</strong> on the right to connect an agent as this user.
-              Without it they can sign in and every tool call still fails.
-            </p>
-          </div>
         </div>
 
         <!-- fixed Discard/Save/Remove bar — same pinned pattern as the permissions pane
@@ -653,15 +591,6 @@ function fmtDateTime(iso?: string) {
    hand-tuned margin. */
 .agent-meta { flex: 1 1 auto; color: var(--muted); }
 .agents-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); }
-.mcp-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
-.mcp-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); margin-left: 6px; vertical-align: 2px; }
-.cmd-box {
-  margin: 0 0 8px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.7;
-  /* The commands are long and must stay copyable verbatim, so they scroll rather than wrap —
-     a soft-wrapped shell command reads as several commands. */
-  overflow-x: auto; white-space: pre;
-}
 .logins-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .logins-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: 12.5px; }
@@ -669,6 +598,10 @@ function fmtDateTime(iso?: string) {
 
 /* table styling matches analytics' WidgetCard 'table' widget exactly — same
    PrimeVue DataTable density, paginator sizing, and font scale. */
+/* The DataTable draws a rule under its last row and the block after it draws its own
+   border-top, which together read as a double separator. Drop the table's — the block
+   boundary is the one that carries meaning. */
+.table-body :deep(.p-datatable-tbody > tr:last-child > td) { border-bottom: none; }
 .table-body :deep(.p-datatable) { font-size: 12.5px; }
 .table-body :deep(.p-datatable-table) { width: 100%; table-layout: fixed; }
 .table-body :deep(td), .table-body :deep(th) { overflow: hidden; padding: 6px 8px; }

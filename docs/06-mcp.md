@@ -104,15 +104,125 @@ puts in the token — the catalog governs WhiteBox's own server, not a third par
 
 ## Connecting a client
 
-- **With a static token:** point your MCP client at `https://your-host/mcp` and
-  configure the bearer token.
-- **With Auth0 or the built-in server:** point the client at `https://your-host/mcp`;
-  on a `401` it reads the `/.well-known/oauth-protected-resource` metadata, runs
-  the OAuth flow against whichever authorization server is configured, and
-  retries with the issued token. The flow itself is identical either way — only
-  where the login page lives (Auth0's hosted page vs. WhiteBox's own) differs.
+Every route needs the same two things first:
+
+1. The endpoint — `https://your-host/mcp` (or wherever `config.mcp.path` puts it).
+2. The user must hold **`mcp:use`**, granted in the console's Users screen.
+
+Without `mcp:use` the connection **succeeds** and then every tool call returns
+`403 insufficient_scope`, which reads like a broken server rather than a missing
+permission. Grant it first.
+
+### Claude's Connectors UI
+
+**Settings → Connectors → Add custom connector**, paste the endpoint URL, and
+that is the whole setup.
+
+**Leave "OAuth Client ID" and "OAuth Client Secret" empty.** Those fields exist in
+the dialog and are the wrong thing to fill in here:
+
+- The connector registers itself via [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)
+  Dynamic Client Registration, so it obtains its own `client_id` — provided
+  `oauth({ registration: true })` is set (see [04 · Configuration](04-configuration.md)).
+- There is no secret to supply. Every client here is public; PKCE proves
+  possession of the original request, which is why no `client_secret` exists to
+  paste.
+- Pasting `whitebox-cli` into the Client ID field **fails** with
+  `redirect_uri is not registered` — that client is registered for loopback
+  callbacks only, and a hosted connector redirects to its own https callback.
+
+Sign in with the whitebox account that holds `mcp:use`. The client then appears
+under **Users → Connected agents** with a `self-registered` badge, where it can be
+disconnected.
+
+### Claude Code (CLI)
+
+Two commands, nothing to paste:
+
+```bash
+claude mcp add-json whitebox -s user "$(curl -fsSL https://your-host/oauth/mcp-setup.json)"
+claude mcp login whitebox
+```
+
+`/oauth/mcp-setup.json` is served by the built-in OAuth plugin and returns exactly
+the config the CLI expects, so no `client_id` or callback port is copied by hand:
+
+```json
+{ "type": "http", "url": "https://your-host/mcp", "oauth": { "clientId": "whitebox-cli" } }
+```
+
+`whitebox-cli` is a well-known client the plugin provisions on boot, alongside the
+console's. A stable, guessable id is safe for the same reason the console's is:
+clients are public, PKCE proves possession, and `redirect_uri` is still matched.
+
+**No callback port appears anywhere**, deliberately. A CLI starts a throwaway HTTP
+server to catch the authorization code and cannot reserve a port in advance — with
+no port configured, Claude Code has been observed taking `:59205` on one run and
+`:64032` on another. Whitebox therefore ignores the **port** on a loopback
+redirect, per [RFC 8252 §7.3](https://datatracker.ietf.org/doc/html/rfc8252#section-7.3).
+Everything else still matches exactly: scheme, host, **path**, query and fragment,
+and only a literal loopback host qualifies (`localhost.evil.com` and hosts that
+merely resolve to `127.0.0.1` do not).
+
+Newly added MCP servers are connected at session start, so start a new session
+after `login` before the tools appear.
+
+### A pre-registered client (scripts, CI, a second deployment)
+
+When you want a fixed id rather than self-registration:
+
+```bash
+cd server-plugin-oauth
+node scripts/create-client.mjs --name="My Agent" --redirect-uri="http://localhost:PORT/callback"
+```
+
+It prints the `client_id`; there is no secret. `scripts/rename-client.mjs` lists
+clients and renames one — the name is shown to the user on the sign-in page
+("to give **My Agent** access"), so it is worth setting to something recognisable.
+
+### A static token
+
+Point the client at `https://your-host/mcp` and configure the bearer token. No
+OAuth flow, no user — the token *is* the authorization. Suited to a machine
+caller, not a person.
+
+### What happens on the wire
+
+Whichever route you take, the client's own sequence is the same. On a `401` it
+reads `WWW-Authenticate`, fetches
+`/.well-known/oauth-protected-resource`, follows that to the authorization
+server's metadata, runs the flow, and retries with the token. The only difference
+between Auth0 and the built-in server is where the login page lives.
+
+Two discovery details matter if you are debugging a client that "nearly" works:
+
+- The authorization-server metadata is served at **both**
+  `/.well-known/oauth-authorization-server/oauth` (the
+  [RFC 8414 §3](https://datatracker.ietf.org/doc/html/rfc8414#section-3) path, which
+  inserts `.well-known` *between host and issuer path*) and
+  `/oauth/.well-known/oauth-authorization-server`. A client that only finds the
+  second may fall back to guessing endpoints from the origin, which can appear to
+  work and then fail on an unrelated-looking `redirect_uri` error.
+- The `resource` in the protected-resource metadata must be the **MCP endpoint**,
+  not the token audience. A client compares it against the URL it connected to and
+  aborts if they differ (`Protected resource https://host/api does not match
+  expected https://host/mcp`). Core derives it from the request origin plus the
+  mount path; an explicit `resource` on the verifier is checked against the mount
+  path and ignored with a warning if it points elsewhere.
 
 The server advertises its tool/resource/prompt catalog on connect.
+
+### Tool names
+
+Tool names are normalised to `^[a-zA-Z0-9_-]{1,64}$` at registration, because that
+is the charset a Claude client can address. Plugins may register a dotted
+namespace (`voip.list_calls`) and it is rewritten to `voip_list_calls`.
+
+This is worth knowing when reading plugin source: the name in the code is not
+always the name on the wire. Clients differ here — Claude Code rewrites dots
+silently, while a hosted connector **drops** the tool and reports "N tools with
+unsupported names, which have been excluded from this chat". Normalising centrally
+means neither happens.
 
 ## Tool catalog
 

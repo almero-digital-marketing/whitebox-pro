@@ -15,10 +15,7 @@ export const useUsersStore = defineStore('users', () => {
   const rail = useRailPage<any>(o => client.list(o), { subject: 'users' })
   const catalog = ref<any[]>([])   // [{ module, items: [{key,label,description}], defaults }]
   const logins = ref<any[]>([])   // the currently-selected user's login history, newest first
-  // The server's own MCP client config, or null when MCP isn't mounted. Deployment-wide, not
-  // per-user, so it is loaded once rather than per selection.
   const agents = ref<any[]>([])   // clients the selected user has authorized, live ones first
-  const mcpSetup = ref<{ type: string; url: string; oauth: { clientId: string } } | null>(null)
   const error = ref('')
 
   async function loadUsers() {
@@ -27,13 +24,6 @@ export const useUsersStore = defineStore('users', () => {
 
   async function loadCatalog() {
     try { catalog.value = await client.catalog() } catch (e: any) { error.value = e.message; notifyError(`Couldn't load the permissions catalog: ${e.message}`) }
-  }
-
-  // No notifyError, unlike every other loader here: a missing endpoint is the normal state
-  // for a deployment without MCP, and the UI's response is to hide the block — not to tell
-  // an operator something failed.
-  async function loadMcpSetup() {
-    try { mcpSetup.value = await client.mcpSetup() } catch { mcpSetup.value = null }
   }
 
   async function loadAgents(id: string) {
@@ -94,7 +84,7 @@ export const useUsersStore = defineStore('users', () => {
   return {
     rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
     pageSize: rail.pageSize, searchUsers: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
-    users, catalog, logins, agents, mcpSetup, error,
-    loadUsers, loadCatalog, loadLogins, loadAgents, revokeAgent, loadMcpSetup, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
+    users, catalog, logins, agents, error,
+    loadUsers, loadCatalog, loadLogins, loadAgents, revokeAgent, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
   }
 })
