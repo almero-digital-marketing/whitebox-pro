@@ -35,8 +35,28 @@ import { peopleClient, displayName } from '../../people/people'
 // rows and the aggregates are refetched, so an unattended tab is flat.
 const MAX_FEED = 300
 
+// Persisted for the same reason as the pinned counters below: it's a standing choice
+// about what you watch, not a per-visit one, and re-picking it on every reload makes the
+// selector a chore. localStorage rather than the server — per-person-per-browser, and
+// nothing worth a migration.
+//
+// Validated against the union rather than trusted, because a stale or hand-edited value
+// would otherwise be sent straight to the API as `?window=…`. WindowKey is erased at
+// runtime, so this array is the only thing that can actually check it — keep it in step
+// with the type in live.ts (which the annotation enforces at compile time).
+const WINDOW_KEY = 'wb.live.window'
+const DEFAULT_WINDOW: WindowKey = '30m'
+const WINDOW_KEYS: readonly WindowKey[] = ['5m', '30m', '1h', '24h']
+
+function loadWindow(): WindowKey {
+  try {
+    const raw = localStorage.getItem(WINDOW_KEY)
+    return WINDOW_KEYS.includes(raw as WindowKey) ? (raw as WindowKey) : DEFAULT_WINDOW
+  } catch { return DEFAULT_WINDOW }
+}
+
 export const useLiveStore = defineStore('live', () => {
-  const window = ref<WindowKey>('30m')
+  const window = ref<WindowKey>(loadWindow())
   const summary = ref<Summary | null>(null)
   const series = ref<Series | null>(null)
   const utm = ref<Utm | null>(null)
@@ -415,7 +435,13 @@ export const useLiveStore = defineStore('live', () => {
     }
   }
 
-  function setWindow(w: WindowKey) { window.value = w; return load() }
+  function setWindow(w: WindowKey) {
+    window.value = w
+    // Swallowed like persistPinned(): a private-mode or quota failure must not stop the
+    // board reloading — the choice just won't outlive the tab.
+    try { localStorage.setItem(WINDOW_KEY, w) } catch { }
+    return load()
+  }
 
   function start() {
     const auth = useAuthStore()
