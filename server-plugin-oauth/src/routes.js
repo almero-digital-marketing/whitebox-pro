@@ -100,6 +100,7 @@ button{
   background:var(--accent); color:#fff; font-size:14px; font-weight:500; cursor:pointer;
 }
 button:hover{opacity:.92}
+button[disabled]{opacity:.65;cursor:default}
 </style>
 </head><body>
 <form method="post">
@@ -113,6 +114,25 @@ ${subtitle}
 <input type="password" name="password" placeholder="Password" autocomplete="current-password" required>
 <button type="submit">Sign in</button>
 </form>
+<!-- Feedback while the POST is in flight, which is longer than it looks: password verification
+     is scrypt at N=16384 — deliberately slow, that being the point of a KDF — plus a round trip
+     and a redirect. Without this the button does not move, the page looks inert, and the honest
+     reading is "nothing happened", so people click again.
+     Progressive enhancement: with JS blocked (a strict CSP, say) the form still submits exactly
+     as before — it just has no pending state. -->
+<script>
+(function () {
+  var form = document.querySelector('form')
+  var button = form.querySelector('button')
+  form.addEventListener('submit', function () {
+    // Runs AFTER the form data has been collected, so disabling here cannot drop a field. The
+    // button carries no name or value, so there is nothing of its own to lose either.
+    button.disabled = true
+    button.textContent = 'Signing in\u2026'
+    form.setAttribute('aria-busy', 'true')
+  })
+})()
+</script>
 </body></html>`
 }
 

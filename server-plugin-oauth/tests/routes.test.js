@@ -285,6 +285,18 @@ describe('GET /authorize — validation before anything else', () => {
   // An OAuth consent screen must not be ambiguous about WHO is being granted access.
   // Signing into the console and handing an MCP agent your permissions arrive at the same
   // URL, and the page said only "Sign in" for both.
+  // The POST is slower than it looks — scrypt at N=16384 plus a round trip and a redirect — so
+  // without a pending state the page looks inert and people click Sign in again.
+  it('gives the sign-in button a pending state, without depending on JS to submit', async () => {
+    const html = await (await fetch(authorizeUrl())).text()
+    expect(html).toContain('Signing in')
+    expect(html).toMatch(/button\.disabled = true/)
+    // The form must still be a plain POST: the script only decorates it, so a strict CSP that
+    // blocks inline script degrades to the previous behaviour rather than breaking sign-in.
+    expect(html).toContain('<form method="post">')
+    expect(html).not.toMatch(/onsubmit=|preventDefault/)
+  })
+
   it('names the third-party client asking for access', async () => {
     const html = await (await fetch(authorizeUrl())).text()
     expect(html).toContain('Test Client')
