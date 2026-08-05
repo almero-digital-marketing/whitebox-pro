@@ -553,7 +553,13 @@ function ago(iso?: string) {
         <AccordionPanel value="audiences">
           <AccordionHeader><span class="acc-title">Audiences <span class="count-pill sm">{{ working?.audiences?.length ?? 0 }}</span></span></AccordionHeader>
           <AccordionContent>
-            <p class="pane-tip">{{ working ? 'Click an audience to target it — a campaign reaches the de-duped union of all attached audiences.' : 'Pick or start a campaign to attach audiences to it.' }}</p>
+            <!-- Suppressed when the palette is empty, so the empty-list message below stands
+                 alone. Both used to render: "Pick or start a campaign to attach audiences to
+                 it." directly above "No campaign-enabled audiences" — advice to do something
+                 that cannot work yet, on top of the reason it cannot. An empty palette is the
+                 blocking condition and applies whichever campaign is selected, so it is the
+                 only message worth showing. -->
+            <p v-if="palette.length" class="pane-tip">{{ working ? 'Click an audience to target it — a campaign reaches the de-duped union of all attached audiences.' : 'Pick or start a campaign to attach audiences to it.' }}</p>
             <ul class="rail-list">
               <li v-for="a in palette" :key="a.id" class="seg-pill" :class="{ used: attachedIds.has(a.id), disabled: !working || locked }"
                   @click="toggleAudience(a)">
