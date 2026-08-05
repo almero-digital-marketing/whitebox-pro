@@ -53,7 +53,12 @@ export function voip(options = {}) {
         // the tracked number this visitor was shown.
         const line = d.line || d.destination || d.number || null
         const tag = d.tag ? ` (${d.tag})` : ''
-        if (from && line) return `${from} → ${line}${tag}`
+        // Only call rows carry `status`, and only `missed` is worth saying: an answered
+        // call is the expected outcome, so labelling it would be noise. Without this the
+        // feed shows an answered and an unanswered call identically — and unanswered is
+        // the one the status card raises as a problem, so the row has to explain it.
+        const missed = d.status === 'missed' ? ' · unanswered' : ''
+        if (from && line) return `${from} → ${line}${tag}${missed}`
         // A click is an intent, not a connection: there is no calling party yet,
         // so the number shown is the whole story and the tag says which pool it
         // came from.

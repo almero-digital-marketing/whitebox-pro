@@ -439,11 +439,27 @@ async function onChannelDestroyed(event, channel) {
   })
 
   if (!localFile) {
-    await calls.end({ vaultId: entry.vaultId, date })
+    const call = await calls.end({ vaultId: entry.vaultId, date })
     logger.info(
       { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, recorded: false },
       'Call ended (no recording): %s', entry.caller,
     )
+
+    // Emit here too, not just on the recorded path below. A call nobody answered has
+    // nothing to record, so it ALWAYS arrives here — which meant the one outcome an
+    // operator most needs to see was the one that emitted no event at all. The health
+    // card counted it (calls.stats() is a SQL aggregate over this table, and `missed`
+    // is flagged severity:'bad'), so the dashboard would say "1 problem" while the feed
+    // showed nothing to click through to. Two sources of truth, and only one was written.
+    //
+    // Same `voip.call` type as a completed call rather than a new `voip.missed`: it IS
+    // the call ending, it is already classified `in` in the event catalog and already has
+    // a detail renderer, and `data.status` ('missed' vs 'ended') carries the difference.
+    // A separate type would need catalog and UI changes to say something the row says.
+    if (call) {
+      const session = await sessionFor(call)
+      await notify('voip.call', { type: 'voip.call', date, data: call, session })
+    }
     return
   }
 
