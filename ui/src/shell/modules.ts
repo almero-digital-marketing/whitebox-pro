@@ -2,7 +2,9 @@
 // Add a module here and it appears as an icon on the left. Analytics is first;
 // Campaigns (email/SMS planning + execution) is next. Each module is a self-
 // contained folder under src/modules/<id>/ with its own components/api/styles.
-import { defineAsyncComponent, markRaw, type Component } from 'vue'
+import { defineAsyncComponent, h, markRaw, type Component } from 'vue'
+import ModuleLoading from './ModuleLoading.vue'
+import ModuleLoadError from './ModuleLoadError.vue'
 
 // Modules load ON DEMAND, one chunk each. Statically importing all seven produced a single
 // 3.9 MB script — which the browser must fetch completely before ANYTHING renders, and which
@@ -11,7 +13,24 @@ import { defineAsyncComponent, markRaw, type Component } from 'vue'
 // It also made a partial download fatal rather than annoying: with `immutable` caching, a
 // browser holding a truncated copy of one enormous script keeps using it and a plain reload
 // will not dislodge it — a blank page that looks like a server fault.
-const lazy = (loader: () => Promise<any>) => markRaw(defineAsyncComponent(loader))
+//
+// `delay: 150` is deliberate. Live is 25 KB and Users 17 KB — those arrive faster than the eye
+// registers, and a spinner that flashes for 30ms is worse than none: it reads as a glitch.
+// Below the delay nothing is shown at all; past it, the wait is real and worth acknowledging.
+//
+// The errorComponent matters more than it looks. A chunk that fails to arrive used to leave an
+// empty pane and nothing in any log — the same silence that made a truncated bundle look like
+// a server fault. Now it says so, and offers the hard reload that an `immutable` cached copy
+// actually needs.
+const lazy = (loader: () => Promise<any>, label: string) => markRaw(defineAsyncComponent({
+  loader,
+  loadingComponent: { render: () => h(ModuleLoading, { label }) },
+  errorComponent: { render: () => h(ModuleLoadError, { label }) },
+  delay: 150,
+  // Generous: Campaigns is ~1.7 MB and a slow connection is not a failure. This catches a
+  // hang, not a slow download.
+  timeout: 60000,
+}))
 
 export interface ModuleDef {
   id: string
@@ -41,11 +60,11 @@ export const modules: ModuleDef[] = [
   // modules[0]. Opening on the monitoring view answers "is anything wrong?"
   // before you've clicked anything, which is the question you'd otherwise have
   // to remember to go and ask.
-  { id: 'live', label: 'Live', icon: 'sensors', component: lazy(() => import('../modules/live/Live.vue')), requiresAnyPermission: ['live:read'] },
-  { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: lazy(() => import('../modules/analytics/Analytics.vue')), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
-  { id: 'audiences', label: 'Audiences', icon: 'group', component: lazy(() => import('../modules/audiences/Audiences.vue')), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
-  { id: 'campaigns', label: 'Campaigns', icon: 'send', component: lazy(() => import('../modules/campaigns/Campaigns.vue')), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },
-  { id: 'journeys', label: 'Journeys', icon: 'account_tree', component: lazy(() => import('../modules/journeys/Journeys.vue')), subPath: ':journeyId?', requiresAnyPermission: ['journeys:read', 'journeys:write'] },
-  { id: 'people', label: 'People', icon: 'contacts', component: lazy(() => import('../modules/people/People.vue')), subPath: ':personId?', requiresAnyPermission: ['people:read', 'people:write'] },
-  { id: 'users', label: 'Users', icon: 'manage_accounts', component: lazy(() => import('../modules/users/Users.vue')), subPath: ':userId?', requiresAnyPermission: ['users:manage'] },
+  { id: 'live', label: 'Live', icon: 'sensors', component: lazy(() => import('../modules/live/Live.vue'), 'Live'), requiresAnyPermission: ['live:read'] },
+  { id: 'analytics', label: 'Analytics', icon: 'bar_chart', component: lazy(() => import('../modules/analytics/Analytics.vue'), 'Analytics'), subPath: ':reportId?/:widgetId?', requiresAnyPermission: ['analytics:read', 'analytics:write'] },
+  { id: 'audiences', label: 'Audiences', icon: 'group', component: lazy(() => import('../modules/audiences/Audiences.vue'), 'Audiences'), subPath: ':audienceId?', requiresAnyPermission: ['audiences:read', 'audiences:write'] },
+  { id: 'campaigns', label: 'Campaigns', icon: 'send', component: lazy(() => import('../modules/campaigns/Campaigns.vue'), 'Campaigns'), subPath: ':campaignId?', requiresAnyPermission: ['campaigns:read', 'campaigns:write'] },
+  { id: 'journeys', label: 'Journeys', icon: 'account_tree', component: lazy(() => import('../modules/journeys/Journeys.vue'), 'Journeys'), subPath: ':journeyId?', requiresAnyPermission: ['journeys:read', 'journeys:write'] },
+  { id: 'people', label: 'People', icon: 'contacts', component: lazy(() => import('../modules/people/People.vue'), 'People'), subPath: ':personId?', requiresAnyPermission: ['people:read', 'people:write'] },
+  { id: 'users', label: 'Users', icon: 'manage_accounts', component: lazy(() => import('../modules/users/Users.vue'), 'Users'), subPath: ':userId?', requiresAnyPermission: ['users:manage'] },
 ]
