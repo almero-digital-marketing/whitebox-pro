@@ -41,23 +41,33 @@ export async function createClient({ name, redirectUris }) {
 // operator who added a URI by hand must not silently lose it on the next boot.
 export const CONSOLE_CLIENT_ID = 'whitebox-console'
 
-export async function ensureConsoleClient({ redirectUris }) {
+// `name` comes from config (see index.js) rather than being hardcoded, because it is what a
+// deployment calls itself — "GPoint WhiteBox", not "WhiteBox console". Unlike the redirect
+// URIs it is REPLACED, not merged: there is one right answer at any moment and config is it,
+// so renaming in config takes effect on the next boot instead of needing a script.
+export async function ensureConsoleClient({ redirectUris, name = 'WhiteBox console' }) {
   const existing = await getClient(CONSOLE_CLIENT_ID)
   if (!existing) {
     const [row] = await db('whitebox_oauth_clients')
-      .insert({ client_id: CONSOLE_CLIENT_ID, name: 'WhiteBox console', redirect_uris: JSON.stringify(redirectUris) })
+      .insert({ client_id: CONSOLE_CLIENT_ID, name, redirect_uris: JSON.stringify(redirectUris) })
       .returning(['client_id', 'name', 'redirect_uris'])
     return { row, created: true }
   }
   const current = typeof existing.redirect_uris === 'string' ? JSON.parse(existing.redirect_uris) : existing.redirect_uris
   const merged = [...new Set([...(current || []), ...redirectUris])]
-  if (merged.length === (current || []).length) return { row: existing, created: false }
+  const renamed = existing.name !== name
+  if (merged.length === (current || []).length && !renamed) return { row: existing, created: false }
   await db('whitebox_oauth_clients')
     .where({ client_id: CONSOLE_CLIENT_ID })
-    .update({ redirect_uris: JSON.stringify(merged) })
+    .update({ redirect_uris: JSON.stringify(merged), name })
   // Re-read rather than RETURNING: an update's returning clause is Postgres-specific, and
   // reading back is both portable and obviously correct.
-  return { row: await getClient(CONSOLE_CLIENT_ID), created: false, added: merged.length - (current || []).length }
+  return {
+    row: await getClient(CONSOLE_CLIENT_ID),
+    created: false,
+    added: merged.length - (current || []).length,
+    renamed,
+  }
 }
 
 // redirect_uri must match one of the client's registered URIs EXACTLY — no

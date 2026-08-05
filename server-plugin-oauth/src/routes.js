@@ -34,10 +34,18 @@ function escapeHtml(s) {
 // removes it — so it appears when the console is installed to serve /logo.svg and simply
 // isn't there when it isn't, rather than showing a broken-image icon.
 //
-// `client` is used to name what the user is authorizing. Without it the page says only
-// "Sign in", which is the one thing an OAuth consent screen must not be ambiguous about:
-// signing into the console and granting an agent your permissions look identical.
-function loginPage({ params, client }) {
+// Two names, answering two different questions, and both have to be here:
+//
+//   `appName`  — WHERE you are signing in. From config, because only the deployment knows
+//                what it calls itself ("GPoint WhiteBox"). A page showing just a logo could
+//                be any whitebox, or a convincing copy of one.
+//   `client`   — WHO gets your permissions. From the client row, because it is per-client
+//                and config cannot know it.
+//
+// Without the second, the page said only "Sign in", which is the one thing a consent screen
+// must not be ambiguous about: signing into the console and handing an agent your scopes
+// looked identical.
+function loginPage({ params, client, appName }) {
   const hidden = Object.entries(params)
     .filter(([, v]) => v != null)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
@@ -97,7 +105,7 @@ button:hover{opacity:.92}
 <form method="post">
 ${hidden}
 <img src="/logo.svg" alt="" onerror="this.remove()">
-<h1>Sign in</h1>
+<h1>Sign in${appName ? ` to ${escapeHtml(appName)}` : ''}</h1>
 ${subtitle}
 <!-- autocomplete hints are load-bearing: without them a password manager guesses, and a
      saved credential for a different app on the same host gets filled instead. -->
@@ -137,7 +145,7 @@ function redirectWithError(res, redirectUri, state, error, description) {
   res.redirect(302, url.toString())
 }
 
-export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, fromEmail, getMail, permissionsCatalog = [] }) {
+export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, appName, fromEmail, getMail, permissionsCatalog = [] }) {
   const router = express.Router()
   router.use(express.urlencoded({ extended: false }))
 
@@ -215,7 +223,7 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
       return redirectWithError(res, params.redirect_uri, params.state, 'invalid_request', 'PKCE (S256) is required')
     }
 
-    res.set('Content-Type', 'text/html').send(loginPage({ params, client }))
+    res.set('Content-Type', 'text/html').send(loginPage({ params, client, appName }))
   })
 
   router.post('/authorize', async (req, res) => {

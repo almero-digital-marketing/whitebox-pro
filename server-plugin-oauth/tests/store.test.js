@@ -324,6 +324,30 @@ describe('ensureConsoleClient', () => {
     expect(store.redirectUriAllowed(client, 'https://new.example.com/callback')).toBe(true)
   })
 
+  // The name is what the sign-in page shows, so config is the single source of truth for it.
+  // Unlike the URIs it is REPLACED, not merged — there is one right answer at a time.
+  it('takes its name from config, and updates it when config changes', async () => {
+    await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'], name: 'Acme WhiteBox' })
+    expect((await store.getClient('whitebox-console')).name).toBe('Acme WhiteBox')
+
+    const { renamed } = await store.ensureConsoleClient({
+      redirectUris: ['https://wb.example.com/callback'], name: 'GPoint WhiteBox',
+    })
+    expect(renamed).toBe(true)
+    expect((await store.getClient('whitebox-console')).name).toBe('GPoint WhiteBox')
+  })
+
+  it('reports no change when the name and URIs are both unchanged', async () => {
+    await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'], name: 'Acme WhiteBox' })
+    const again = await store.ensureConsoleClient({
+      redirectUris: ['https://wb.example.com/callback'], name: 'Acme WhiteBox',
+    })
+    // Guards the boot path: a rename log line on every restart would be noise that trains
+    // an operator to ignore it.
+    expect(again.created).toBe(false)
+    expect(again.renamed).toBeFalsy()
+  })
+
   it('still matches redirect_uri exactly, so a predictable client_id grants nothing', async () => {
     await store.ensureConsoleClient({ redirectUris: ['https://wb.example.com/callback'] })
     const client = await store.getClient('whitebox-console')

@@ -42,7 +42,7 @@ beforeEach(async () => {
 
   mountRoutes(app, {
     basePath: ISSUER_PATH, issuer, audience: AUDIENCE, logger,
-    appUrl: APP_URL, fromEmail: 'noreply@example.com',
+    appUrl: APP_URL, appName: 'GPoint WhiteBox', fromEmail: 'noreply@example.com',
     getMail: () => ({ send: async (msg) => { sentEmails.push(msg) } }),
     permissionsCatalog: PERMISSIONS_CATALOG,
   })
@@ -185,6 +185,15 @@ describe('GET /authorize — validation before anything else', () => {
     const html = await (await fetch(authorizeUrl())).text()
     expect(html).toContain('Test Client')
     expect(html).toMatch(/to give/)
+  })
+
+  // The page answers two separate questions, and both need naming: WHERE you are signing in
+  // (from config — a page with only a logo could be any whitebox, or a copy of one) and WHO
+  // receives your permissions (from the client row).
+  it('names the deployment from config, alongside the client', async () => {
+    const html = await (await fetch(authorizeUrl())).text()
+    expect(html).toContain('Sign in to GPoint WhiteBox')
+    expect(html).toContain('Test Client')
   })
 
   it('does not ask the console to authorize itself', async () => {

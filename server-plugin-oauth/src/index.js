@@ -28,7 +28,7 @@ import { mountRoutes } from './routes.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function oauth(options = {}) {
-  const { issuer, audience, appUrl, fromEmail } = options
+  const { issuer, audience, appUrl, fromEmail, appName: appNameOption } = options
   if (!issuer) throw new Error('oauth(): issuer is required, e.g. "http://localhost:3000/oauth"')
   if (!audience) throw new Error('oauth(): audience is required — the value every issued token\'s aud claim carries')
 
@@ -61,6 +61,15 @@ export function oauth(options = {}) {
 
     async register(app, ctx) {
       const { db, logger: rootLogger } = ctx
+
+      // What this deployment calls itself. Shown on the sign-in page ("Sign in to GPoint
+      // WhiteBox") and used as the console client's own name, so both come from one place
+      // instead of a hardcoded string and a hand-run rename.
+      //
+      // Falls back through core's `config.name` — already used as the MCP server's identity —
+      // before the generic default, so a deployment that has named itself once does not have
+      // to do it again here.
+      const appName = appNameOption || ctx.config?.appName || ctx.config?.name || 'WhiteBox'
       const logger = rootLogger.child({ component: 'oauth' })
 
       store.init({ db })
@@ -96,9 +105,12 @@ export function oauth(options = {}) {
       // needs no client for it.
       if (appUrl) {
         const base = appUrl.replace(/\/+$/, '')
-        const { created, added } = await store.ensureConsoleClient({ redirectUris: [`${base}/callback`] })
+        const { created, added, renamed } = await store.ensureConsoleClient({
+          redirectUris: [`${base}/callback`], name: appName,
+        })
         if (created) logger.info('Registered the console client %s for %s/callback', store.CONSOLE_CLIENT_ID, base)
         else if (added) logger.info('Added %d redirect URI(s) to the console client', added)
+        if (renamed) logger.info('Renamed the console client to %j (from config)', appName)
       } else {
         logger.debug('appUrl is not set — no console OAuth client registered')
       }
@@ -108,7 +120,7 @@ export function oauth(options = {}) {
       const getMail = () => ctx.plugins?.mail?.service
 
       mountRoutes(app, {
-        basePath, issuer, audience, logger, appUrl, fromEmail, getMail,
+        basePath, issuer, audience, logger, appUrl, appName, fromEmail, getMail,
         permissionsCatalog: ctx.permissions?.catalog || [],
       })
 
