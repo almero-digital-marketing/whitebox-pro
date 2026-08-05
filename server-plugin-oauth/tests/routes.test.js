@@ -126,6 +126,23 @@ describe('discovery + JWKS', () => {
     })
   })
 
+  // RFC 8414 §3 INSERTS .well-known between host and issuer path — it does not append it.
+  // Serving only the appended form made a client 404 on discovery and fall back to guessing
+  // endpoints from the origin, which then failed on an unrelated-looking redirect_uri error.
+  it('serves the same metadata at the RFC 8414 path, above the issuer path', async () => {
+    const res = await fetch(`${base}/.well-known/oauth-authorization-server${ISSUER_PATH}`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({
+      issuer,
+      authorization_endpoint: `${issuer}/authorize`,
+      token_endpoint: `${issuer}/token`,
+    })
+    // Both paths must agree, or a client's behaviour depends on which one it happened to try.
+    const appended = await (await fetch(`${base}${ISSUER_PATH}/.well-known/oauth-authorization-server`)).json()
+    expect(body).toEqual(appended)
+  })
+
   it('serves a JWKS with the public key only', async () => {
     const res = await fetch(`${base}${ISSUER_PATH}/.well-known/jwks.json`)
     const body = await res.json()
@@ -159,6 +176,35 @@ describe('GET /authorize — validation before anything else', () => {
     expect(res.status).toBe(200)
     expect(html).toContain('name="email"')
     expect(html).toContain(`name="client_id" value="${client.client_id}"`)
+  })
+
+  // An OAuth consent screen must not be ambiguous about WHO is being granted access.
+  // Signing into the console and handing an MCP agent your permissions arrive at the same
+  // URL, and the page said only "Sign in" for both.
+  it('names the third-party client asking for access', async () => {
+    const html = await (await fetch(authorizeUrl())).text()
+    expect(html).toContain('Test Client')
+    expect(html).toMatch(/to give/)
+  })
+
+  it('does not ask the console to authorize itself', async () => {
+    // The console signing its own users in is not a third party granting access, so the
+    // subtitle would be nonsense there ("to give WhiteBox Console access").
+    const consoleClient = await store.ensureConsoleClient({ redirectUris: ['https://app.example.com/callback'] })
+      .then(() => store.getClient(store.CONSOLE_CLIENT_ID))
+    const html = await (await fetch(authorizeUrl({ client_id: consoleClient.client_id }))).text()
+    expect(html).toContain('name="email"')
+    expect(html).not.toMatch(/to give/)
+  })
+
+  it('escapes the client name (it is operator-supplied, and lands in HTML)', async () => {
+    const evil = await store.createClient({
+      name: '<script>alert(1)</script>',
+      redirectUris: ['https://app.example.com/callback'],
+    })
+    const html = await (await fetch(authorizeUrl({ client_id: evil.client_id }))).text()
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).toContain('&lt;script&gt;')
   })
 })
 

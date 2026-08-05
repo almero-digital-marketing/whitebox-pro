@@ -18,29 +18,91 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
-// A bare, dependency-free login form — every OAuth param rides as a hidden
-// field so the POST can re-submit them alongside credentials with no server-
-// side session at all. Deliberately plain: this is an admin/operator login
-// surface, not a product login page. (A real product login lives in the SPA
-// and POSTs here directly — see the wrong-password handling below, which
-// redirects back to the client on failure rather than re-rendering this page,
-// so a caller with its own branded form never bounces through this one.)
-function loginPage({ params }) {
+// The login form for an authorization request. Every OAuth param rides as a hidden field so
+// the POST re-submits them alongside credentials with no server-side session at all.
+//
+// Styled to match the console's own sign-in view, and that is not decoration. This page was
+// previously deliberately plain, on the reasoning that a real product login lives in the SPA
+// and only operators would ever land here. That reasoning does not survive MCP: a
+// third-party client (Claude Code, claude.ai, any agent) sends the user straight to
+// /authorize, so for every caller that ISN'T the console this page IS the product's login —
+// and it looked like a debug page next to the console it belongs to.
+//
+// Values are copied from ui/src/style.css rather than imported: this must stay
+// dependency-free (it renders whether or not whitebox-pro-ui is installed) and it cannot
+// load the SPA's stylesheet. The logo is referenced, not inlined, with an onerror that
+// removes it — so it appears when the console is installed to serve /logo.svg and simply
+// isn't there when it isn't, rather than showing a broken-image icon.
+//
+// `client` is used to name what the user is authorizing. Without it the page says only
+// "Sign in", which is the one thing an OAuth consent screen must not be ambiguous about:
+// signing into the console and granting an agent your permissions look identical.
+function loginPage({ params, client }) {
   const hidden = Object.entries(params)
     .filter(([, v]) => v != null)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
     .join('\n')
+
+  // The console signs its own users in; anything else is a third party asking for access.
+  const thirdParty = client && client.client_id !== store.CONSOLE_CLIENT_ID
+  const subtitle = thirdParty
+    ? `<p class="sub">to give <strong>${escapeHtml(client.name || client.client_id)}</strong> access</p>`
+    : ''
+
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Sign in</title>
-<style>body{font:14px system-ui,sans-serif;max-width:320px;margin:80px auto;color:#222}
-input[type=email],input[type=password]{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}
-button{width:100%;padding:8px;margin-top:8px}</style>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in</title>
+<style>
+/* Measured off the running console's own /login rather than copied from the fallbacks in
+   ui/src/style.css — those fallbacks are NOT what renders. The PrimeVue theme overrides
+   --accent (#6366f1 → #09090b, so the button is near-black, not indigo), --text and
+   --radius (10px → 6px) at runtime, so trusting the source would have produced a page that
+   looked adjacent to the console instead of identical to it.
+   Light only, also by measurement: the console's login stays light under
+   prefers-color-scheme: dark, so a dark-mode block here would create the very mismatch it
+   looks like it is preventing. */
+:root{
+  --bg:#f1f5f9; --panel:#fff; --border:#e2e8f0; --border-2:#cbd5e1;
+  --text:#334155; --text-strong:#0f172a; --accent:#09090b;
+  --radius:6px; --shadow:0 6px 18px rgba(15,23,42,.10);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg);
+  color:var(--text); font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+form{
+  width:320px; padding:32px; display:flex; flex-direction:column; align-items:center; gap:10px;
+  background:var(--panel); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow);
+}
+img{width:36px;height:36px;margin-bottom:2px}
+h1{font-size:17px;font-weight:700;margin:0 0 6px;color:var(--text-strong)}
+.sub{margin:-4px 0 4px;font-size:13px;text-align:center;opacity:.8}
+.sub strong{color:var(--text-strong);font-weight:600}
+/* 8px on the fields against the card's 6px is the console's own combination, not a slip. */
+input{
+  width:100%; padding:9px 10px; border:1px solid var(--border-2); border-radius:8px;
+  font-size:14px; background:var(--panel); color:var(--text);
+}
+input:focus{outline:2px solid color-mix(in srgb,var(--accent) 25%,transparent);border-color:var(--accent)}
+button{
+  width:100%; margin-top:6px; padding:9px; border:none; border-radius:8px;
+  background:var(--accent); color:#fff; font-size:14px; font-weight:500; cursor:pointer;
+}
+button:hover{opacity:.92}
+</style>
 </head><body>
-<h3>Sign in</h3>
 <form method="post">
 ${hidden}
-<input type="email" name="email" placeholder="Email" required autofocus>
-<input type="password" name="password" placeholder="Password" required>
+<img src="/logo.svg" alt="" onerror="this.remove()">
+<h1>Sign in</h1>
+${subtitle}
+<!-- autocomplete hints are load-bearing: without them a password manager guesses, and a
+     saved credential for a different app on the same host gets filled instead. -->
+<input type="email" name="email" placeholder="Email" autocomplete="username" required autofocus>
+<input type="password" name="password" placeholder="Password" autocomplete="current-password" required>
 <button type="submit">Sign in</button>
 </form>
 </body></html>`
@@ -87,7 +149,24 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
   const defaultPermissionKeys = permissionsCatalog.flatMap(m => m.defaults || [])
 
   // ── discovery (RFC 8414) ──────────────────────────────────────────────
-  router.get('/.well-known/oauth-authorization-server', (req, res) => {
+  //
+  // Served at TWO paths, because the obvious one is not the one the spec defines.
+  //
+  // Mounting this on the router puts it at `${basePath}/.well-known/…` — appending
+  // .well-known to the issuer path. RFC 8414 §3 does the opposite: it INSERTS .well-known
+  // between the host and the issuer's path, so an issuer of `https://host/oauth` publishes
+  // at `https://host/.well-known/oauth-authorization-server/oauth`.
+  //
+  // Only having the router path cost a real deployment an afternoon. A client looked for the
+  // spec path, got 404, and fell back to guessing endpoints from the origin — `/authorize`,
+  // `/token`, `/callback` — instead of reading ours. Those guesses happened to hit live
+  // routes, so it looked like it nearly worked, while the guessed callback path did not
+  // match the client's registered redirect_uri and login failed with something that looked
+  // unrelated. A stricter client would simply have refused.
+  //
+  // Both are kept: the spec path so compliant clients find it, and the router path because
+  // it is already advertised in the wild and costs one extra route.
+  const metadata = (req, res) => {
     res.json({
       issuer,
       // `issuer` is already the full canonical base (e.g. http://host/oauth) —
@@ -101,7 +180,23 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],   // public clients only
     })
-  })
+  }
+
+  router.get('/.well-known/oauth-authorization-server', metadata)
+
+  // The spec path. Registered on `app`, not the router — it lives ABOVE basePath, so the
+  // router could never serve it. Derived from the issuer rather than basePath: the issuer is
+  // the canonical public identity a client actually resolves against, and behind a proxy it
+  // is what differs from where Express happens to mount.
+  try {
+    const issuerPath = new URL(issuer).pathname.replace(/\/+$/, '')
+    app.get(`/.well-known/oauth-authorization-server${issuerPath}`, metadata)
+    // An issuer at the root already matches the line above; anything else would double up.
+    if (issuerPath) logger?.debug?.('oauth: RFC 8414 metadata at /.well-known/oauth-authorization-server%s', issuerPath)
+  } catch {
+    logger?.warn?.('oauth: issuer %j is not an absolute URL — RFC 8414 discovery path not mounted, ' +
+      'so clients that require it will guess endpoints from the origin instead', issuer)
+  }
 
   router.get('/.well-known/jwks.json', async (req, res) => {
     res.json(await keys.jwks())
@@ -120,7 +215,7 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, f
       return redirectWithError(res, params.redirect_uri, params.state, 'invalid_request', 'PKCE (S256) is required')
     }
 
-    res.set('Content-Type', 'text/html').send(loginPage({ params }))
+    res.set('Content-Type', 'text/html').send(loginPage({ params, client }))
   })
 
   router.post('/authorize', async (req, res) => {
