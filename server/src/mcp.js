@@ -86,6 +86,36 @@ const insufficientScope = scope => ({
   content: [{ type: 'text', text: `insufficient_scope: this requires the "${scope}" permission` }],
 })
 
+// Tool names must match ^[a-zA-Z0-9_-]{1,64}$ to be usable by a Claude client. Plugins here
+// name their tools `voip.list_calls`, `crm.add_fact` and so on — a dotted namespace that reads
+// well and is NOT in that charset.
+//
+// It went unnoticed for a long time because Claude Code quietly rewrites `.` to `_` on the way
+// in, so locally the tools work and simply appear as voip_list_calls. claude.ai does not
+// rewrite; it DROPS them, and a real connector reported "34 tools with unsupported names, which
+// have been excluded from this chat" — a third of the surface silently missing, with the server
+// reporting nothing wrong because from its side nothing was.
+//
+// Normalised here, at the one boundary every registration passes through, rather than renaming
+// tools across nine plugins: one place to be right, and no plugin has to know the charset. The
+// result is also what Claude Code was already showing, so the visible names do not change for
+// anyone — the tools that were being dropped just stop being dropped.
+const NAME_OK = /^[a-zA-Z0-9_-]{1,64}$/
+
+function mcpName(name, kind) {
+  if (NAME_OK.test(name)) return name
+  const safe = name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+  if (!NAME_OK.test(safe)) {
+    // Only reachable for a name with nothing usable in it at all — a bug worth failing on
+    // rather than registering something unaddressable.
+    throw new Error(`mcp.${kind}: name ${JSON.stringify(name)} cannot be made a valid tool name`)
+  }
+  // debug, not warn: it is expected for every dotted name in this repo, and a warning per tool
+  // on every boot would be 34 lines of noise that trains an operator to skip the log.
+  logger?.debug?.('MCP %s name %j is not in ^[a-zA-Z0-9_-]$ — registered as %j', kind, name, safe)
+  return safe
+}
+
 // Register a tool. `inputSchema` is a ZodRawShape (plain object of Zod
 // schemas, NOT z.object(...) — the SDK wraps it). `handler(args)` returns
 // an MCP CallToolResult: `{ content: [{ type: 'text', text: '...' }] }`.
@@ -96,6 +126,7 @@ export function tool({ name, description, inputSchema, outputSchema, annotations
   if (!enabled) return
   if (!name)    throw new Error('mcp.tool: name is required')
   if (!handler) throw new Error('mcp.tool: handler is required')
+  name = mcpName(name, 'tool')
 
   registrations.tools.push({
     name,
@@ -122,6 +153,9 @@ export function resource({ name, uri, description, mimeType, scope, handler }) {
   if (!enabled) return
   if (!name) throw new Error('mcp.resource: name is required')
   if (!uri)  throw new Error('mcp.resource: uri is required')
+  // Same charset rule as tools. The URI is untouched — that is an identifier the client
+  // dereferences, not a name it has to address in a function call.
+  name = mcpName(name, 'resource')
 
   registrations.resources.push({
     name,
@@ -146,6 +180,7 @@ export function prompt({ name, description, argsSchema, handler }) {
   if (!enabled) return
   if (!name)    throw new Error('mcp.prompt: name is required')
   if (!handler) throw new Error('mcp.prompt: handler is required')
+  name = mcpName(name, 'prompt')
 
   registrations.prompts.push({
     name,

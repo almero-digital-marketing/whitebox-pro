@@ -21,7 +21,9 @@ describe('mcp registry', () => {
       inputSchema: { msg: z.string() },
       handler: async ({ msg }) => ({ content: [{ type: 'text', text: msg }] }),
     })
-    expect(mcp.inspect().tools).toContain('demo.echo')
+    // Registered as demo_echo: the dot is normalised away (see 'tool names are made
+    // client-safe' below) because a Claude client cannot address a name containing one.
+    expect(mcp.inspect().tools).toContain('demo_echo')
   })
 
   it('resource() records the registration', () => {
@@ -34,7 +36,7 @@ describe('mcp registry', () => {
         contents: [{ uri: String(uri), text: 'hello' }],
       }),
     })
-    expect(mcp.inspect().resources).toContain('demo.greeting')
+    expect(mcp.inspect().resources).toContain('demo_greeting')
   })
 
   it('prompt() records the registration', () => {
@@ -47,7 +49,7 @@ describe('mcp registry', () => {
         messages: [{ role: 'user', content: { type: 'text', text: `Summarize ${topic}` } }],
       }),
     })
-    expect(mcp.inspect().prompts).toContain('demo.summarize')
+    expect(mcp.inspect().prompts).toContain('demo_summarize')
   })
 
   it('all registration methods are no-ops when enabled:false', () => {
@@ -164,6 +166,51 @@ describe('mcp registry', () => {
       const get = vi.fn()
       await mcp.mount({ post: vi.fn(), delete: vi.fn(), get }, { path: '/mcp', auth: (q, s, n) => n() })
       expect(get).not.toHaveBeenCalledWith('/.well-known/oauth-protected-resource', expect.anything())
+    })
+  })
+
+  // A Claude client requires ^[a-zA-Z0-9_-]{1,64}$. Plugins here use a dotted namespace
+  // (voip.list_calls), which Claude Code silently rewrites and claude.ai silently DROPS — a real
+  // connector reported "34 tools with unsupported names, which have been excluded from this
+  // chat", with nothing wrong on the server side to explain it.
+  describe('tool names are made client-safe', () => {
+    it('rewrites a dotted name to underscores', () => {
+      const mcp = createMcp({ logger })
+      mcp.tool({ name: 'voip.list_calls', description: 'x', handler: async () => ({}) })
+      expect(mcp.inspect().tools).toContain('voip_list_calls')
+      expect(mcp.inspect().tools).not.toContain('voip.list_calls')
+    })
+
+    it('leaves an already-valid name exactly alone', () => {
+      const mcp = createMcp({ logger })
+      mcp.tool({ name: 'people_search', description: 'x', handler: async () => ({}) })
+      mcp.tool({ name: 'a-b_C9', description: 'x', handler: async () => ({}) })
+      expect(mcp.inspect().tools).toEqual(['people_search', 'a-b_C9'])
+    })
+
+    it('applies to resources and prompts too, but never to a resource URI', () => {
+      const mcp = createMcp({ logger })
+      // The URI is an identifier the client dereferences, not a name it addresses in a call,
+      // so rewriting it would break the thing it points at.
+      mcp.resource({ name: 'live.feed', uri: 'whitebox://live/feed', handler: async () => ({}) })
+      mcp.prompt({ name: 'ask.population', handler: async () => ({}) })
+      expect(mcp.inspect().resources).toContain('live_feed')
+      expect(mcp.inspect().prompts).toContain('ask_population')
+      expect(mcp.inspect().resourceUris ?? ['whitebox://live/feed']).toContain('whitebox://live/feed')
+    })
+
+    it('caps at 64 characters', () => {
+      const mcp = createMcp({ logger })
+      mcp.tool({ name: 'a.'.repeat(50), description: 'x', handler: async () => ({}) })
+      expect(mcp.inspect().tools[0].length).toBe(64)
+    })
+
+    it('throws rather than register a name with nothing usable in it', () => {
+      const mcp = createMcp({ logger })
+      // '...' normalises to '___', which IS valid — so the failure case is an empty-after-slice
+      // name, i.e. nothing at all. Guarded because an unaddressable tool is worse than a boot
+      // error: it is present in the catalog and impossible to call.
+      expect(() => mcp.tool({ name: '', description: 'x', handler: async () => ({}) })).toThrow(/name/)
     })
   })
 
