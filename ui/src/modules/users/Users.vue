@@ -68,7 +68,7 @@ onActivated(async () => {
 //
 // From the store, like every other fetched thing in this module. Null when MCP isn't mounted,
 // which is what hides the block.
-const { mcpSetup } = storeToRefs(store)
+const { mcpSetup, agents } = storeToRefs(store)
 
 // Derived from the served URL rather than location.origin: they're the same in a normal
 // deployment, but if the console is hosted apart from the API only the server knows.
@@ -98,6 +98,26 @@ const mcpCommands = computed(() => [
 // then every tool call 403s, so showing the command would be a trap.
 const canUseMcp = computed(() =>
   !!working.value && (working.value.permissions?.includes('*') || working.value.permissions?.includes('mcp:use')))
+
+const revoking = ref('')
+function revokeAgent(agent: any) {
+  if (!working.value) return
+  // Confirmed, like Remove: it cuts an agent out of a live session, and this module uses the
+  // same dialog for every irreversible action.
+  confirm.require({
+    header: 'Disconnect this agent?',
+    message: `${agent.name} will stop being able to act as ${working.value.email}. `
+      + 'An access token it already holds keeps working until it expires (up to an hour) — '
+      + 'what this stops is the renewal.',
+    acceptLabel: 'Disconnect', rejectLabel: 'Cancel', acceptProps: { severity: 'danger' },
+    accept: async () => {
+      revoking.value = agent.client_id
+      try { await store.revokeAgent(working.value.id, agent.client_id) }
+      catch (e: any) { notifyError(`Couldn't disconnect ${agent.name}: ${e.message}`) }
+      finally { revoking.value = '' }
+    },
+  })
+}
 
 const mcpCopied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
@@ -176,7 +196,10 @@ watch(() => working.value?.id, () => {
   resetDraft()
   loadPermDraft()
   resetPasswordFields()
-  if (working.value) store.loadLogins(working.value.id)
+  if (working.value) {
+    store.loadLogins(working.value.id)
+    store.loadAgents(working.value.id)
+  }
 })
 
 // ── change MY OWN password — self-service only, shown just when viewing your
@@ -429,6 +452,28 @@ function fmtDateTime(iso?: string) {
             <code class="link-box">{{ justInvited.inviteUrl }}</code>
           </div>
 
+          <!-- What is already connected as this user. The link is made at first authorization,
+               not at registration (which is unauthenticated), so this is consent history — and
+               the only place an operator can withdraw it. -->
+          <div v-if="agents.length" class="agents-block">
+            <div class="logins-head">Connected agents</div>
+            <ul class="agent-list">
+              <li v-for="a in agents" :key="a.client_id">
+                <span class="agent-name">{{ a.name }}</span>
+                <span v-if="a.dynamic" class="badge">self-registered</span>
+                <span class="agent-meta">
+                  {{ a.connected ? 'Connected' : 'Not connected' }} ·
+                  last sign-in {{ a.last_login ? fmtDateTime(a.last_login) : '—' }}
+                </span>
+                <!-- Disabled rather than hidden when there is nothing live to revoke, matching
+                     this module's convention everywhere else. -->
+                <Button label="Disconnect" text severity="danger" size="small"
+                  :disabled="!a.connected" :loading="revoking === a.client_id"
+                  @click="revokeAgent(a)" />
+              </li>
+            </ul>
+          </div>
+
           <!-- Connecting an AI agent. Lives here because this is where mcp:use is granted:
                having just given someone that permission, the next thing you need is what to
                send them. Hidden entirely when MCP isn't mounted (mcpSetup stays null). -->
@@ -618,6 +663,14 @@ function fmtDateTime(iso?: string) {
 /* Same separated-section shape as .logins-block above it. The commands need a <pre> rather
    than the single-line .link-box the invite URL uses: there are two of them and the line
    break is meaningful, so wrapping would make them look like one command. */
+.agents-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
+.agent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+.agent-name { font-weight: 550; color: var(--text-strong); }
+/* The meta takes the slack so the button stays right-aligned at any width — flex-grow, not a
+   hand-tuned margin. */
+.agent-meta { flex: 1 1 auto; color: var(--muted); }
+.agents-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); }
 .mcp-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .mcp-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); margin-left: 6px; vertical-align: 2px; }
 .cmd-box {

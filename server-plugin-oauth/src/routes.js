@@ -145,7 +145,7 @@ function redirectWithError(res, redirectUri, state, error, description) {
   res.redirect(302, url.toString())
 }
 
-export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, appName, mcpPath, fromEmail, getMail, permissionsCatalog = [] }) {
+export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, appName, mcpPath, dcr, fromEmail, getMail, permissionsCatalog = [] }) {
   const router = express.Router()
   router.use(express.urlencoded({ extended: false }))
 
@@ -187,6 +187,9 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, a
       grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],   // public clients only
+      // Only advertised when registration is actually enabled: a client that finds this key
+      // and then gets a 404 has no way to tell "disabled" from "broken".
+      ...(dcr ? { registration_endpoint: `${issuer}/register` } : {}),
     })
   }
 
@@ -204,6 +207,87 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, a
   } catch {
     logger?.warn?.('oauth: issuer %j is not an absolute URL — RFC 8414 discovery path not mounted, ' +
       'so clients that require it will guess endpoints from the origin instead', issuer)
+  }
+
+  // ── Dynamic Client Registration (RFC 7591) ─────────────────────────────
+  //
+  // For the one client that cannot be handed a client_id: the claude.ai / Claude Desktop
+  // Connectors UI takes a URL and nothing else, so it registers itself or it cannot connect.
+  // Claude Code does not need this — it accepts a pre-registered id (CLI_CLIENT_ID).
+  //
+  // Unauthenticated by necessity: you need a client_id BEFORE you can authenticate, so a
+  // token requirement here would make the endpoint useless to the only caller that needs it.
+  // That is safe because a registered client can do NOTHING on its own — it holds no tokens
+  // and represents no user, and cannot act until a real person signs in on the consent page,
+  // where the scopes come from that person's grants rather than from anything the client
+  // asked for. What is at risk is table volume, not access, so the limits below bound rows.
+  //
+  // The limiter counts every REQUEST, not every successful registration — a rejected attempt
+  // still consumes budget. That is the fail-closed choice for an unauthenticated endpoint:
+  // otherwise an invalid payload is free to repeat forever. The cost is that a client getting
+  // its metadata wrong repeatedly locks itself out until the window rolls, which is recoverable
+  // and visible in the log.
+  //
+  // The per-IP limiter is intentionally in-process: it needs no store, and the durable bound
+  // is the maxClients row count in store.registerDynamicClient. Behind a proxy it depends on
+  // Express `trust proxy` being set (core sets it for private peers) — without that every
+  // request appears to come from the proxy and the limiter degrades to a global one, which
+  // fails closed rather than open.
+  if (dcr) {
+    const { windowMs = 60 * 60 * 1000, maxPerIp = 5, maxClients = 1000 } = dcr
+    const recent = new Map()   // ip -> timestamps[]
+
+    router.post('/register', express.json({ limit: '4kb' }), async (req, res) => {
+      const now = Date.now()
+      const ip = req.ip || 'unknown'
+      const hits = (recent.get(ip) || []).filter(t => now - t < windowMs)
+      if (hits.length >= maxPerIp) {
+        logger?.warn?.({ ip }, 'oauth: registration rate-limited')
+        return res.status(429).json({
+          error: 'invalid_client_metadata',
+          error_description: 'too many registrations from this address — try again later',
+        })
+      }
+      hits.push(now)
+      recent.set(ip, hits)
+      // Bounded cleanup so the map cannot grow forever on a long-lived process.
+      if (recent.size > 10_000) {
+        for (const [k, v] of recent) if (!v.some(t => now - t < windowMs)) recent.delete(k)
+      }
+
+      try {
+        const row = await store.registerDynamicClient({
+          name: req.body?.client_name,
+          redirectUris: req.body?.redirect_uris,
+          maxClients,
+        })
+        logger?.info?.({ clientId: row.client_id, name: row.name, ip }, 'oauth: client self-registered')
+        const uris = typeof row.redirect_uris === 'string' ? JSON.parse(row.redirect_uris) : row.redirect_uris
+        // RFC 7591 §3.2.1: 201, and echo back the metadata as REGISTERED — which may differ
+        // from what was sent (a missing name became a placeholder), so a client can see what
+        // it actually got rather than assume its request was taken verbatim.
+        res.status(201).json({
+          client_id: row.client_id,
+          client_id_issued_at: Math.floor(new Date(row.created_at).getTime() / 1000),
+          client_name: row.name,
+          redirect_uris: uris,
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          // No client_secret, and this states why in the response itself: every client here is
+          // public and PKCE is what proves possession of the original request.
+          token_endpoint_auth_method: 'none',
+        })
+      } catch (err) {
+        if (err instanceof store.RegistrationError) {
+          return res.status(400).json({ error: err.code, error_description: err.message })
+        }
+        logger?.error?.({ err }, 'oauth: registration failed')
+        res.status(500).json({ error: 'invalid_client_metadata', error_description: 'registration failed' })
+      }
+    })
+
+    logger?.info?.('oauth: dynamic client registration at %s/register (max %d/ip per %dmin, %d total)',
+      basePath, maxPerIp, Math.round(windowMs / 60000), maxClients)
   }
 
   router.get('/.well-known/jwks.json', async (req, res) => {
@@ -461,6 +545,25 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, a
   // Login history — real logins only (see recordLogin's call site), newest first.
   router.get('/users/:id/logins', manageUsers.middleware, async (req, res) => {
     res.json(await store.listLogins(req.params.id))
+  })
+
+  // Which agents this user has connected, and the means to cut one off.
+  //
+  // The pair (user, client) is the unit on purpose. Revoking a CLIENT wholesale would sign out
+  // every other user of it — including everyone using the shared CLI client — and revoking a
+  // USER wholesale would take their console session with it. Neither is what "disconnect this
+  // agent" means.
+  router.get('/users/:id/agents', manageUsers.middleware, async (req, res) => {
+    res.json(await store.listUserAgents(req.params.id))
+  })
+
+  router.delete('/users/:id/agents/:clientId', manageUsers.middleware, async (req, res) => {
+    const revoked = await store.revokeUserAgent(req.params.id, req.params.clientId)
+    logger?.info?.({ userId: req.params.id, clientId: req.params.clientId, revoked },
+      'oauth: agent access revoked')
+    // 200 with the count even when it is 0: "there was nothing live to revoke" is a success,
+    // not a missing resource, and the console renders the same result either way.
+    res.json({ revoked })
   })
 
   function inviteUrl(token) {

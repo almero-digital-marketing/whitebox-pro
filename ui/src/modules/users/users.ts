@@ -32,6 +32,12 @@ export const usersClient = {
   updateProfile: (id: string, fields: { first_name?: string; last_name?: string; phone?: string; email?: string }) =>
     req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   logins: (id: string) => req(`/users/${id}/logins`),
+  // Which agents this user has connected, and cutting one off. The (user, client) PAIR is the
+  // unit: revoking a client outright would sign out every other user of it — including everyone
+  // sharing the CLI client — and revoking a user outright would take their console session too.
+  agents: (id: string) => req(`/users/${id}/agents`) as Promise<any[]>,
+  revokeAgent: (id: string, clientId: string) =>
+    req(`/users/${id}/agents/${encodeURIComponent(clientId)}`, { method: 'DELETE' }),
   // The server's own MCP client config — the same bytes a user can curl straight into
   // `claude mcp add-json`. Fetched rather than assembled here so the console cannot disagree
   // with the server about its own URL or client id. 404s when MCP isn't mounted, which is

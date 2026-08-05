@@ -43,6 +43,7 @@ beforeEach(async () => {
   mountRoutes(app, {
     basePath: ISSUER_PATH, issuer, audience: AUDIENCE, logger,
     appUrl: APP_URL, appName: 'GPoint WhiteBox', mcpPath: '/mcp', fromEmail: 'noreply@example.com',
+    dcr: { maxPerIp: 20, maxClients: 50, windowMs: 60_000 },
     getMail: () => ({ send: async (msg) => { sentEmails.push(msg) } }),
     permissionsCatalog: PERMISSIONS_CATALOG,
   })
@@ -164,6 +165,85 @@ describe('discovery + JWKS', () => {
     it('does not pin a callback port', async () => {
       const body = await (await fetch(`${base}${ISSUER_PATH}/mcp-setup.json`)).json()
       expect(body.oauth).not.toHaveProperty('callbackPort')
+    })
+  })
+
+  // RFC 7591. Exists for one caller: a client with nowhere to put a client_id (the
+  // claude.ai / Claude Desktop Connectors UI takes a URL and nothing else).
+  describe('dynamic client registration', () => {
+    const register = (body) => fetch(`${base}${ISSUER_PATH}/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+
+    it('advertises registration_endpoint only when enabled', async () => {
+      const m = await (await fetch(`${base}${ISSUER_PATH}/.well-known/oauth-authorization-server`)).json()
+      expect(m.registration_endpoint).toBe(`${issuer}/register`)
+    })
+
+    it('registers a client and returns metadata AS REGISTERED', async () => {
+      const res = await register({ client_name: 'Claude Desktop', redirect_uris: ['https://claude.ai/api/mcp/oauth/callback'] })
+      expect(res.status).toBe(201)
+      const body = await res.json()
+      expect(body.client_id).toBeTruthy()
+      expect(body.client_name).toBe('Claude Desktop')
+      // No secret, and it says so: every client here is public and PKCE is the proof.
+      expect(body).not.toHaveProperty('client_secret')
+      expect(body.token_endpoint_auth_method).toBe('none')
+    })
+
+    it('the registered client can immediately start a real flow', async () => {
+      const { client_id } = await (await register({ client_name: 'X', redirect_uris: ['https://x.example.com/cb'] })).json()
+      const params = new URLSearchParams({
+        response_type: 'code', client_id, redirect_uri: 'https://x.example.com/cb',
+        code_challenge: challenge, code_challenge_method: 'S256', state: 's',
+      })
+      const res = await fetch(`${base}${ISSUER_PATH}/authorize?${params}`)
+      expect(res.status).toBe(200)
+    })
+
+    // Stricter than what an operator may type by hand: an operator has made a judgement, an
+    // anonymous POST has not.
+    it('refuses redirect_uris that would leak a code', async () => {
+      for (const uri of [
+        'http://evil.example.com/cb',        // cleartext to a routable host
+        'com.example.app:/cb',               // unverifiable claim on a scheme
+        'https://x.example.com/cb#frag',     // forbidden by RFC 6749 §3.1.2
+        'not-a-url',
+      ]) {
+        const res = await register({ client_name: 'bad', redirect_uris: [uri] })
+        expect(res.status, uri).toBe(400)
+        expect((await res.json()).error).toBe('invalid_redirect_uri')
+      }
+    })
+
+    it('accepts http on loopback, where TLS is impossible', async () => {
+      const res = await register({ client_name: 'cli', redirect_uris: ['http://127.0.0.1:1234/cb'] })
+      expect(res.status).toBe(201)
+    })
+
+    it('requires at least one redirect_uri', async () => {
+      expect((await register({ client_name: 'x' })).status).toBe(400)
+      expect((await register({ client_name: 'x', redirect_uris: [] })).status).toBe(400)
+    })
+
+    it('names an unnamed client rather than leaving the consent screen blank', async () => {
+      const body = await (await register({ redirect_uris: ['https://y.example.com/cb'] })).json()
+      expect(body.client_name).toBe('Unnamed client')
+    })
+
+    // Open registration leaks ROWS, not access, so the limits are about volume.
+    //
+    // Note it counts every REQUEST, not every successful registration — a rejected attempt
+    // still consumes budget. That is the fail-closed choice for an unauthenticated endpoint:
+    // otherwise an invalid payload is free to repeat forever. The cost is that a client
+    // getting its metadata wrong repeatedly locks itself out until the window rolls.
+    it('rate-limits per address, counting rejected attempts too', async () => {
+      let last
+      for (let i = 0; i < 21; i++) {
+        last = await register({ client_name: `n${i}`, redirect_uris: [`https://z${i}.example.com/cb`] })
+      }
+      expect(last.status).toBe(429)
+      expect((await last.json()).error_description).toMatch(/too many/i)
     })
   })
 

@@ -70,6 +70,196 @@ export async function ensureConsoleClient({ redirectUris, name = 'WhiteBox conso
   }
 }
 
+// Loopback, for both the RFC 8252 §7.3 port relaxation below and RFC 7591 redirect_uri
+// validation above. Declared here, ahead of both, so neither depends on a const further down
+// the file staying un-evaluated until request time.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
+
+function isLoopback(url) {
+  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
+}
+
+// ── Dynamic Client Registration (RFC 7591) ──────────────────────────────────────────────
+//
+// Needed for one specific caller: a client with nowhere to put a client_id. The claude.ai /
+// Claude Desktop Connectors UI takes a URL and nothing else, so it must register itself or it
+// cannot connect at all. Claude Code does not need this — it accepts a pre-registered id, and
+// CLI_CLIENT_ID already covers it.
+//
+// What a newly registered client can do: nothing. It holds no tokens and represents no user.
+// It cannot act until a real person signs in on the consent page, and the scopes come from
+// that person's own grants — never from what the client requested (see routes.js). So open
+// registration does not leak ACCESS; it leaks ROWS, which is why the limits below are about
+// volume rather than authorization.
+const MAX_REDIRECT_URIS = 10
+const MAX_CLIENT_NAME = 255
+
+// Which redirect URIs a self-registering client may claim. Stricter than what an operator can
+// enter by hand, deliberately: an operator typing a URI has made a judgement, an anonymous
+// POST has not.
+//
+//   · https  — anywhere. This is the Connectors-UI case (https://claude.ai/...).
+//   · http   — LOOPBACK ONLY. A native client cannot present a TLS cert on 127.0.0.1, which
+//              is exactly why RFC 8252 allows plain http there and nowhere else.
+//
+// Everything else is refused, including http on a routable host (a code in cleartext to a
+// third party) and private-use schemes like com.example.app:/cb — those are legitimate under
+// RFC 8252 §7.1 but they are also unverifiable claims on a namespace, so they stay out until
+// something actually needs them.
+//
+// A fragment is refused outright: RFC 6749 §3.1.2 forbids one in a redirect URI, and it would
+// be silently dropped by the browser anyway.
+export function validateRedirectUri(value) {
+  if (typeof value !== 'string' || !value) return 'must be a string'
+  let url
+  try { url = new URL(value) } catch { return 'is not an absolute URI' }
+  if (url.hash) return 'must not contain a fragment'
+  if (url.protocol === 'https:') return null
+  if (url.protocol === 'http:') {
+    return LOOPBACK_HOSTS.has(url.hostname) ? null : 'must use https, except on loopback'
+  }
+  return `scheme ${url.protocol} is not allowed — use https, or http on loopback`
+}
+
+// Throws with an RFC 7591 error code, which routes.js maps straight onto the response body.
+class RegistrationError extends Error {
+  constructor(code, description) {
+    super(description)
+    this.code = code
+  }
+}
+export { RegistrationError }
+
+export async function registerDynamicClient({ name, redirectUris, maxClients }) {
+  if (!Array.isArray(redirectUris) || !redirectUris.length) {
+    throw new RegistrationError('invalid_redirect_uri', 'redirect_uris must be a non-empty array')
+  }
+  if (redirectUris.length > MAX_REDIRECT_URIS) {
+    throw new RegistrationError('invalid_redirect_uri', `at most ${MAX_REDIRECT_URIS} redirect_uris`)
+  }
+  for (const uri of redirectUris) {
+    const problem = validateRedirectUri(uri)
+    if (problem) throw new RegistrationError('invalid_redirect_uri', `redirect_uri ${JSON.stringify(uri)} ${problem}`)
+  }
+
+  // Bounds the table even if the per-IP limit is evaded from many addresses. Counted rather
+  // than trusted to a rate limiter because that one lives in process memory and does not
+  // survive a restart, while rows do.
+  if (maxClients != null) {
+    const [{ count }] = await db('whitebox_oauth_clients').where({ dynamic: true }).count({ count: '*' })
+    if (Number(count) >= maxClients) {
+      throw new RegistrationError('invalid_client_metadata',
+        'this server is not accepting new client registrations right now')
+    }
+  }
+
+  // The name is client-supplied and ends up on the consent page, so it is length-capped here
+  // and HTML-escaped at render (routes.js). A client that sends no name gets a neutral one
+  // rather than a blank line where the app's identity should be.
+  const clientName = (typeof name === 'string' && name.trim())
+    ? name.trim().slice(0, MAX_CLIENT_NAME)
+    : 'Unnamed client'
+
+  const clientId = randomUUID()
+  const [row] = await db('whitebox_oauth_clients')
+    .insert({ client_id: clientId, name: clientName, redirect_uris: JSON.stringify(redirectUris), dynamic: true })
+    .returning(['client_id', 'name', 'redirect_uris', 'created_at'])
+  return row
+}
+
+// Deletes self-registered clients that were never used and are past `olderThanDays`.
+//
+// Only `dynamic: true` rows, and only those with no login recorded against them — an
+// operator-registered client that has not been used yet is not garbage, it is a client
+// waiting for its user. Codes and refresh tokens cascade on delete (001), so a row with any
+// real history is preserved by the login check rather than by luck.
+export async function pruneDynamicClients({ olderThanDays = 30 } = {}) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000)
+  // Two statements rather than one with a subquery: the id list is tiny (one row per client
+  // ever used, not per login) and a plain array keeps this working on any driver.
+  const used = (await db('whitebox_oauth_logins').distinct('client_id')).map(r => r.client_id)
+  return db('whitebox_oauth_clients')
+    .where({ dynamic: true })
+    .where('created_at', '<', cutoff)
+    .whereNotIn('client_id', used)
+    .del()
+}
+
+// ── which agents a user has connected ───────────────────────────────────────────────────
+//
+// The association between a client and a user cannot be made at REGISTRATION: that endpoint is
+// unauthenticated by necessity (a client needs an id before it can authenticate), so there is
+// no identity to attribute. It is made one step later, at the first /authorize — and that is
+// the more useful fact anyway. "Who created this row" is uninteresting; "who granted this
+// agent their permissions" is the question an operator needs answered.
+//
+// Both halves are already recorded: whitebox_oauth_logins says a user consented to a client,
+// whitebox_oauth_refresh_tokens says that consent is still live. This reads them together so
+// the console can show what is connected, and revoke it.
+//
+// Aggregated in JS rather than with a GROUP BY join: the row counts here are per-user, the
+// clients table is small, and it keeps this working on any driver.
+export async function listUserAgents(userId) {
+  const logins = await db('whitebox_oauth_logins')
+    .where({ user_id: userId })
+    .select('client_id', 'created_at')
+    .orderBy('created_at', 'desc')
+
+  // Live consent, not just history: a token that is revoked or expired no longer grants
+  // anything, so counting it as "connected" would overstate what is actually in force.
+  const tokens = (await db('whitebox_oauth_refresh_tokens')
+    .where({ user_id: userId })
+    .whereNull('revoked_at')
+    .select('client_id', 'expires_at'))
+    .filter(t => new Date(t.expires_at) > new Date())
+
+  const byClient = new Map()
+  const touch = (id) => {
+    if (!byClient.has(id)) byClient.set(id, { client_id: id, logins: 0, last_login: null, active_tokens: 0 })
+    return byClient.get(id)
+  }
+  for (const l of logins) {
+    const e = touch(l.client_id)
+    e.logins += 1
+    // logins arrive newest-first, so the first one seen for a client is its most recent.
+    if (!e.last_login) e.last_login = l.created_at
+  }
+  for (const t of tokens) touch(t.client_id).active_tokens += 1
+
+  const out = []
+  for (const entry of byClient.values()) {
+    const client = await getClient(entry.client_id)
+    out.push({
+      ...entry,
+      // A client row can be gone (pruned, or deleted by an operator) while its login history
+      // remains, so name it rather than rendering a blank.
+      name: client?.name ?? '(deleted client)',
+      dynamic: !!client?.dynamic,
+      connected: entry.active_tokens > 0,
+    })
+  }
+  // Live connections first, then by recency — the ones an operator might want to cut off are
+  // the ones still in force.
+  return out.sort((a, b) =>
+    Number(b.connected) - Number(a.connected) ||
+    new Date(b.last_login || 0) - new Date(a.last_login || 0))
+}
+
+// Cuts one agent off for one user, and only that pair: revoking a client wholesale would sign
+// out every other user of it, and revoking a user wholesale would cut off their console
+// session too.
+//
+// Marks refresh tokens revoked rather than deleting them, matching revokeRefreshToken above —
+// the row is the evidence that the consent existed and was withdrawn. Access tokens already
+// issued are JWTs and stay valid until they expire (1h); this stops the renewal, which is the
+// only thing a resource server can enforce without a revocation check on every request.
+export async function revokeUserAgent(userId, clientId) {
+  return db('whitebox_oauth_refresh_tokens')
+    .where({ user_id: userId, client_id: clientId })
+    .whereNull('revoked_at')
+    .update({ revoked_at: new Date() })
+}
+
 // The client every command-line/desktop MCP client uses, auto-provisioned like the console's.
 //
 // This exists so a user's setup is two commands with nothing to paste. Whitebox has no
@@ -136,12 +326,6 @@ export async function ensureCliClient({ name = 'Command line (MCP)' } = {}) {
 // the port is ignored. That is safe because reaching a loopback port means already being on
 // the user's machine, and the code is useless there without the PKCE verifier, which never
 // left the process that started the flow.
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
-
-function isLoopback(url) {
-  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
-}
-
 export function redirectUriAllowed(client, redirectUri) {
   const uris = typeof client.redirect_uris === 'string' ? JSON.parse(client.redirect_uris) : client.redirect_uris
   if (!Array.isArray(uris)) return false

@@ -28,7 +28,7 @@ import { mountRoutes } from './routes.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function oauth(options = {}) {
-  const { issuer, audience, appUrl, fromEmail, appName: appNameOption } = options
+  const { issuer, audience, appUrl, fromEmail, appName: appNameOption, registration } = options
   if (!issuer) throw new Error('oauth(): issuer is required, e.g. "http://localhost:3000/oauth"')
   if (!audience) throw new Error('oauth(): audience is required — the value every issued token\'s aud claim carries')
 
@@ -126,12 +126,27 @@ export function oauth(options = {}) {
         logger.info('MCP client setup at %s/mcp-setup.json', basePath)
       }
 
+      // Dynamic Client Registration. OFF unless asked for: it is an unauthenticated write
+      // endpoint, and a deployment whose only clients are the console and the CLI (both
+      // auto-provisioned above) has no use for it. `registration: true` takes the defaults.
+      const dcr = registration === true ? {} : (registration || null)
+      if (dcr) {
+        // Sweep on boot rather than on a timer: DCR has no "get or create", so every
+        // reinstall or cleared cache leaves another row, and without pruning the table only
+        // grows. Only self-registered clients that NO user ever authorized are removed — an
+        // operator's unused client is a client waiting for its user, not garbage.
+        const days = dcr.pruneAfterDays ?? 30
+        store.pruneDynamicClients({ olderThanDays: days })
+          .then(n => { if (n) logger.info('Pruned %d unused self-registered client(s) older than %d days', n, days) })
+          .catch(err => logger.warn({ err }, 'oauth: pruning self-registered clients failed'))
+      }
+
       // Lazy lookup so plugin load order doesn't matter (mail may register
       // after oauth) — mirrors server-plugin-mail's own getShortener.
       const getMail = () => ctx.plugins?.mail?.service
 
       mountRoutes(app, {
-        basePath, issuer, audience, logger, appUrl, appName, mcpPath, fromEmail, getMail,
+        basePath, issuer, audience, logger, appUrl, appName, mcpPath, dcr, fromEmail, getMail,
         permissionsCatalog: ctx.permissions?.catalog || [],
       })
 

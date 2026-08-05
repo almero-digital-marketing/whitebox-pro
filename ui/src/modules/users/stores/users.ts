@@ -17,6 +17,7 @@ export const useUsersStore = defineStore('users', () => {
   const logins = ref<any[]>([])   // the currently-selected user's login history, newest first
   // The server's own MCP client config, or null when MCP isn't mounted. Deployment-wide, not
   // per-user, so it is loaded once rather than per selection.
+  const agents = ref<any[]>([])   // clients the selected user has authorized, live ones first
   const mcpSetup = ref<{ type: string; url: string; oauth: { clientId: string } } | null>(null)
   const error = ref('')
 
@@ -33,6 +34,20 @@ export const useUsersStore = defineStore('users', () => {
   // an operator something failed.
   async function loadMcpSetup() {
     try { mcpSetup.value = await client.mcpSetup() } catch { mcpSetup.value = null }
+  }
+
+  async function loadAgents(id: string) {
+    agents.value = []   // clear first, so a failure can't leave the previous user's agents showing
+    try { agents.value = await client.agents(id) } catch (e: any) { error.value = e.message; notifyError(`Couldn't load connected agents: ${e.message}`) }
+  }
+
+  // Reloads afterwards rather than patching locally: the row's connected/active_tokens are
+  // derived server-side, and recomputing them here would be a second implementation to keep
+  // in step.
+  async function revokeAgent(id: string, clientId: string) {
+    const res = await client.revokeAgent(id, clientId)
+    await loadAgents(id)
+    return res
   }
 
   async function loadLogins(id: string) {
@@ -79,7 +94,7 @@ export const useUsersStore = defineStore('users', () => {
   return {
     rows: rail.rows, total: rail.total, page: rail.page, q: rail.q, railLoading: rail.loading,
     pageSize: rail.pageSize, searchUsers: rail.search, goToPage: rail.goToPage, refreshRail: rail.refresh,
-    users, catalog, logins, mcpSetup, error,
-    loadUsers, loadCatalog, loadLogins, loadMcpSetup, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
+    users, catalog, logins, agents, mcpSetup, error,
+    loadUsers, loadCatalog, loadLogins, loadAgents, revokeAgent, loadMcpSetup, inviteUser, resendInvite, removeUser, setPermissions, updateProfile, changePassword,
   }
 })

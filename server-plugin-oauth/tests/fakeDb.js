@@ -29,7 +29,9 @@ export function makeFakeDb() {
         String(r[col] ?? '').toLowerCase().includes(String(val).replace(/%/g, '').toLowerCase()))
       const applyFilters = () => rows(name).filter(r =>
         matches(r, state.cond) && state.extra.every(([col, op, val]) => OPS[op](r[col], val))
-        && state.notNull.every(col => (r[col] ?? null) !== null) && likes(r))
+        && state.notNull.every(col => (r[col] ?? null) !== null) && likes(r)
+        && state.isNull.every(col => (r[col] ?? null) === null)
+        && state.notIn.every(([col, vals]) => !vals.includes(r[col])))
       const project = (list) => state.cols
         ? list.map(r => Object.fromEntries(state.cols.map(c => [c, r[c]])))
         : list.map(r => ({ ...r }))
@@ -39,9 +41,12 @@ export function makeFakeDb() {
       // the caller's sort column, and a fake that kept only the final term
       // would silently sort by the tiebreaker ALONE — the tests would pass
       // while proving the opposite of the real query's behaviour.
+      const dedupe = (list) => state.uniq
+        ? [...new Map(list.map(r => [JSON.stringify(r), r])).values()]
+        : list
       const resolved = () => {
         const list = applyFilters()
-        if (!state.order.length) return project(window(list))
+        if (!state.order.length) return dedupe(project(window(list)))
         const sorted = [...list].sort((a, b) => {
           for (const [col, dir] of state.order) {
             const [x, y] = [a[col], b[col]]
@@ -51,7 +56,7 @@ export function makeFakeDb() {
           }
           return 0
         })
-        return project(window(sorted))
+        return dedupe(project(window(sorted)))
       }
       // limit/offset applied last, after ordering — same as SQL
       const window = (list) => (state.limit == null && !state.offset)
@@ -59,7 +64,10 @@ export function makeFakeDb() {
         : list.slice(state.offset || 0, state.limit == null ? undefined : (state.offset || 0) + state.limit)
 
       return {
-        select(cols) { return makeQuery({ ...state, cols }) },
+        // Varargs AND array form, like knex: select('a', 'b') and select(['a', 'b']) are the
+        // same call. Only the array form was handled, so a two-column select silently set cols
+        // to a string and blew up in projection.
+        select(...cols) { return makeQuery({ ...state, cols: cols.flat() }) },
         where(cond, op, val) {
           // The 3-arg operator form (status()'s `where('created_at', '>=', d)`)
           // is the same thing as andWhere below — knex treats them as aliases.
@@ -76,6 +84,13 @@ export function makeFakeDb() {
         },
         andWhere(col, op, val) { return makeQuery({ ...state, extra: [...state.extra, [col, op, val]] }) },
         whereNotNull(col) { return makeQuery({ ...state, notNull: [...state.notNull, col] }) },
+        whereNull(col) { return makeQuery({ ...state, isNull: [...state.isNull, col] }) },
+        // Array form only. The real prune deliberately passes an array rather than a subquery
+        // (see store.pruneDynamicClients), so that is the whole surface needed — a fake that
+        // pretended to run subqueries would misrepresent what a test proves.
+        whereNotIn(col, vals) { return makeQuery({ ...state, notIn: [...state.notIn, [col, [...vals]]] }) },
+        // DISTINCT over the PROJECTED columns, which is what `.distinct('client_id')` means.
+        distinct(...cols) { return makeQuery({ ...state, cols: cols.length ? cols : state.cols, uniq: true }) },
         orderBy(col, dir = 'asc') { return makeQuery({ ...state, order: [...state.order, [col, dir]] }) },
         // pagedList() reaches for modify() to add its tiebreaker conditionally.
         // Real knex hands the callback a MUTABLE builder; this fake is
@@ -152,7 +167,7 @@ export function makeFakeDb() {
       return chain
     }
 
-    return { insert, ...makeQuery({ cond: {}, extra: [], notNull: [], orTerms: [], cols: null, order: [], limit: null, offset: 0 }) }
+    return { insert, ...makeQuery({ cond: {}, extra: [], notNull: [], isNull: [], notIn: [], orTerms: [], cols: null, order: [], limit: null, offset: 0, uniq: false }) }
   }
 
   const db = (name) => table(name)

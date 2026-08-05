@@ -84,6 +84,96 @@ describe('store — clients', () => {
     })
   })
 
+  // DCR has no "get or create" — every POST /register mints a new client_id — so reinstalls
+  // and cleared caches leave rows behind and the table only grows. Pruning is the answer, and
+  // the association with a user is what makes it safe.
+  describe('pruning self-registered clients', () => {
+    const old = () => new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+
+    it('removes an old self-registered client no user ever authorized', async () => {
+      const c = await store.registerDynamicClient({ name: 'ghost', redirectUris: ['https://g.example.com/cb'] })
+      await db('whitebox_oauth_clients').where({ client_id: c.client_id }).update({ created_at: old() })
+      expect(await store.pruneDynamicClients({ olderThanDays: 30 })).toBe(1)
+      expect(await store.getClient(c.client_id)).toBeFalsy()
+    })
+
+    it('keeps one a user actually connected, however old', async () => {
+      const c = await store.registerDynamicClient({ name: 'used', redirectUris: ['https://u.example.com/cb'] })
+      await db('whitebox_oauth_clients').where({ client_id: c.client_id }).update({ created_at: old() })
+      await store.recordLogin({ userId: 'u1', clientId: c.client_id, ip: '::1', userAgent: 'x' })
+      expect(await store.pruneDynamicClients({ olderThanDays: 30 })).toBe(0)
+      expect(await store.getClient(c.client_id)).toBeTruthy()
+    })
+
+    it('never touches an operator-created client, used or not', async () => {
+      // An operator's unused client is a client waiting for its user, not garbage — and it is
+      // the case a naive "delete unused clients" sweep would silently destroy.
+      const c = await store.createClient({ name: 'operator', redirectUris: ['https://o.example.com/cb'] })
+      await db('whitebox_oauth_clients').where({ client_id: c.client_id }).update({ created_at: old() })
+      expect(await store.pruneDynamicClients({ olderThanDays: 30 })).toBe(0)
+      expect(await store.getClient(c.client_id)).toBeTruthy()
+    })
+
+    it('keeps a recent self-registered client', async () => {
+      await store.registerDynamicClient({ name: 'fresh', redirectUris: ['https://f.example.com/cb'] })
+      expect(await store.pruneDynamicClients({ olderThanDays: 30 })).toBe(0)
+    })
+
+    it('refuses to register past the row cap', async () => {
+      await store.registerDynamicClient({ name: 'a', redirectUris: ['https://a.example.com/cb'], maxClients: 1 })
+      await expect(store.registerDynamicClient({
+        name: 'b', redirectUris: ['https://b.example.com/cb'], maxClients: 1,
+      })).rejects.toThrow(/not accepting/)
+    })
+  })
+
+  // The client-to-user link is made at first authorization, not registration — registration is
+  // unauthenticated, so there is no identity to attribute at that point.
+  describe('agents connected as a user', () => {
+    it('lists clients a user authorized, newest and live first', async () => {
+      const a = await store.createClient({ name: 'Agent A', redirectUris: ['https://a/cb'] })
+      const b = await store.createClient({ name: 'Agent B', redirectUris: ['https://b/cb'] })
+      await store.recordLogin({ userId: 'u1', clientId: a.client_id })
+      await store.recordLogin({ userId: 'u1', clientId: b.client_id })
+      await store.createRefreshToken({ clientId: b.client_id, userId: 'u1', scope: 'mcp:use', ttlSec: 3600 })
+      // Another user's connection must not appear under this one.
+      await store.recordLogin({ userId: 'u2', clientId: a.client_id })
+
+      const agents = await store.listUserAgents('u1')
+      expect(agents.map(x => x.name)).toEqual(['Agent B', 'Agent A'])   // live one first
+      expect(agents[0]).toMatchObject({ connected: true, active_tokens: 1 })
+      expect(agents[1]).toMatchObject({ connected: false, active_tokens: 0, logins: 1 })
+    })
+
+    it('revokes one pair only — not the client for everyone, nor the user everywhere', async () => {
+      const c = await store.createClient({ name: 'Shared', redirectUris: ['https://s/cb'] })
+      const other = await store.createClient({ name: 'Other', redirectUris: ['https://o/cb'] })
+      // A login AND a token for each pair, which is what a real flow leaves behind: the login
+      // is the history, the token is the live consent. Revoking must clear the second without
+      // erasing the first — an operator needs to see that an agent WAS connected.
+      for (const [user, client] of [['u1', c], ['u2', c], ['u1', other]]) {
+        await store.recordLogin({ userId: user, clientId: client.client_id })
+        await store.createRefreshToken({ clientId: client.client_id, userId: user, ttlSec: 3600 })
+      }
+
+      expect(await store.revokeUserAgent('u1', c.client_id)).toBe(1)
+
+      // u2 keeps the same client; u1 keeps their other client.
+      expect((await store.listUserAgents('u2')).find(x => x.client_id === c.client_id).connected).toBe(true)
+      expect((await store.listUserAgents('u1')).find(x => x.client_id === other.client_id).connected).toBe(true)
+      // Still listed for u1, now as disconnected — the history survives the revocation.
+      const u1shared = (await store.listUserAgents('u1')).find(x => x.client_id === c.client_id)
+      expect(u1shared).toMatchObject({ connected: false, active_tokens: 0, logins: 1 })
+    })
+
+    it('names a client whose row is gone rather than rendering a blank', async () => {
+      const c = await store.registerDynamicClient({ name: 'Gone', redirectUris: ['https://g/cb'] })
+      await store.recordLogin({ userId: 'u1', clientId: c.client_id })
+      await db('whitebox_oauth_clients').where({ client_id: c.client_id }).del()
+      expect((await store.listUserAgents('u1'))[0].name).toBe('(deleted client)')
+    })
+  })
+
   it('throws without a name or a non-empty redirectUris array', async () => {
     await expect(store.createClient({ redirectUris: ['https://x/y'] })).rejects.toThrow()
     await expect(store.createClient({ name: 'App', redirectUris: [] })).rejects.toThrow()
