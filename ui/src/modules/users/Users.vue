@@ -56,46 +56,25 @@ onActivated(async () => {
   store.loadMcpSetup()
 })
 
-// ── MCP connection command ────────────────────────────────────────────────────
+// ── the MCP endpoint, for connecting an agent ─────────────────────────────────
 //
-// Connecting an agent needs two shell commands, and this is where they belong: you grant
-// someone mcp:use here, so this is where you tell them what to run. Copied rather than
-// retyped — a mistyped URL fails with an error that says nothing about the typo.
+// One value, because that is now genuinely all it takes: Claude's Connectors UI asks for a URL
+// and nothing else, then registers itself (RFC 7591) and runs the sign-in. This block used to
+// print two shell commands; they still work, but they are the long way round for the person
+// this screen is for — an admin who has just granted someone mcp:use and needs to tell them how
+// to connect.
 //
-// The command carries no per-install values on purpose: the server serves its own config at
-// /oauth/mcp-setup.json, so `curl` fetches the client id and URL at run time. That is why
-// this block shows a command rather than a client_id to copy by hand.
+// Fetched from the server rather than built from location.origin: the endpoint's path is
+// configurable (config.mcp.path) and the console can be served from a different origin than the
+// API, so only the server knows its own address.
 //
-// From the store, like every other fetched thing in this module. Null when MCP isn't mounted,
-// which is what hides the block.
+// Null when MCP isn't mounted, which is what hides the block.
 const { mcpSetup, agents } = storeToRefs(store)
 
-// Derived from the served URL rather than location.origin: they're the same in a normal
-// deployment, but if the console is hosted apart from the API only the server knows.
-const mcpSetupUrl = computed(() =>
-  mcpSetup.value ? new URL('/oauth/mcp-setup.json', mcpSetup.value.url).toString() : '')
-
-// The local name for the server entry, which is the user's own label — it only has to be a
-// valid identifier and match between the two commands. Taken from the first hostname label
-// (whitebox.gpoint.bg → "whitebox") because that is recognisable without the console needing
-// to know the deployment's display name.
-const mcpServerName = computed(() => {
-  if (!mcpSetup.value) return 'whitebox'
-  const host = new URL(mcpSetup.value.url).hostname
-  // A bare host or an IP says nothing about which system it is — "claude mcp login localhost"
-  // is a worse label than "whitebox", and in dev that is exactly what the hostname gives.
-  if (host === 'localhost' || /^[\d.]+$/.test(host) || host.startsWith('[')) return 'whitebox'
-  const label = host.split('.')[0].replace(/[^a-zA-Z0-9-]/g, '')
-  return label || 'whitebox'
-})
-
-const mcpCommands = computed(() => [
-  `claude mcp add-json ${mcpServerName.value} -s user "$(curl -fsSL ${mcpSetupUrl.value})"`,
-  `claude mcp login ${mcpServerName.value}`,
-].join('\n'))
+const mcpUrl = computed(() => mcpSetup.value?.url ?? '')
 
 // Only meaningful for someone who can actually use MCP: without mcp:use the flow succeeds and
-// then every tool call 403s, so showing the command would be a trap.
+// then every tool call 403s, so handing them the endpoint would be a trap.
 const canUseMcp = computed(() =>
   !!working.value && (working.value.permissions?.includes('*') || working.value.permissions?.includes('mcp:use')))
 
@@ -121,16 +100,16 @@ function revokeAgent(agent: any) {
 
 const mcpCopied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
-async function copyMcpCommands() {
+async function copyMcpUrl() {
   try {
-    await navigator.clipboard.writeText(mcpCommands.value)
+    await navigator.clipboard.writeText(mcpUrl.value)
     mcpCopied.value = true
     clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => { mcpCopied.value = false }, 2000)
   } catch {
-    // Clipboard access can be denied (insecure origin, permissions). The commands are on
-    // screen and selectable, so saying nothing is worse than saying it plainly.
-    error.value = 'Couldn’t copy — select the commands and copy them manually.'
+    // Clipboard access can be denied (insecure origin, permissions). The URL is on screen and
+    // selectable, so saying nothing is worse than saying it plainly.
+    error.value = 'Couldn’t copy — select the URL and copy it manually.'
   }
 }
 
@@ -483,9 +462,12 @@ function fmtDateTime(iso?: string) {
               <span v-if="!canUseMcp" class="badge">needs “Use MCP”</span>
             </div>
             <template v-if="canUseMcp">
-              <p class="tip">Two commands in their terminal — nothing to fill in:</p>
-              <pre class="cmd-box">{{ mcpCommands }}</pre>
-              <Button :label="mcpCopied ? 'Copied' : 'Copy'" text size="small" @click="copyMcpCommands">
+              <p class="tip">
+                In Claude: <strong>Settings → Connectors → Add custom connector</strong>, and paste
+                this. Leave Client ID and Secret empty — the connector registers itself.
+              </p>
+              <pre class="cmd-box">{{ mcpUrl }}</pre>
+              <Button :label="mcpCopied ? 'Copied' : 'Copy'" text size="small" @click="copyMcpUrl">
                 <template #icon><span class="material-symbols-outlined">{{ mcpCopied ? 'check' : 'content_copy' }}</span></template>
               </Button>
             </template>
@@ -660,9 +642,9 @@ function fmtDateTime(iso?: string) {
    widget-title styling as Analytics' .title and People's .blk-head */
 .password-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 12px; }
 
-/* Same separated-section shape as .logins-block above it. The commands need a <pre> rather
-   than the single-line .link-box the invite URL uses: there are two of them and the line
-   break is meaningful, so wrapping would make them look like one command. */
+/* Same separated-section shape as .logins-block above it. Still a <pre> rather than the
+   .link-box the invite URL uses: a URL that soft-wraps invites a copy that silently carries a
+   line break, and this one gets pasted into a field that will not forgive it. */
 .agents-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .agent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .agent-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
