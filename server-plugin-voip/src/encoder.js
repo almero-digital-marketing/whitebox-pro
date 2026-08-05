@@ -7,6 +7,31 @@ let recordsFolder, logger
 export function init(deps) {
   recordsFolder = deps.config.voip.recordsFolder
   logger = deps.logger
+  probeFfmpeg()
+}
+
+// Say at BOOT whether the binaries this module needs exist, because their absence is
+// otherwise invisible until it has already cost you call data.
+//
+// fluent-ffmpeg shells out to the system ffmpeg/ffprobe — they are not npm dependencies,
+// so `npm install` succeeds without them and nothing here fails at import time. What
+// happens instead: duration() rejects, ari.js catches it into `0`, encode() rejects into a
+// generic 'Encoding failed', and since transcription is gated on `dur > 5`, every call is
+// recorded with a 0-second duration and no transcript. Nothing says why.
+//
+// That cost a 69-second production call on 2026-08-05 its duration and its transcript, on a
+// container where ffmpeg had simply never been installed.
+//
+// A warning, not a throw: recording is one plugin's feature, and taking down a whole
+// whitebox because transcription will be degraded is the wrong trade. But it must be
+// impossible to miss in the log.
+function probeFfmpeg() {
+  ffmpeg.getAvailableFormats(err => {
+    if (!err) return
+    logger?.warn?.({ err },
+      'ffmpeg/ffprobe not usable — call recordings will have duration 0 and will NOT be ' +
+      'transcribed. Install ffmpeg on this host (apt-get install ffmpeg).')
+  })
 }
 
 export function duration(filename) {
