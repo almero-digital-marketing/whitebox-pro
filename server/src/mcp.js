@@ -166,6 +166,56 @@ function buildServer() {
   return server
 }
 
+// Guard the one field in RFC 9728 discovery that a client refuses to accept when wrong.
+//
+// `resource` identifies THIS endpoint. A client fetches the metadata and checks that it
+// really describes the server it connected to — otherwise any resource could hand clients
+// an authorization server of its choosing — so a mismatch aborts the login before the user
+// ever sees a page. Claude Code reports it as:
+//
+//   SDK auth failed: Protected resource https://host/api
+//        does not match expected https://host/mcp (or origin)
+//
+// The trap is that a token AUDIENCE looks like the same kind of value and is not: `resource`
+// names this endpoint, an audience names who a token is for. Passing the audience here — a
+// natural mistake, and one a real deployment made — produces an MCP endpoint no compliant
+// client can authenticate against, with nothing wrong in this server's own logs.
+//
+// The origin cannot be known at mount time (it is per-request), but the PATH can, and it is
+// enough to catch the confusion: whatever host a legitimate override names, it must still
+// point at the endpoint we mounted.
+//
+// Warns and falls back rather than throwing, for the same reason the ffmpeg probe warns:
+// MCP is one surface, and refusing to boot a whole server over a discovery field is the
+// wrong trade. The fallback is the correct value anyway.
+function checkResource(declared, path) {
+  if (!declared) return null
+
+  const norm = (s) => s.replace(/\/+$/, '') || '/'
+  let pathname
+  try {
+    pathname = new URL(declared).pathname
+  } catch {
+    logger?.warn?.(
+      'MCP: ignoring auth.resource %j — not an absolute URL. Advertising the request origin + %s instead.',
+      declared, path,
+    )
+    return null
+  }
+
+  if (norm(pathname) === norm(path)) return declared
+
+  logger?.warn?.(
+    'MCP: ignoring auth.resource %j — it points at %j, not this endpoint (%j). RFC 9728 ' +
+    '`resource` must identify the MCP endpoint itself; a client compares it with the URL it ' +
+    'connected to and aborts authentication when they differ. Advertising the request origin ' +
+    '+ %s instead. If you meant the token audience, that is a different value — pass it to ' +
+    'the verifier, not here.',
+    declared, pathname, path, path,
+  )
+  return null
+}
+
 // Mount the three required Express handlers (POST/GET/DELETE). Stateless
 // mode: sessionIdGenerator is omitted, each request is independent — and,
 // per the SDK's own stateless example, that independence has to extend to
@@ -188,10 +238,14 @@ export async function mount(app, { path = '/mcp', auth } = {}) {
   // advertises an authorization server, expose discovery so MCP clients can
   // run the login flow themselves. Public (no gate).
   if (auth?.authorizationServers?.length) {
+    // Checked once here rather than per request: a bad value makes the endpoint
+    // unauthenticatable, so it should be visible in the boot log, not in a client's error.
+    const declaredResource = checkResource(auth.resource, path)
+
     app.get('/.well-known/oauth-protected-resource', (req, res) => {
       const origin = `${req.protocol}://${req.get('host')}`
       res.json({
-        resource: auth.resource || `${origin}${path}`,
+        resource: declaredResource || `${origin}${path}`,
         authorization_servers: auth.authorizationServers,
         bearer_methods_supported: ['header'],
         scopes_supported: auth.scopesSupported || [],

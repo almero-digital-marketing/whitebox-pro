@@ -95,6 +95,78 @@ describe('mcp registry', () => {
     expect(del).toHaveBeenCalledWith('/mcp', auth, expect.any(Function))
   })
 
+  // RFC 9728 discovery. `resource` must identify the MCP endpoint, and a client aborts the
+  // login when it doesn't match the URL it connected to — so a wrong value here makes the
+  // endpoint unauthenticatable while this server's own logs stay clean.
+  describe('protected-resource metadata', () => {
+    // Captures the handler Express would have registered for the well-known route, then
+    // calls it with a minimal req/res so the emitted body can be asserted directly.
+    function metadataFor(auth, path = '/mcp') {
+      const mcp = createMcp({ logger })
+      const routes = {}
+      const app = { post: vi.fn(), delete: vi.fn(), get: (p, ...rest) => { routes[p] = rest.at(-1) } }
+      return mcp.mount(app, { path, auth }).then(() => {
+        const handler = routes['/.well-known/oauth-protected-resource']
+        let body
+        handler({ protocol: 'https', get: () => 'wb.example.com' }, { json: (b) => { body = b } })
+        return body
+      })
+    }
+
+    const AS = ['https://wb.example.com/oauth']
+
+    it('derives the resource from the request origin and mount path by default', async () => {
+      const body = await metadataFor({ middleware: (q, s, n) => n(), authorizationServers: AS })
+      expect(body.resource).toBe('https://wb.example.com/mcp')
+    })
+
+    it('honours an explicit resource that points at this endpoint on another host', async () => {
+      // A legitimate override: the endpoint is public under a different name.
+      const body = await metadataFor({
+        middleware: (q, s, n) => n(), authorizationServers: AS,
+        resource: 'https://public.example.com/mcp',
+      })
+      expect(body.resource).toBe('https://public.example.com/mcp')
+    })
+
+    // The real regression. A deployment passed its token AUDIENCE here, and
+    // `claude mcp login` failed with "Protected resource https://host/api does not match
+    // expected https://host/mcp" before showing a login page.
+    it('ignores a resource pointing somewhere else, and says so', async () => {
+      logger.warn.mockClear()
+      const body = await metadataFor({
+        middleware: (q, s, n) => n(), authorizationServers: AS,
+        resource: 'https://wb.example.com/api',
+      })
+      expect(body.resource).toBe('https://wb.example.com/mcp')
+      const warned = logger.warn.mock.calls.flat().join(' ')
+      expect(warned).toMatch(/auth\.resource/)
+      expect(warned).toMatch(/audience/)      // names the likely confusion
+    })
+
+    it('ignores a non-absolute resource', async () => {
+      const body = await metadataFor({
+        middleware: (q, s, n) => n(), authorizationServers: AS, resource: '/mcp',
+      })
+      expect(body.resource).toBe('https://wb.example.com/mcp')
+    })
+
+    it('accepts a trailing-slash difference as the same endpoint', async () => {
+      const body = await metadataFor({
+        middleware: (q, s, n) => n(), authorizationServers: AS,
+        resource: 'https://wb.example.com/mcp/',
+      })
+      expect(body.resource).toBe('https://wb.example.com/mcp/')
+    })
+
+    it('is not mounted at all when no authorization server is advertised', async () => {
+      const mcp = createMcp({ logger })
+      const get = vi.fn()
+      await mcp.mount({ post: vi.fn(), delete: vi.fn(), get }, { path: '/mcp', auth: (q, s, n) => n() })
+      expect(get).not.toHaveBeenCalledWith('/.well-known/oauth-protected-resource', expect.anything())
+    })
+  })
+
   it('rejects bad registrations early', () => {
     const mcp = createMcp({ logger })
     expect(() => mcp.tool({})).toThrow(/name/)
