@@ -32,6 +32,11 @@ export const usersClient = {
   updateProfile: (id: string, fields: { first_name?: string; last_name?: string; phone?: string; email?: string }) =>
     req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   logins: (id: string) => req(`/users/${id}/logins`),
+  // The server's own MCP client config — the same bytes a user can curl straight into
+  // `claude mcp add-json`. Fetched rather than assembled here so the console cannot disagree
+  // with the server about its own URL or client id. 404s when MCP isn't mounted, which is
+  // exactly the signal to hide the block.
+  mcpSetup: () => req('/mcp-setup.json') as Promise<{ type: string; url: string; oauth: { clientId: string } }>,
   // Self-service only — the server independently enforces id === the
   // caller's own subject regardless of what this UI shows.
   changePassword: (id: string, currentPassword: string, newPassword: string) =>

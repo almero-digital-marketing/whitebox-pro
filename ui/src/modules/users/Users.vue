@@ -53,7 +53,66 @@ const justInvited = ref<any>(null)  // the just-created/resent invite response �
 onActivated(async () => {
   await Promise.all([store.loadUsers(), store.searchUsers(), store.loadCatalog()])
   applyRoute()
+  store.loadMcpSetup()
 })
+
+// ── MCP connection command ────────────────────────────────────────────────────
+//
+// Connecting an agent needs two shell commands, and this is where they belong: you grant
+// someone mcp:use here, so this is where you tell them what to run. Copied rather than
+// retyped — a mistyped URL fails with an error that says nothing about the typo.
+//
+// The command carries no per-install values on purpose: the server serves its own config at
+// /oauth/mcp-setup.json, so `curl` fetches the client id and URL at run time. That is why
+// this block shows a command rather than a client_id to copy by hand.
+//
+// From the store, like every other fetched thing in this module. Null when MCP isn't mounted,
+// which is what hides the block.
+const { mcpSetup } = storeToRefs(store)
+
+// Derived from the served URL rather than location.origin: they're the same in a normal
+// deployment, but if the console is hosted apart from the API only the server knows.
+const mcpSetupUrl = computed(() =>
+  mcpSetup.value ? new URL('/oauth/mcp-setup.json', mcpSetup.value.url).toString() : '')
+
+// The local name for the server entry, which is the user's own label — it only has to be a
+// valid identifier and match between the two commands. Taken from the first hostname label
+// (whitebox.gpoint.bg → "whitebox") because that is recognisable without the console needing
+// to know the deployment's display name.
+const mcpServerName = computed(() => {
+  if (!mcpSetup.value) return 'whitebox'
+  const host = new URL(mcpSetup.value.url).hostname
+  // A bare host or an IP says nothing about which system it is — "claude mcp login localhost"
+  // is a worse label than "whitebox", and in dev that is exactly what the hostname gives.
+  if (host === 'localhost' || /^[\d.]+$/.test(host) || host.startsWith('[')) return 'whitebox'
+  const label = host.split('.')[0].replace(/[^a-zA-Z0-9-]/g, '')
+  return label || 'whitebox'
+})
+
+const mcpCommands = computed(() => [
+  `claude mcp add-json ${mcpServerName.value} -s user "$(curl -fsSL ${mcpSetupUrl.value})"`,
+  `claude mcp login ${mcpServerName.value}`,
+].join('\n'))
+
+// Only meaningful for someone who can actually use MCP: without mcp:use the flow succeeds and
+// then every tool call 403s, so showing the command would be a trap.
+const canUseMcp = computed(() =>
+  !!working.value && (working.value.permissions?.includes('*') || working.value.permissions?.includes('mcp:use')))
+
+const mcpCopied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copyMcpCommands() {
+  try {
+    await navigator.clipboard.writeText(mcpCommands.value)
+    mcpCopied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => { mcpCopied.value = false }, 2000)
+  } catch {
+    // Clipboard access can be denied (insecure origin, permissions). The commands are on
+    // screen and selectable, so saying nothing is worse than saying it plainly.
+    error.value = 'Couldn’t copy — select the commands and copy them manually.'
+  }
+}
 
 function applyRoute() {
   if (route.name !== 'users') return
@@ -369,6 +428,30 @@ function fmtDateTime(iso?: string) {
             <p class="tip">Share this link if the invite email didn't arrive:</p>
             <code class="link-box">{{ justInvited.inviteUrl }}</code>
           </div>
+
+          <!-- Connecting an AI agent. Lives here because this is where mcp:use is granted:
+               having just given someone that permission, the next thing you need is what to
+               send them. Hidden entirely when MCP isn't mounted (mcpSetup stays null). -->
+          <div v-if="mcpSetup" class="mcp-block">
+            <div class="logins-head">
+              Connect an AI agent
+              <span v-if="!canUseMcp" class="badge">needs “Use MCP”</span>
+            </div>
+            <template v-if="canUseMcp">
+              <p class="tip">Two commands in their terminal — nothing to fill in:</p>
+              <pre class="cmd-box">{{ mcpCommands }}</pre>
+              <Button :label="mcpCopied ? 'Copied' : 'Copy'" text size="small" @click="copyMcpCommands">
+                <template #icon><span class="material-symbols-outlined">{{ mcpCopied ? 'check' : 'content_copy' }}</span></template>
+              </Button>
+            </template>
+            <!-- Deliberately not showing the command in this state: the login would succeed
+                 and then every tool call would 403, which is a far more confusing failure
+                 than not having the command yet. -->
+            <p v-else class="tip">
+              Grant <strong>Use MCP</strong> on the right to connect an agent as this user.
+              Without it they can sign in and every tool call still fails.
+            </p>
+          </div>
         </div>
 
         <!-- fixed Discard/Save/Remove bar — same pinned pattern as the permissions pane
@@ -532,6 +615,18 @@ function fmtDateTime(iso?: string) {
    widget-title styling as Analytics' .title and People's .blk-head */
 .password-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 12px; }
 
+/* Same separated-section shape as .logins-block above it. The commands need a <pre> rather
+   than the single-line .link-box the invite URL uses: there are two of them and the line
+   break is meaningful, so wrapping would make them look like one command. */
+.mcp-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
+.mcp-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); margin-left: 6px; vertical-align: 2px; }
+.cmd-box {
+  margin: 0 0 8px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.7;
+  /* The commands are long and must stay copyable verbatim, so they scroll rather than wrap —
+     a soft-wrapped shell command reads as several commands. */
+  overflow-x: auto; white-space: pre;
+}
 .logins-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .logins-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: 12.5px; }
