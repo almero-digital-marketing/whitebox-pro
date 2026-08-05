@@ -145,7 +145,7 @@ function redirectWithError(res, redirectUri, state, error, description) {
   res.redirect(302, url.toString())
 }
 
-export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, appName, fromEmail, getMail, permissionsCatalog = [] }) {
+export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, appName, mcpPath, fromEmail, getMail, permissionsCatalog = [] }) {
   const router = express.Router()
   router.use(express.urlencoded({ extended: false }))
 
@@ -209,6 +209,33 @@ export function mountRoutes(app, { basePath, issuer, audience, logger, appUrl, a
   router.get('/.well-known/jwks.json', async (req, res) => {
     res.json(await keys.jwks())
   })
+
+  // Ready-to-use MCP client config, so connecting is a one-liner with nothing to paste:
+  //
+  //   claude mcp add-json wb -s user "$(curl -fsSL https://host/oauth/mcp-setup.json)"
+  //
+  // The alternative is telling a user to copy a client_id out of a screen and assemble JSON
+  // around it by hand, which is both tedious and a thing they can get subtly wrong. Serving
+  // it means the values cannot drift from the server that issued them.
+  //
+  // Public, deliberately. It carries no secret: the client is public by design (PKCE, not a
+  // client_secret) and the endpoint it names is already discoverable via
+  // /.well-known/oauth-protected-resource. Requiring a token here would be theatre, and it
+  // would defeat the point — you need this BEFORE you can authenticate.
+  //
+  // Note there is no callbackPort. That is not an omission: with RFC 8252 §7.3 port matching
+  // (see store.redirectUriAllowed) the client picks whatever port is free and it still
+  // matches, so pinning one here would only create a way for it to be wrong.
+  if (mcpPath) {
+    router.get('/mcp-setup.json', (req, res) => {
+      const origin = `${req.protocol}://${req.get('host')}`
+      res.json({
+        type: 'http',
+        url: `${origin}${mcpPath}`,
+        oauth: { clientId: store.CLI_CLIENT_ID },
+      })
+    })
+  }
 
   // ── /authorize ───────────────────────────────────────────────────────
   router.get('/authorize', async (req, res) => {

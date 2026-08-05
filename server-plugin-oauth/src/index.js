@@ -115,12 +115,23 @@ export function oauth(options = {}) {
         logger.debug('appUrl is not set — no console OAuth client registered')
       }
 
+      // The command-line/desktop MCP client, on the same terms as the console's: a
+      // well-known id so a user's setup needs nothing pasted. Only when MCP is actually
+      // mounted — a deployment without MCP has nothing for a CLI client to talk to.
+      const mcpPath = ctx.config?.mcp ? (ctx.config.mcp.path ?? '/mcp') : null
+      if (mcpPath) {
+        const { created, added, renamed } = await store.ensureCliClient()
+        if (created) logger.info('Registered the CLI client %s for loopback callbacks', store.CLI_CLIENT_ID)
+        else if (added || renamed) logger.info('Updated the CLI client %s', store.CLI_CLIENT_ID)
+        logger.info('MCP client setup at %s/mcp-setup.json', basePath)
+      }
+
       // Lazy lookup so plugin load order doesn't matter (mail may register
       // after oauth) — mirrors server-plugin-mail's own getShortener.
       const getMail = () => ctx.plugins?.mail?.service
 
       mountRoutes(app, {
-        basePath, issuer, audience, logger, appUrl, appName, fromEmail, getMail,
+        basePath, issuer, audience, logger, appUrl, appName, mcpPath, fromEmail, getMail,
         permissionsCatalog: ctx.permissions?.catalog || [],
       })
 

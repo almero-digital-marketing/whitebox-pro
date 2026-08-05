@@ -42,7 +42,7 @@ beforeEach(async () => {
 
   mountRoutes(app, {
     basePath: ISSUER_PATH, issuer, audience: AUDIENCE, logger,
-    appUrl: APP_URL, appName: 'GPoint WhiteBox', fromEmail: 'noreply@example.com',
+    appUrl: APP_URL, appName: 'GPoint WhiteBox', mcpPath: '/mcp', fromEmail: 'noreply@example.com',
     getMail: () => ({ send: async (msg) => { sentEmails.push(msg) } }),
     permissionsCatalog: PERMISSIONS_CATALOG,
   })
@@ -141,6 +141,30 @@ describe('discovery + JWKS', () => {
     // Both paths must agree, or a client's behaviour depends on which one it happened to try.
     const appended = await (await fetch(`${base}${ISSUER_PATH}/.well-known/oauth-authorization-server`)).json()
     expect(body).toEqual(appended)
+  })
+
+  // Setup config a user can pipe straight into `claude mcp add-json`, so nothing is pasted
+  // by hand. Public on purpose — it carries no secret, and you need it BEFORE you can
+  // authenticate.
+  describe('mcp-setup.json', () => {
+    it('serves config that needs no editing, with no auth', async () => {
+      const res = await fetch(`${base}${ISSUER_PATH}/mcp-setup.json`)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body).toEqual({
+        type: 'http',
+        url: `${base}/mcp`,
+        oauth: { clientId: 'whitebox-cli' },
+      })
+    })
+
+    // Not an omission. With loopback port matching relaxed (RFC 8252 §7.3) the client picks
+    // whatever port is free — Claude Code took :59205 when none was configured — so pinning
+    // one here would only create a way for it to be wrong.
+    it('does not pin a callback port', async () => {
+      const body = await (await fetch(`${base}${ISSUER_PATH}/mcp-setup.json`)).json()
+      expect(body.oauth).not.toHaveProperty('callbackPort')
+    })
   })
 
   it('serves a JWKS with the public key only', async () => {

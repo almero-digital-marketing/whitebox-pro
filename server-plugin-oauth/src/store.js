@@ -70,12 +70,97 @@ export async function ensureConsoleClient({ redirectUris, name = 'WhiteBox conso
   }
 }
 
+// The client every command-line/desktop MCP client uses, auto-provisioned like the console's.
+//
+// This exists so a user's setup is two commands with nothing to paste. Whitebox has no
+// Dynamic Client Registration, so without a well-known id an operator has to run
+// create-client.mjs and hand each person a UUID — which a customer installing whitebox
+// cannot do at all, since it means running a script against someone else's database.
+//
+// A stable, guessable id is safe for the same reasons CONSOLE_CLIENT_ID is: clients are
+// public (no secret), PKCE proves possession of the original request, and redirect_uri is
+// still matched — so the id alone grants nothing.
+//
+// Both loopback spellings are registered because RFC 8252 §8.3 prefers the IP literal while
+// many clients still use `localhost`, and redirectUriAllowed() deliberately does NOT treat
+// them as interchangeable. The PORT is absent from both, which is the point: with §7.3 port
+// matching relaxed, a client that grabs whatever port is free works without anyone
+// registering it. Measured, not assumed — with no callbackPort configured, Claude Code took
+// :59205.
+export const CLI_CLIENT_ID = 'whitebox-cli'
+const CLI_REDIRECT_URIS = ['http://localhost/callback', 'http://127.0.0.1/callback']
+
+export async function ensureCliClient({ name = 'Command line (MCP)' } = {}) {
+  const existing = await getClient(CLI_CLIENT_ID)
+  if (!existing) {
+    const [row] = await db('whitebox_oauth_clients')
+      .insert({ client_id: CLI_CLIENT_ID, name, redirect_uris: JSON.stringify(CLI_REDIRECT_URIS) })
+      .returning(['client_id', 'name', 'redirect_uris'])
+    return { row, created: true }
+  }
+  const current = typeof existing.redirect_uris === 'string' ? JSON.parse(existing.redirect_uris) : existing.redirect_uris
+  const merged = [...new Set([...(current || []), ...CLI_REDIRECT_URIS])]
+  const renamed = existing.name !== name
+  if (merged.length === (current || []).length && !renamed) return { row: existing, created: false }
+  await db('whitebox_oauth_clients')
+    .where({ client_id: CLI_CLIENT_ID })
+    .update({ redirect_uris: JSON.stringify(merged), name })
+  return {
+    row: await getClient(CLI_CLIENT_ID),
+    created: false,
+    added: merged.length - (current || []).length,
+    renamed,
+  }
+}
+
 // redirect_uri must match one of the client's registered URIs EXACTLY — no
 // prefix/wildcard matching (RFC 6749 §3.1.2, and a classic real-world
 // bypass when implementations get this loose).
+//
+// ONE exception, and it is required rather than a convenience: RFC 8252 §7.3 says the
+// authorization server MUST allow any port on a LOOPBACK redirect. A native client — a CLI,
+// a desktop app — starts a throwaway HTTP server to catch the code and cannot reserve a port
+// in advance; whatever is free at that moment is what it must use. Claude Code's 33418 is
+// not an assigned port, just its default, and if something else holds it the client picks
+// another.
+//
+// Without this, a loopback client is only usable if an operator happened to register the
+// exact port it happened to get — which is how a real setup ended up with
+// `http://localhost:33418/oauth/callback` in a row while the client asked for
+// `http://localhost:33418/callback`, failing with a message about registration that said
+// nothing about paths or ports.
+//
+// The relaxation is narrow on purpose. Everything else still has to match exactly, and the
+// host must be a literal loopback ADDRESS or `localhost` — never a name that resolves
+// somewhere else. Scheme, hostname, path, query and fragment are all still compared; only
+// the port is ignored. That is safe because reaching a loopback port means already being on
+// the user's machine, and the code is useless there without the PKCE verifier, which never
+// left the process that started the flow.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
+
+function isLoopback(url) {
+  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
+}
+
 export function redirectUriAllowed(client, redirectUri) {
   const uris = typeof client.redirect_uris === 'string' ? JSON.parse(client.redirect_uris) : client.redirect_uris
-  return Array.isArray(uris) && uris.includes(redirectUri)
+  if (!Array.isArray(uris)) return false
+  if (uris.includes(redirectUri)) return true
+
+  // Only now, and only for loopback, fall back to a port-insensitive comparison.
+  let asked
+  try { asked = new URL(redirectUri) } catch { return false }
+  if (!isLoopback(asked)) return false
+
+  return uris.some(registered => {
+    let reg
+    try { reg = new URL(registered) } catch { return false }
+    return isLoopback(reg)
+      && reg.hostname === asked.hostname
+      && reg.pathname === asked.pathname
+      && reg.search === asked.search
+      && reg.hash === asked.hash
+  })
 }
 
 // ── authorization codes ─────────────────────────────────────────────────

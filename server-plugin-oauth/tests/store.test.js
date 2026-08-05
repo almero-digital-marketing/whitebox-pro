@@ -17,6 +17,73 @@ describe('store — clients', () => {
     expect(store.redirectUriAllowed(client, 'https://evil.com/callback')).toBe(false)
   })
 
+  // RFC 8252 §7.3: a native client starts a throwaway server to catch the code and cannot
+  // reserve a port in advance, so the port is the one component that must be ignored on a
+  // loopback redirect. Claude Code's 33418 is not an assigned port, just its default.
+  describe('loopback redirects ignore the port (RFC 8252 §7.3)', () => {
+    const cli = () => store.createClient({
+      name: 'CLI', redirectUris: ['http://localhost:33418/callback'],
+    })
+
+    it('accepts a different port on the same loopback host and path', async () => {
+      const client = await cli()
+      expect(store.redirectUriAllowed(client, 'http://localhost:33418/callback')).toBe(true)
+      expect(store.redirectUriAllowed(client, 'http://localhost:51234/callback')).toBe(true)
+      expect(store.redirectUriAllowed(client, 'http://localhost/callback')).toBe(true)
+    })
+
+    it('still requires the PATH to match — the port is the only thing relaxed', async () => {
+      const client = await cli()
+      // The exact failure that cost an afternoon: registered /oauth/callback, client asked
+      // for /callback. Relaxing the port must not quietly relax this too.
+      expect(store.redirectUriAllowed(client, 'http://localhost:33418/oauth/callback')).toBe(false)
+      expect(store.redirectUriAllowed(client, 'http://localhost:33418/')).toBe(false)
+      expect(store.redirectUriAllowed(client, 'http://localhost:33418/callback/extra')).toBe(false)
+    })
+
+    it('does not treat a routable host as loopback, whatever it is named', async () => {
+      const client = await cli()
+      // `localtest.me` and friends resolve to 127.0.0.1 in public DNS. Accepting them by
+      // name would send codes to a host an attacker controls the DNS for.
+      expect(store.redirectUriAllowed(client, 'http://localtest.me:33418/callback')).toBe(false)
+      expect(store.redirectUriAllowed(client, 'http://evil.com:33418/callback')).toBe(false)
+      expect(store.redirectUriAllowed(client, 'http://localhost.evil.com/callback')).toBe(false)
+    })
+
+    it('does not relax anything for a non-loopback registration', async () => {
+      const web = await store.createClient({ name: 'Web', redirectUris: ['https://app.com:443/callback'] })
+      expect(store.redirectUriAllowed(web, 'https://app.com:8443/callback')).toBe(false)
+    })
+
+    it('does not relax https-on-loopback, only http', async () => {
+      // A loopback client cannot present a valid TLS cert, so RFC 8252's loopback flow is
+      // http. An https loopback URI is unusual enough that widening it buys nothing.
+      const client = await store.createClient({ name: 'S', redirectUris: ['https://localhost:33418/callback'] })
+      expect(store.redirectUriAllowed(client, 'https://localhost:9999/callback')).toBe(false)
+    })
+
+    it('keeps query and fragment significant', async () => {
+      const client = await store.createClient({
+        name: 'Q', redirectUris: ['http://127.0.0.1:33418/callback?app=wb'],
+      })
+      expect(store.redirectUriAllowed(client, 'http://127.0.0.1:40000/callback?app=wb')).toBe(true)
+      expect(store.redirectUriAllowed(client, 'http://127.0.0.1:40000/callback')).toBe(false)
+      expect(store.redirectUriAllowed(client, 'http://127.0.0.1:40000/callback?app=evil')).toBe(false)
+    })
+
+    it('does not cross between 127.0.0.1 and localhost', async () => {
+      // They are both loopback but not the same registration; a client asking for one should
+      // not be satisfied by the other, since the exact string is what it will listen on.
+      const client = await cli()
+      expect(store.redirectUriAllowed(client, 'http://127.0.0.1:33418/callback')).toBe(false)
+    })
+
+    it('rejects a malformed redirect_uri instead of throwing', async () => {
+      const client = await cli()
+      expect(store.redirectUriAllowed(client, 'not a url')).toBe(false)
+    })
+  })
+
   it('throws without a name or a non-empty redirectUris array', async () => {
     await expect(store.createClient({ redirectUris: ['https://x/y'] })).rejects.toThrow()
     await expect(store.createClient({ name: 'App', redirectUris: [] })).rejects.toThrow()
