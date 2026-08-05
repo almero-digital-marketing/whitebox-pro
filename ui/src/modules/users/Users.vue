@@ -395,26 +395,44 @@ function fmtDateTime(iso?: string) {
             <code class="link-box">{{ justInvited.inviteUrl }}</code>
           </div>
 
-          <!-- What is already connected as this user. The link is made at first authorization,
-               not at registration (which is unauthenticated), so this is consent history — and
-               the only place an operator can withdraw it. -->
-          <div v-if="agents.length" class="agents-block">
+          <!-- What is already connected as this user, and the only place to withdraw it. The
+               link is made at first authorization, not at registration (which is
+               unauthenticated), so a row here means "this person consented to this client".
+               Rendered as a table, like Logins above it, because it is the same kind of thing:
+               one row per client, with when. -->
+          <div class="agents-block">
             <div class="logins-head">Connected agents</div>
-            <ul class="agent-list">
-              <li v-for="a in agents" :key="a.client_id">
-                <span class="agent-name">{{ a.name }}</span>
-                <span v-if="a.dynamic" class="badge">self-registered</span>
-                <span class="agent-meta">
-                  {{ a.connected ? 'Connected' : 'Not connected' }} ·
-                  last sign-in {{ a.last_login ? fmtDateTime(a.last_login) : '—' }}
-                </span>
-                <!-- Disabled rather than hidden when there is nothing live to revoke, matching
-                     this module's convention everywhere else. -->
-                <Button label="Disconnect" text severity="danger" size="small"
-                  :disabled="!a.connected" :loading="revoking === a.client_id"
-                  @click="revokeAgent(a)" />
-              </li>
-            </ul>
+            <div class="table-body">
+              <DataTable v-if="agents.length" :value="agents" size="small" dataKey="client_id"
+                :paginator="agents.length > LOGIN_PAGE_ROWS" :rows="LOGIN_PAGE_ROWS" :alwaysShowPaginator="false"
+                paginatorTemplate="PrevPageLink CurrentPageReport NextPageLink"
+                currentPageReportTemplate="{currentPage} of {totalPages}">
+                <Column header="Agent" :style="{ width: '12rem' }">
+                  <template #body="{ data }">
+                    {{ data.name }}
+                    <span v-if="data.dynamic" class="badge">self-registered</span>
+                  </template>
+                </Column>
+                <Column header="Status" :style="{ width: '7rem' }">
+                  <template #body="{ data }">{{ data.connected ? 'Connected' : 'Not connected' }}</template>
+                </Column>
+                <Column header="Last sign-in" :style="{ width: '10rem' }">
+                  <template #body="{ data }">{{ data.last_login ? fmtDateTime(data.last_login) : '—' }}</template>
+                </Column>
+                <Column :style="{ width: '7rem' }">
+                  <!-- Hidden, not disabled, once there is nothing live to revoke. A disabled
+                       Disconnect on an already-disconnected agent is an action that can never
+                       apply, which reads as something being broken; the Status column already
+                       says why it is absent. (The pinned Discard/Save bars disable instead —
+                       there the button applies again the moment the form is dirty.) -->
+                  <template #body="{ data }">
+                    <Button v-if="data.connected" label="Disconnect" text severity="danger" size="small"
+                      :loading="revoking === data.client_id" @click="revokeAgent(data)" />
+                  </template>
+                </Column>
+              </DataTable>
+              <p v-else class="muted">No agents connected yet.</p>
+            </div>
           </div>
 
         </div>
@@ -580,17 +598,13 @@ function fmtDateTime(iso?: string) {
    widget-title styling as Analytics' .title and People's .blk-head */
 .password-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 12px; }
 
-/* Same separated-section shape as .logins-block above it. Still a <pre> rather than the
-   .link-box the invite URL uses: a URL that soft-wraps invites a copy that silently carries a
-   line break, and this one gets pasted into a field that will not forgive it. */
+/* Same shape as .logins-block below — same border, same rhythm, same .table-body inside. */
 .agents-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
-.agent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.agent-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
-.agent-name { font-weight: 550; color: var(--text-strong); }
-/* The meta takes the slack so the button stays right-aligned at any width — flex-grow, not a
-   hand-tuned margin. */
-.agent-meta { flex: 1 1 auto; color: var(--muted); }
+/* Quieter than .badge.admin: this is a provenance note next to a name, not a status about the
+   account, so it must not compete with the name it annotates. */
 .agents-block .badge { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); }
+/* The action column carries no header, so it must not reserve label space either. */
+.agents-block :deep(.p-datatable-tbody > tr > td:last-child) { padding: 2px 8px; text-align: right; }
 .logins-block { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; margin-bottom: 4px; }
 .logins-head { font-size: 16px; font-weight: 650; line-height: 1.3; letter-spacing: normal; text-transform: none; color: var(--text-strong); margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: 12.5px; }
