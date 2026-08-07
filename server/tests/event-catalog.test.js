@@ -9,7 +9,7 @@
 //   · a near-miss                        → 'conversions.' for `conversion.`
 //   · a prefix that is not a channel     → `awareness` in the channel filter
 import { describe, it, expect, vi } from 'vitest'
-import { build, direction, channel, detail, lookup, CORE_EVENTS } from '../src/event-catalog.js'
+import { build, direction, channel, detail, severity, lookup, CORE_EVENTS } from '../src/event-catalog.js'
 
 const plugin = (name, events, channels) => ({ name, events, ...(channels && { channels }) })
 
@@ -230,6 +230,57 @@ describe("core's own declarations", () => {
 })
 
 // ── detail: what an event was ABOUT ─────────────────────────────────────────
+
+describe('severity()', () => {
+  const cat = () => build([plugin('mail', {
+    'mail.sent': 'out',
+    'mail.failed': { direction: 'out', severity: 'error' },
+    'mail.bounced': { direction: 'out', severity: 'warn' },
+  })])
+
+  it('reports what the emitting module declared', () => {
+    expect(severity(cat(), 'mail.failed')).toBe('error')
+    expect(severity(cat(), 'mail.bounced')).toBe('warn')
+  })
+
+  // The absence IS the statement — see the note on the contract. A routine event
+  // and an undeclared one both answer null, deliberately: a feed filtered to
+  // problems shows what modules have CLAIMED is a problem, so a plugin that
+  // declares nothing is visibly absent from that view rather than guessed at.
+  it('is null for a routine event and for one nobody declared', () => {
+    expect(severity(cat(), 'mail.sent')).toBeNull()
+    expect(severity(cat(), 'voip.click')).toBeNull()
+    expect(severity(null, 'mail.failed')).toBeNull()
+  })
+
+  // A value outside the vocabulary is not passed through to the UI, which would
+  // then be styling a class name a plugin invented.
+  it('rejects a level it does not define', () => {
+    const c = build([plugin('x', { 'x.a': { direction: 'in', severity: 'critical' } })])
+    expect(severity(c, 'x.a')).toBeNull()
+  })
+
+  it('does not disturb direction or channel on the same declaration', () => {
+    expect(direction(cat(), 'mail.failed')).toBe('out')
+    expect(channel(cat(), 'mail.failed')).toBe('mail')
+  })
+
+  // Severity travels with a prefix declaration exactly as direction does — the
+  // same longest-match dispatch, not a second lookup rule.
+  it('follows a prefix declaration', () => {
+    const c = build([plugin('job', { 'job.': { direction: 'internal', severity: 'warn' } })])
+    expect(severity(c, 'job.anything')).toBe('warn')
+  })
+
+  it('reads a per-row level out of the payload when declared that way', () => {
+    const c = build([plugin('x', {
+      'x.done': { direction: 'out', severity: { from: 'data.outcome', map: { broke: 'error' } } },
+    })])
+    expect(severity(c, 'x.done', { data: { outcome: 'broke' } })).toBe('error')
+    // an outcome the map does not cover is not guessed
+    expect(severity(c, 'x.done', { data: { outcome: 'fine' } })).toBeNull()
+  })
+})
 
 describe('detail() dispatch', () => {
   const PLUGINS = [{

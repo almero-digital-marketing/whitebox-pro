@@ -3,7 +3,7 @@
 //
 // Everything is windowed, and the window is the only parameter that matters —
 // "47/min" is meaningless without saying over what.
-import { direction, channel, DIRECTIONS, channels } from './classify.js'
+import { direction, channel, severity, DIRECTIONS, channels } from './classify.js'
 import { describe } from './describe.js'
 
 let eventRegistry, plugins, pluginNames, logger, streamStats
@@ -621,6 +621,11 @@ export function toFeedRow(row) {
     at: row.occurred_at ?? new Date().toISOString(),
     direction: direction(type, payload),
     channel: channel(type, payload),
+    // 'error' | 'warn' | null — whether this one occurrence is bad news, per
+    // the module that emitted it. Carried per row rather than re-derived in the
+    // browser: the declaration lives on the server, and a feed filtered to
+    // problems has to agree with the backfill and the stream both.
+    severity: severity(type, payload),
     // What the event was about, in one line — computed HERE so the backfill and
     // the socket stream can't describe the same event two different ways.
     detail: describe(type, payload),

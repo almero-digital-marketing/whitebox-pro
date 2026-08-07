@@ -135,6 +135,29 @@ describe('toFeedRow()', () => {
     })
     expect(r).toHaveProperty('detail', null)
   })
+
+  // Severity rides the row for the same reason detail does: the feed's
+  // problems-only filter has to agree between the backfill and the stream, and
+  // it can only do that if both read the emitting module's declaration rather
+  // than re-deriving anything in the browser.
+  it('carries the severity the emitting module declared', () => {
+    const at = '2026-01-01T00:00:00.000Z'
+    const sev = (type) => service.toFeedRow({ id: 'x', type, occurred_at: at, data: { data: {} } }).severity
+    expect(sev('mail.failed')).toBe('error')
+    expect(sev('mail.bounced')).toBe('warn')
+    expect(sev('adnetwork.error')).toBe('error')
+    expect(sev('adnetwork.rejected')).toBe('warn')
+  })
+
+  // Present-and-null, not absent: the UI reads `e.severity` on every row, and a
+  // missing key would make "routine" and "this build is too old to say" the same
+  // shape on the wire.
+  it('carries null severity for a routine event', () => {
+    const r = service.toFeedRow({
+      id: 'e4', type: 'mail.sent', occurred_at: '2026-01-01T00:00:00.000Z', data: { data: {} },
+    })
+    expect(r).toHaveProperty('severity', null)
+  })
 })
 
 describe('timeseries()', () => {

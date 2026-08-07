@@ -16,6 +16,17 @@ export interface FeedEvent {
   // one-line "what was this about", built server-side (live/src/describe.js) so
   // the backfill and the stream can never word the same event differently
   detail: string | null
+  /**
+   * Whether this occurrence is bad news, declared by the module that emits it
+   * (server/src/event-catalog.js). null covers both "routine" and "nobody has
+   * classified this type yet" — see the note on the server accessor for why
+   * those are deliberately not told apart.
+   *
+   * Optional in the type so a board pointed at an older live plugin still
+   * renders; the severity filter then simply matches nothing, which reads as
+   * "no problems declared" rather than breaking the feed.
+   */
+  severity?: 'error' | 'warn' | null
   passport_id: string | null
   // No raw payload: it was never rendered and was half the weight of every row.
   // See live/src/service.js toFeedRow.

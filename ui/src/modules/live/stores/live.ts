@@ -93,6 +93,17 @@ export const useLiveStore = defineStore('live', () => {
   // silently omitted by a whitelist nobody remembered to update.
   type Mode = 'include' | 'exclude'
   const feedQuery = ref('')
+  // 'all' | 'problems' — the fourth narrowing, and the only one that is not an
+  // axis of the traffic. Deliberately BINARY rather than a tri-state per level:
+  // "show me what's wrong" is one question, and someone who wants errors without
+  // warnings can type `failed` in the search. Splitting it into two toggles would
+  // put a control on screen for a distinction nobody has asked to make, and the
+  // rows carry their own level anyway.
+  //
+  // Feed-only, unlike direction and channel: severity is a property of one event,
+  // so it cannot narrow a card that counts events per minute. That is also why it
+  // is applied here and never sent to the server as part of boardFilter.
+  const feedSeverity = ref<'all' | 'problems'>('all')
   const feedDirModes = ref<Map<string, Mode>>(new Map([['internal', 'exclude']]))
   const feedChanModes = ref<Map<string, Mode>>(new Map())
   // One person, set by clicking their id on a feed row. A third filter axis, but
@@ -134,13 +145,31 @@ export const useLiveStore = defineStore('live', () => {
     return true
   }
 
-  const visibleFeed = computed(() => feed.value.filter(e =>
+  // A row is a problem when the module that emitted it said so. The board holds
+  // no list of which type names look alarming — see server/src/event-catalog.js
+  // for why that list would be wrong the day a plugin was added.
+  const isProblem = (e: FeedEvent) => e.severity === 'error' || e.severity === 'warn'
+
+  // Every narrowing EXCEPT severity. Split out so the problem count below is the
+  // same predicate the list uses — a badge reading 3 beside a list that shows 5
+  // is worse than no badge, and that is exactly what a second hand-written filter
+  // chain drifts into.
+  const matchesOthers = (e: FeedEvent) =>
     axisMatch(e.direction, feedDirModes.value) &&
     axisMatch(e.channel, feedChanModes.value) &&
     // Applied locally too, not just in the query, so a live event arriving off the
     // socket for somebody else never appears while you are scoped to one person.
     (!feedPassport.value || e.passport_id === feedPassport.value) &&
-    matchesText(e, feedQuery.value)))
+    matchesText(e, feedQuery.value)
+
+  const visibleFeed = computed(() => feed.value.filter(e =>
+    matchesOthers(e) && (feedSeverity.value === 'all' || isProblem(e))))
+
+  // How many problems the current view holds — shown on the control, so switching
+  // to `problems` is a decision rather than a guess, and a zero says "nothing is
+  // wrong here" without having to switch and switch back.
+  const feedProblemCount = computed(() =>
+    feed.value.reduce((n, e) => n + (isProblem(e) && matchesOthers(e) ? 1 : 0), 0))
 
   // From the SERVER's facet counts (`summary.axes`), not from the feed rows.
   //
@@ -189,6 +218,7 @@ export const useLiveStore = defineStore('live', () => {
 
   const DEFAULT_DIR: [string, Mode][] = [['internal', 'exclude']]
   const feedFiltered = computed(() => Boolean(feedQuery.value.trim())
+    || feedSeverity.value !== 'all'
     || Boolean(feedPassport.value)
     || feedChanModes.value.size > 0
     || feedDirModes.value.size !== 1
@@ -260,6 +290,7 @@ export const useLiveStore = defineStore('live', () => {
   }
   function clearFeedFilters() {
     feedQuery.value = ''
+    feedSeverity.value = 'all'
     feedChanModes.value = new Map()
     feedDirModes.value = new Map(DEFAULT_DIR)
     feedPassport.value = null
@@ -376,7 +407,7 @@ export const useLiveStore = defineStore('live', () => {
   // Resolved against the current summary, in PINNED order. A pin whose plugin has
   // stopped reporting is skipped rather than rendered as a zero — the same rule the
   // Status card follows, because absent and zero are different claims.
-  type PinnedFig = { module: string; owner: string | null; key: string; text: string; bad: boolean }
+  type PinnedFig = { module: string; owner: string | null; key: string; text: string; bad: boolean; description: string }
   const pinnedFigs = computed(() => {
     const byId = new Map<string, PinnedFig>()
     for (const p of summary.value?.status || []) {
@@ -394,6 +425,17 @@ export const useLiveStore = defineStore('live', () => {
           key: m.key,
           text: m.of === undefined ? String(m.value) : `${m.value}/${m.of}`,
           bad: m.severity === 'bad' && m.value > 0,
+          // The plugin's own sentence for what this counts, which the header used
+          // to drop even though the right pane's Status rows show it.
+          //
+          // The header is where it is needed MOST, because two figures there can
+          // look like they contradict a card and nothing on screen says otherwise:
+          // `0 voip missed` and `0 voip ringing` sit beside a Coming in card
+          // reading `voip 1`, and all three are correct — the card counts EVENTS on
+          // the voip channel, `missed` counts calls nobody answered, and `ringing`
+          // is current state that ignores the window entirely. One hover now says
+          // so; before, the only way to find out was to read the plugin.
+          description: m.description || m.key,
         })
       }
     }
@@ -476,7 +518,8 @@ export const useLiveStore = defineStore('live', () => {
 
   return {
     window, summary, series, utm, content, feed, visibleFeed,
-    feedQuery, feedDirModes, feedChanModes, directionCounts, channelCounts,
+    feedQuery, feedSeverity, feedProblemCount, feedDirModes, feedChanModes,
+    directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,
     feedPassport, feedPerson, feedPersonName, togglePassport,

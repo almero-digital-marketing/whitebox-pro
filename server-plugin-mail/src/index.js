@@ -44,19 +44,28 @@ export function mail(options = {}) {
     // declared as a `'mail.'` prefix on purpose: a prefix would swallow a new
     // event type silently, and an unclassified one showing up as `unknown` is
     // the signal that it needs a decision here.
+    // `severity` marks the three that are bad news, matching the judgement this
+    // plugin already publishes on its status counters (failed and bounced are
+    // the two flagged `severity: 'bad'` in outbox.js). error vs warn is the
+    // distinction between "we could not send it" and "we sent it and the far
+    // end refused it" — the first is ours to fix, the second is deliverability.
+    //
+    // complained is a warn although no counter flags it: one person marking us
+    // spam does not make a number wrong, but it is precisely what someone
+    // filtering the feed to problems wants to see.
     events: {
       'mail.queued': 'out',
       'mail.sent': 'out',
-      'mail.failed': 'out',
+      'mail.failed': { direction: 'out', severity: 'error' },
       'mail.delivered': 'out',
-      'mail.bounced': 'out',
+      'mail.bounced': { direction: 'out', severity: 'warn' },
       'mail.bulk.queued': 'out',
       // Nothing left the building — a cancelled batch is bookkeeping.
       'mail.bulk.cancelled': 'internal',
       'mail.received': 'in',
       'mail.opened': 'in',
       'mail.engaged': 'in',
-      'mail.complained': 'in',
+      'mail.complained': { direction: 'in', severity: 'warn' },
     },
 
     // What one of our events was ABOUT, for a feed row. Two functions for eleven

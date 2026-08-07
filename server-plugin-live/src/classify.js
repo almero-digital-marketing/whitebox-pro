@@ -20,7 +20,7 @@
 // is visibly unclassified rather than quietly folded into `internal`. That is
 // what surfaced voip.click in the first place.
 
-import { direction as catalogDirection, channel as catalogChannel } from 'whitebox-pro-server/event-catalog'
+import { direction as catalogDirection, channel as catalogChannel, severity as catalogSeverity } from 'whitebox-pro-server/event-catalog'
 
 // Handed over by live's register() from ctx.eventCatalog. Module-level, matching
 // how the rest of this plugin takes its dependencies (see service.js init).
@@ -44,6 +44,17 @@ export function direction(type, payload) {
 /** The channel a row belongs to (web / mail / sms / voip / crm / …). */
 export function channel(type, payload) {
   return catalogChannel(catalog, type, payload)
+}
+
+/**
+ * Bad news, per the module that emits it: 'error' | 'warn' | null.
+ *
+ * Read here for the same reason direction is — this plugin holds no opinion
+ * about which of mail's eleven event types is a failure, and any list it kept
+ * would be a copy of somebody else's, stale from the day a plugin was added.
+ */
+export function severity(type, payload) {
+  return catalogSeverity(catalog, type, payload)
 }
 
 export const DIRECTIONS = ['in', 'out', 'internal', 'unknown']

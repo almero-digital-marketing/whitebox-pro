@@ -61,6 +61,7 @@ import { trim, body, collapse, pathOf, decodePath, letters } from './event-forma
 //   {
 //     direction: 'in',                       // or a { from, map } lookup
 //     channel: 'web',                        // default: the type's first segment
+//     severity: 'error',                     // or 'warn'; absent = routine
 //   }
 //
 // `{ from, map }` reads the answer out of the payload — for an event that
@@ -82,6 +83,34 @@ import { trim, body, collapse, pathOf, decodePath, letters } from './event-forma
 // not a report. Options derived from "what has happened lately" mean a quiet
 // window offers nothing to filter by — you could switch a channel off after it
 // got busy, never before. A channel is a thing the system HAS.
+//
+// ── SEVERITY ────────────────────────────────────────────────────────────────
+//
+// Whether one occurrence of this event is BAD NEWS, declared by the module that
+// emits it — for the same reason direction is: only mail knows that `bounced`
+// means the mailbox refused us and `opened` doesn't.
+//
+//   'error'  something we tried to do did not happen — mail.failed, sms.failed,
+//            adnetwork.error. A fault on our side of the exchange.
+//   'warn'   it happened, and the outcome was bad — mail.bounced (the mailbox
+//            refused it), mail.complained (they marked it spam),
+//            adnetwork.rejected (the network said no). Working as designed,
+//            reporting bad news.
+//   absent   routine. Most events. Never write `severity: 'ok'` — the absence
+//            IS the statement, and an explicit value would invite the same
+//            drift the direction map suffered.
+//
+// This is what lets the Live feed offer "problems only" without the board
+// keeping its own list of which type names look alarming. Such a list is the
+// exact failure this file was written to end: it would be a claim about someone
+// else's plugin, unverifiable from here, and a channel added tomorrow would be
+// missing from it with nothing to reveal that.
+//
+// DISTINCT from the `severity: 'bad'` on a status METRIC (docs/10-plugin-status.md),
+// which is a claim about a COUNTER — "non-zero here is a problem". This one is
+// about a single occurrence. They answer different questions and neither is
+// derivable from the other: a plugin can have a bad counter and no event to
+// match (voip's missed calls), or a warn-level event it does not count.
 //
 // ── NOT DECLARING ANYTHING ──────────────────────────────────────────────────
 //
@@ -518,6 +547,32 @@ export function channel(catalog, type, payload) {
     if (raw) return raw
   }
   return String(type || '').split('.')[0]
+}
+
+/**
+ * Is one occurrence of this event bad news? Declared by the module that emits
+ * it — see SEVERITY above.
+ *
+ * Null for anything undeclared, which covers both "routine" and "nobody has
+ * classified this yet". Those are deliberately not distinguished: a feed
+ * filtered to problems shows what modules have actually claimed is a problem,
+ * so a plugin that declares nothing is visibly absent from that view rather
+ * than guessed at in either direction.
+ *
+ * @returns {'error'|'warn'|null}
+ */
+export function severity(catalog, type, payload) {
+  const s = lookup(catalog, type)?.severity
+  if (typeof s === 'string') return s === 'error' || s === 'warn' ? s : null
+  // Same `{ from, map }` shape the other axes take, for an event whose outcome
+  // is only known per-row. Nothing needs it today; supporting it costs three
+  // lines and keeps one grammar across all three axes rather than two.
+  if (s?.from) {
+    const raw = dig(payload, s.from)
+    const v = s.map ? s.map[raw] : raw
+    return v === 'error' || v === 'warn' ? v : null
+  }
+  return null
 }
 
 /**

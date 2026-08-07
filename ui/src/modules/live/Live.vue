@@ -29,7 +29,7 @@ const store = useLiveStore()
 const router = useRouter()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
   feedChanModes, feedPassport, feedPerson, feedPersonName, directionCounts, channelCounts, feedFiltered,
-  feedView, feedCounts,
+  feedView, feedCounts, feedSeverity, feedProblemCount,
   connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
 // Which right-pane section is open — Live first, matching every other pane in the
@@ -209,8 +209,16 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
            five times for no information. `failed`, by contrast, is ambiguous across
            mail, sms, journeys and conversions, so it keeps its owner. -->
       <div class="lv-pulse">
+        <!-- The plugin's own description on hover. A header figure is the most
+             exposed number on the board and was the only place carrying no
+             explanation — the Status pane has shown these all along. It matters
+             here because a counter and a card can look like they disagree while
+             both are right: `0 voip missed` beside a Coming in card reading
+             `voip 1` is a missed-call count next to an event count, and `ringing`
+             is current state that ignores the window altogether. -->
         <span v-for="f in pinnedFigs" :key="`${f.module}:${f.key}`"
-          class="lv-fig" :class="{ bad: f.bad }">
+          class="lv-fig" :class="{ bad: f.bad }"
+          v-tooltip.bottom="f.description">
           <b>{{ f.text }}</b>
           <span v-if="f.owner" class="lv-fig-mod">{{ f.owner }}</span>{{ f.key }}
         </span>
@@ -344,6 +352,27 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
               @click="feedQuery = ''"><span class="material-symbols-outlined">close</span></button>
           </span>
 
+          <!-- all | problems. Narrows to the events whose own module declared them
+               error or warn (server/src/event-catalog.js) — NOT a list of type
+               names kept here, which is the mistake this module's classification
+               was rewritten to end: it would be a claim about somebody else's
+               plugin, and a channel added tomorrow would be missing from it with
+               nothing to show that.
+               The count is on the tab because a filter you have to switch on to
+               discover is empty wastes the one action, and "0" answers the
+               question outright. -->
+          <div class="lv-seg">
+            <button v-for="v in (['all', 'problems'] as const)" :key="v" type="button" class="lv-win"
+              :class="{ on: feedSeverity === v }"
+              v-tooltip.top="v === 'all'
+                ? 'Every event'
+                : 'Only what a module reported as an error or a warning — failed and bounced sends, rejected conversions'"
+              @click="feedSeverity = v">
+              {{ v }}<span v-if="v === 'problems'" class="lv-seg-n"
+                :class="{ hot: feedProblemCount > 0 }">{{ feedProblemCount }}</span>
+            </button>
+          </div>
+
           <!-- list | count. The same segmented control as the window picker and
                Attribution's dimension switch (.lv-seg + .lv-win), because it's
                the same kind of choice: one-of-N over the same data. -->
@@ -372,14 +401,31 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
           <span class="lv-ev-ch">{{ r.channel }}</span>
           <span class="lv-agg-n">{{ r.count }}</span>
         </li>
-        <li v-if="!feedCounts.length" class="lv-empty">
+        <li v-if="!feedCounts.length && feedSeverity === 'problems'" class="lv-empty">
+          Nothing has gone wrong here — no module reported an error or a warning among these events.
+          <button type="button" class="lv-link" @click="feedSeverity = 'all'">Show every event</button>
+        </li>
+        <li v-else-if="!feedCounts.length" class="lv-empty">
           Nothing matches these filters.
           <button v-if="feedFiltered" type="button" class="lv-link" @click="store.clearFeedFilters()">Clear filters</button>
         </li>
       </ul>
 
       <ul v-else class="lv-feed is-list">
-        <li v-for="(e, i) in visibleFeed" :key="(e.id || '') + i" class="lv-ev">
+        <!-- A problem row is marked on the ROW, not given a column of its own.
+             Two reasons. The grid is `subgrid` with every track `max-content`, so
+             a sixth column costs all 500 rows an 8px gap for a cell that is empty
+             on nearly all of them. And every type that carries a severity NAMES
+             its failure — mail.failed, mail.bounced, adnetwork.error — so a badge
+             reading "error" beside `mail.failed` is the same restatement that
+             stripTypeEcho exists to remove from the detail column.
+             The word still exists for a screen reader and on hover, via `title`:
+             colour is the accelerant here, never the only carrier. -->
+        <li v-for="(e, i) in visibleFeed" :key="(e.id || '') + i" class="lv-ev"
+          :class="e.severity ? `sev-${e.severity}` : null"
+          :title="e.severity === 'error' ? 'Error — this did not happen'
+            : e.severity === 'warn' ? 'Warning — it happened and the outcome was bad'
+            : null">
           <span class="lv-ev-dir" :style="{ color: DIRECTION_COLOR[e.direction] || 'var(--muted)' }">
             {{ DIRECTION_GLYPH[e.direction] }}
           </span>
@@ -412,7 +458,15 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
              things and one generic message would hide which. -->
         <!-- Three empty states, because they mean three different things and one
              generic message would hide which. -->
-        <li v-if="!visibleFeed.length && feed.length" class="lv-empty">
+        <!-- "No problems" is GOOD NEWS and has to read that way. Sent through the
+             generic "nothing matches these filters" it reads as a filter you got
+             wrong, which is the opposite of what it says — and it is the one
+             empty state someone deliberately goes looking for. -->
+        <li v-if="!visibleFeed.length && feed.length && feedSeverity === 'problems'" class="lv-empty">
+          Nothing has gone wrong here — no module reported an error or a warning among these events.
+          <button type="button" class="lv-link" @click="feedSeverity = 'all'">Show every event</button>
+        </li>
+        <li v-else-if="!visibleFeed.length && feed.length" class="lv-empty">
           Nothing matches these filters — {{ feed.length }} event{{ feed.length === 1 ? '' : 's' }} in this window are hidden.
           <button type="button" class="lv-link" @click="store.clearFeedFilters()">Clear filters</button>
         </li>

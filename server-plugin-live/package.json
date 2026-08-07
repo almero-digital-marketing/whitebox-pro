@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-live",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "WhiteBox server — live plugin. A realtime operations view of everything moving through WhiteBox: what arrives (web, replies, CRM, conversions), what leaves (mail, SMS, webhooks), and delivery health. Owns no tables; reads the core event registry and taps notify()'s firehose channel.",
   "type": "module",
   "exports": {
@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "whitebox-pro-server": "^2.2.0"
+    "whitebox-pro-server": "^2.6.0"
   },
   "devDependencies": {
     "vitest": "^2.1.0"

@@ -379,6 +379,29 @@
    narrowed, so the way out is where the way in was. */
 .lv-ev-who.on { font-weight: 700; text-decoration: underline; }
 
+/* A row whose emitting module called it bad news. See the note in Live.vue for
+   why this is not a column.
+   The TYPE cell carries it, and only the type cell. The direction glyph is
+   coloured by an inline style (DIRECTION_COLOR), which no class here can
+   override without `!important` — and it should not be overridden anyway: a red
+   arrow would destroy the in/out reading to say something the type already says.
+   No left bar either. `.lv-ev` has `padding: 5px 0`, so an inset rule would sit
+   under the glyph rather than beside it, and a real `border-left` would widen
+   the row's box by 2px on problem rows only — breaking the column alignment the
+   subgrid exists to guarantee, on exactly the rows being compared.
+   Both colours are the module's existing pair: --danger as the status rows use,
+   and the same amber as `.lv-flag.warn`. */
+.lv-ev.sev-error .lv-ev-type { color: var(--danger); font-weight: 600; }
+.lv-ev.sev-warn .lv-ev-type { color: #d97706; font-weight: 600; }
+
+/* The problem count, on the tab. An annotation on the label, not a second word —
+   so it is lighter until the tab is selected. It turns red when non-zero, but
+   the tab is legible without that: the label reads "problems" and the digit is
+   a digit. */
+.lv-seg-n { margin-left: 5px; font-variant-numeric: tabular-nums; opacity: .7; }
+.lv-win.on .lv-seg-n { opacity: 1; }
+.lv-seg-n.hot { color: var(--danger); font-weight: 700; opacity: 1; }
+
 
 /* The active person scope, in the filter pane's own row shape so it reads as one
    more filter rather than a special case.

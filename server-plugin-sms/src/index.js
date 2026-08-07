@@ -29,12 +29,16 @@ export function sms(options = {}) {
     // mail: a delivery report is the provider telling us about OUR send, so it
     // stays on the outbound leg; only a reply is genuinely inbound. SMS has no
     // open or click to speak of, so `sms.received` is the whole inbound side.
+    //
+    // `severity` reads the same as mail's, for the same two events: failed is
+    // ours (the message never went), bounced is the network refusing a number
+    // we sent to.
     events: {
       'sms.queued': 'out',
       'sms.sent': 'out',
-      'sms.failed': 'out',
+      'sms.failed': { direction: 'out', severity: 'error' },
       'sms.delivered': 'out',
-      'sms.bounced': 'out',
+      'sms.bounced': { direction: 'out', severity: 'warn' },
       'sms.bulk.queued': 'out',
       'sms.bulk.cancelled': 'internal',
       'sms.received': 'in',

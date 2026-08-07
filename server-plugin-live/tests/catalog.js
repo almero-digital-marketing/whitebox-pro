@@ -21,15 +21,15 @@ export const PLUGINS = [
     events: {
       'mail.queued': 'out',
       'mail.sent': 'out',
-      'mail.failed': 'out',
+      'mail.failed': { direction: 'out', severity: 'error' },
       'mail.delivered': 'out',
-      'mail.bounced': 'out',
+      'mail.bounced': { direction: 'out', severity: 'warn' },
       'mail.bulk.queued': 'out',
       'mail.bulk.cancelled': 'internal',
       'mail.received': 'in',
       'mail.opened': 'in',
       'mail.engaged': 'in',
-      'mail.complained': 'in',
+      'mail.complained': { direction: 'in', severity: 'warn' },
     },
   },
   {
@@ -37,9 +37,9 @@ export const PLUGINS = [
     events: {
       'sms.queued': 'out',
       'sms.sent': 'out',
-      'sms.failed': 'out',
+      'sms.failed': { direction: 'out', severity: 'error' },
       'sms.delivered': 'out',
-      'sms.bounced': 'out',
+      'sms.bounced': { direction: 'out', severity: 'warn' },
       'sms.bulk.queued': 'out',
       'sms.bulk.cancelled': 'internal',
       'sms.received': 'in',
@@ -60,8 +60,8 @@ export const PLUGINS = [
     events: {
       'conversion.': 'in',
       'adnetwork.accepted': 'out',
-      'adnetwork.rejected': 'out',
-      'adnetwork.error': 'out',
+      'adnetwork.rejected': { direction: 'out', severity: 'warn' },
+      'adnetwork.error': { direction: 'out', severity: 'error' },
     },
   },
   {

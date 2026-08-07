@@ -50,11 +50,17 @@ export function conversions(options = {}) {
     // rejected | error. `skipped` is deliberately absent — an ineligible network
     // `continue`s before the notify, so no adnetwork.skipped event has ever
     // existed. It's a counter in our status(), not an event.
+    //
+    // `severity` splits the two failure modes the comment above already draws:
+    // `error` is the call itself going wrong (timeout, 5xx, a broken adapter) —
+    // ours to fix; `rejected` is the network answering and saying no, which is
+    // a data problem with what we sent. Both matter, and conflating them would
+    // send someone reading the feed to the wrong place.
     events: {
       'conversion.': 'in',
       'adnetwork.accepted': 'out',
-      'adnetwork.rejected': 'out',
-      'adnetwork.error': 'out',
+      'adnetwork.rejected': { direction: 'out', severity: 'warn' },
+      'adnetwork.error': { direction: 'out', severity: 'error' },
     },
 
     // What one of our events was ABOUT, for a feed row. Two functions, because
