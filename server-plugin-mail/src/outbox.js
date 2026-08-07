@@ -5,6 +5,7 @@ import * as invalid from './invalid.js'
 import * as mailer from './mailer.js'
 import * as attachments from './attachments.js'
 import { personalizeLinks } from './personalize.js'
+import { mailboxSchema } from './address.js'
 
 const TABLE = 'whitebox_mail_outbox'
 
@@ -34,8 +35,10 @@ export const shortenSchema = z.object({
 }).optional().nullable()
 
 const outboxSchema = z.object({
+  // `to` is strict: it is the identity/suppression key, not a header. `from`
+  // becomes Reply-To, where a display name is legal. See address.js.
   to: z.string().email(),
-  from: z.string().email().optional().nullable(),
+  from: mailboxSchema.optional().nullable(),
   subject: z.string().min(1),
   html: z.string().optional(),
   text: z.string().optional(),

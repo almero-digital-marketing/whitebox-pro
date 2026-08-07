@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import * as suppressions from './suppressions.js'
 import * as outbox from './outbox.js'
+import { mailboxSchema } from './address.js'
 
 const SCOPE = 'mail:use'
 
@@ -26,7 +27,7 @@ export function registerMcp(ctx, { db }) {
     inputSchema: {
       to:       z.string().email(),
       subject:  z.string().min(1),
-      from:     z.string().email().optional(),
+      from:     mailboxSchema.optional(),
       template: z.string().optional(),
       data:     z.record(z.any()).optional(),
       html:     z.string().optional(),

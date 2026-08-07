@@ -4,6 +4,7 @@ import * as suppressions from './suppressions.js'
 import * as invalid from './invalid.js'
 import * as outbox from './outbox.js'
 import * as attachments from './attachments.js'
+import { mailboxSchema } from './address.js'
 
 const MAX_RECIPIENTS_PER_BATCH = 10_000
 const DEFAULT_BATCH_SIZE = 500
@@ -28,7 +29,7 @@ const shortenSchema = z.object({
 
 const bulkSchema = z.object({
   subject: z.string().min(1),
-  from: z.string().email().optional().nullable(),
+  from: mailboxSchema.optional().nullable(),
   html: z.string().optional(),
   text: z.string().optional(),
   template: z.string().optional().nullable(),
