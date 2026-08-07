@@ -247,7 +247,13 @@
 /* horizontal bars: the labels are words (web/mail/sms), and rotating them to
    fit a vertical axis is the classic unreadable-axis mistake */
 .lv-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
-.lv-bar { display: grid; grid-template-columns: 84px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; min-height: var(--lv-row-h, 16px); }
+/* The label column was a fixed 84px, which truncated any name longer than about
+   twelve characters — "New Customers" became "New Custom…" — while the bar beside it
+   sat mostly empty. The track's full width is only a 100% reference; the grey part
+   carries no information, so trading it for label space costs nothing readable.
+   minmax lets the label take up to 42% of the row and no more, so a long campaign
+   name gets the room while a short one (`web`, `sms`) still leaves the bar dominant. */
+.lv-bar { display: grid; grid-template-columns: minmax(84px, 42%) 1fr 44px; align-items: center; gap: 8px; font-size: 12px; min-height: var(--lv-row-h, 16px); }
 .lv-bar-k { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lv-bar-track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 /* 4px rounded data-end, anchored to the baseline */
