@@ -168,8 +168,15 @@ export const liveClient = {
   // chan are applied to the rows client-side (instantly, from what's already in
   // hand), but a passport scope has to reach the QUERY or the backfill returns the
   // most recent hundred rows of everyone and shows three of them.
-  recent: (w: WindowKey, limit = 100, f?: BoardFilter) =>
-    req(`/recent?limit=${limit}&window=${w}${filterQS({ passport: f?.passport })}`) as Promise<{ events: FeedEvent[] }>,
+  // `severity` joins passport on the list of things that must reach the QUERY.
+  // dir and chan stay client-side because they are broad — most rows match, so
+  // the buffer answers instantly and correctly. Problems are the opposite: rare
+  // enough that a 300-row buffer covering under two minutes of a 30-minute
+  // window holds none of them, which showed `0` next to a header counter saying
+  // otherwise.
+  recent: (w: WindowKey, limit = 100, f?: BoardFilter, severity?: 'all' | 'problems') =>
+    req(`/recent?limit=${limit}&window=${w}${filterQS({ passport: f?.passport })}`
+      + (severity === 'problems' ? '&severity=problems' : '')) as Promise<{ events: FeedEvent[] }>,
 }
 
 // The two series colours are VALIDATED, not chosen by eye — teal-600 / indigo-600

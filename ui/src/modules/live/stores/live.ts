@@ -101,8 +101,14 @@ export const useLiveStore = defineStore('live', () => {
   // rows carry their own level anyway.
   //
   // Feed-only, unlike direction and channel: severity is a property of one event,
-  // so it cannot narrow a card that counts events per minute. That is also why it
-  // is applied here and never sent to the server as part of boardFilter.
+  // so it cannot narrow a card counting events per minute — which is why it is
+  // NOT part of boardFilter.
+  //
+  // It does still reach the server, as its own /recent parameter, and it has to.
+  // dir and chan are broad enough that filtering the buffer is instant and
+  // correct; problems are rare, and a 300-row buffer is under two minutes of a
+  // busy 30-minute window, so narrowing it client-side found nothing while the
+  // header counter reported several. Same lesson as the passport scope.
   const feedSeverity = ref<'all' | 'problems'>('all')
   const feedDirModes = ref<Map<string, Mode>>(new Map([['internal', 'exclude']]))
   const feedChanModes = ref<Map<string, Mode>>(new Map())
@@ -162,14 +168,20 @@ export const useLiveStore = defineStore('live', () => {
     (!feedPassport.value || e.passport_id === feedPassport.value) &&
     matchesText(e, feedQuery.value)
 
+  // Still applied client-side as well as in the query. The query is what makes
+  // the list findable at all; this keeps it honest for rows the socket delivers
+  // between refetches.
   const visibleFeed = computed(() => feed.value.filter(e =>
     matchesOthers(e) && (feedSeverity.value === 'all' || isProblem(e))))
 
-  // How many problems the current view holds — shown on the control, so switching
-  // to `problems` is a decision rather than a guess, and a zero says "nothing is
-  // wrong here" without having to switch and switch back.
-  const feedProblemCount = computed(() =>
-    feed.value.reduce((n, e) => n + (isProblem(e) && matchesOthers(e) ? 1 : 0), 0))
+  // NO count on the control, deliberately. It used to carry one, taken from the
+  // buffer, and it landed inches from the header's own problem flag — which
+  // counts something else entirely (plugin status counters over the window, not
+  // feed rows). They disagreed constantly: `1 problem (1 conversions rejected)`
+  // beside `problems 0`, both right and irreconcilable from the screen.
+  //
+  // One number, in one place. The flag is the authoritative count and already
+  // says what and how many; the tab is a view switch.
 
   // From the SERVER's facet counts (`summary.axes`), not from the feed rows.
   //
@@ -281,10 +293,14 @@ export const useLiveStore = defineStore('live', () => {
   // nothing" — when the window may hold plenty of their history the buffer had
   // already evicted. Only a query can answer that.
   watch(feedPassport, () => { if (summary.value) refreshFeed() })
+  // Toggling problems re-QUERIES rather than re-filtering what is in hand — the
+  // whole point of the change. Without this the switch would narrow a buffer
+  // that holds under two minutes of a busy window and find nothing.
+  watch(feedSeverity, () => { if (summary.value) refreshFeed() })
 
   async function refreshFeed() {
     try {
-      const r = await client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value)
+      const r = await client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value, feedSeverity.value)
       feed.value = r.events
     } catch { /* keep what we have rather than blanking the feed on a hiccup */ }
   }
@@ -467,7 +483,7 @@ export const useLiveStore = defineStore('live', () => {
         client.content(window.value),
         // Backfill deliberately smaller than MAX_FEED, so live events have room to
         // arrive without immediately evicting the history we just fetched.
-        client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value),
+        client.recent(window.value, Math.round(MAX_FEED * 0.6), boardFilter.value, feedSeverity.value),
       ])
       summary.value = s; series.value = t; utm.value = u; content.value = c; feed.value = r.events
     } catch (e: any) {
@@ -490,7 +506,13 @@ export const useLiveStore = defineStore('live', () => {
     detach?.()
     detach = connectLive(auth.accessToken || '', (events, drop) => {
       if (drop) dropped.value += drop
-      const next = [...events.reverse(), ...feed.value]
+      // While scoped to problems the stream is filtered BEFORE it is merged, not
+      // after. visibleFeed would hide the routine rows either way, but they would
+      // still be in the buffer — and at this event rate they evict the whole
+      // 300-row page of problems the query just fetched within two minutes,
+      // emptying the list you are watching.
+      const incoming = feedSeverity.value === 'problems' ? events.filter(isProblem) : events
+      const next = [...incoming.reverse(), ...feed.value]
       if (next.length > MAX_FEED) next.length = MAX_FEED
       feed.value = next
     }, (c) => { connected.value = c })
@@ -518,7 +540,7 @@ export const useLiveStore = defineStore('live', () => {
 
   return {
     window, summary, series, utm, content, feed, visibleFeed,
-    feedQuery, feedSeverity, feedProblemCount, feedDirModes, feedChanModes,
+    feedQuery, feedSeverity, feedDirModes, feedChanModes,
     directionCounts, channelCounts,
     feedView, feedCounts,
     feedFiltered, hiddenByFilter, toggleDirection, toggleChannel, clearFeedFilters,

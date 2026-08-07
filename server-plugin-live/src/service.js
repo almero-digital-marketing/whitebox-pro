@@ -3,7 +3,7 @@
 //
 // Everything is windowed, and the window is the only parameter that matters —
 // "47/min" is meaningless without saying over what.
-import { direction, channel, severity, DIRECTIONS, channels } from './classify.js'
+import { direction, channel, severity, severityTypes, DIRECTIONS, channels } from './classify.js'
 import { describe } from './describe.js'
 
 let eventRegistry, plugins, pluginNames, logger, streamStats
@@ -594,20 +594,37 @@ export async function timeseries({ window: w, points, dir, chan, passport } = {}
  * Backfill for the feed. The dashboard opens with this so a quiet system reads
  * as "measured, nothing happening" rather than as a broken pipe.
  */
-export async function recent({ limit = 100, window: w, passport } = {}) {
+export async function recent({ limit = 100, window: w, passport, severity: sev } = {}) {
   const from = since(parseWindow(w))
-  // Scoped at the query when a passport is selected — not by filtering the page
-  // afterwards. Someone with three events in a busy window would otherwise get
-  // three rows out of the most recent hundred and look like they had gone quiet.
+  // Problems are narrowed at the QUERY for the same reason a passport is, and it
+  // matters more here. The board keeps 300 rows; at 160 events/min that is under
+  // two minutes of a 30-minute window, so filtering the buffer for failures
+  // showed `0` beside a header counter reporting several — both correct, and
+  // impossible to reconcile from the screen.
+  const problems = sev === 'problems' ? severityTypes() : null
+
+  // Nobody has declared a severity — every plugin installed here predates the
+  // field, or none of them can fail. Answer with nothing rather than passing an
+  // empty set down: an empty IN () narrows nothing, so the query would return
+  // the whole feed and label it "problems", which is the one wrong answer here.
+  if (problems && !problems.types.length && !problems.prefixes.length) return []
+
   const rows = await eventRegistry.recent({
     limit: Math.min(Number(limit) || 100, 500),
     passportId: passport || null,
+    ...(problems ? { types: problems.types, prefixes: problems.prefixes } : {}),
   })
   // Windowed like every other read on this board. Without it the feed showed
   // 24h of rows under a "30m" selector, directly contradicting a strip that
   // said "no traffic in this window" — two panels disagreeing about what
   // you're looking at.
-  return rows.filter(r => new Date(r.occurred_at) >= from).map(toFeedRow)
+  const feed = rows.filter(r => new Date(r.occurred_at) >= from).map(toFeedRow)
+
+  // The query narrows to types that MIGHT carry a severity; a `{ from, map }`
+  // declaration only resolves per row, so the level is settled here. A no-op for
+  // every declaration in the tree today, and the thing that keeps the filter
+  // honest the day one of them needs the payload.
+  return problems ? feed.filter(r => r.severity) : feed
 }
 
 // One shape for a feed row, used by BOTH the backfill above and the live stream

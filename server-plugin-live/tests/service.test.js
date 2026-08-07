@@ -107,6 +107,52 @@ describe('summary()', () => {
   })
 })
 
+// The whole point of pushing severity down: a rare failure has to be found in
+// the WINDOW, not in the page of rows the client happens to be holding. At 160
+// events/min a 300-row buffer is under two minutes of a 30-minute window, so
+// filtering it client-side reported `0 problems` beside a header counter saying
+// there was one — both correct, and unreconcilable by looking.
+describe('recent() with severity', () => {
+  const rows = (types) => types.map((type, i) => ({
+    id: `e${i}`, type, occurred_at: new Date().toISOString(), passport_id: null, data: { data: {} },
+  }))
+
+  it('narrows to the declared problem types in the QUERY, not afterwards', async () => {
+    const reg = registry()
+    reg.recent = vi.fn(async () => rows(['mail.failed']))
+    service.init({ eventRegistry: reg, logger: console })
+
+    await service.recent({ window: '30m', severity: 'problems' })
+
+    const args = reg.recent.mock.calls[0][0]
+    expect(args.types).toEqual(expect.arrayContaining(['mail.failed', 'mail.bounced', 'adnetwork.error']))
+    expect(args.types).not.toContain('mail.sent')
+  })
+
+  it('asks for everything when severity is not requested', async () => {
+    const reg = registry()
+    service.init({ eventRegistry: reg, logger: console })
+
+    await service.recent({ window: '30m' })
+
+    const args = reg.recent.mock.calls[0][0]
+    expect(args.types).toBeUndefined()
+    expect(args.prefixes).toBeUndefined()
+  })
+
+  // An empty IN () narrows nothing, so passing an empty set down would return the
+  // whole feed labelled "problems" — the one wrong answer available here.
+  it('returns nothing, not everything, when no plugin declares a severity', async () => {
+    classify.init({ eventCatalog: null })
+    const reg = registry()
+    reg.recent = vi.fn(async () => rows(['mail.failed', 'mail.sent']))
+    service.init({ eventRegistry: reg, logger: console })
+
+    expect(await service.recent({ window: '30m', severity: 'problems' })).toEqual([])
+    expect(reg.recent).not.toHaveBeenCalled()
+  })
+})
+
 describe('toFeedRow()', () => {
   // the backfill and the live stream both go through this, so a replayed event
   // and a streamed one are indistinguishable to the UI

@@ -29,7 +29,7 @@ const store = useLiveStore()
 const router = useRouter()
 const { summary, series, utm, content, feed, visibleFeed, feedQuery, feedDirModes,
   feedChanModes, feedPassport, feedPerson, feedPersonName, directionCounts, channelCounts, feedFiltered,
-  feedView, feedCounts, feedSeverity, feedProblemCount,
+  feedView, feedCounts, feedSeverity,
   connected, dropped, failing, pinned, pinnedFigs } = storeToRefs(store)
 
 // Which right-pane section is open — Live first, matching every other pane in the
@@ -358,19 +358,21 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
                was rewritten to end: it would be a claim about somebody else's
                plugin, and a channel added tomorrow would be missing from it with
                nothing to show that.
-               The count is on the tab because a filter you have to switch on to
-               discover is empty wastes the one action, and "0" answers the
-               question outright. -->
+               Switching REFETCHES, it does not re-filter what is loaded: at this
+               event rate 300 rows is under two minutes of a 30-minute window, so
+               the problems being asked about have usually scrolled out of it.
+               NO count here. It had one, from the buffer, sitting inches from the
+               header's own problem flag — which counts plugin status counters
+               over the window, not feed rows. `1 problem (1 conversions rejected)`
+               beside `problems 0`, both correct and impossible to reconcile by
+               looking. The flag is the count; this is a view switch. -->
           <div class="lv-seg">
             <button v-for="v in (['all', 'problems'] as const)" :key="v" type="button" class="lv-win"
               :class="{ on: feedSeverity === v }"
               v-tooltip.top="v === 'all'
                 ? 'Every event'
                 : 'Only what a module reported as an error or a warning — failed and bounced sends, rejected conversions'"
-              @click="feedSeverity = v">
-              {{ v }}<span v-if="v === 'problems'" class="lv-seg-n"
-                :class="{ hot: feedProblemCount > 0 }">{{ feedProblemCount }}</span>
-            </button>
+              @click="feedSeverity = v">{{ v }}</button>
           </div>
 
           <!-- list | count. The same segmented control as the window picker and

@@ -20,7 +20,7 @@
 // is visibly unclassified rather than quietly folded into `internal`. That is
 // what surfaced voip.click in the first place.
 
-import { direction as catalogDirection, channel as catalogChannel, severity as catalogSeverity } from 'whitebox-pro-server/event-catalog'
+import { direction as catalogDirection, channel as catalogChannel, severity as catalogSeverity, severityTypes as catalogSeverityTypes } from 'whitebox-pro-server/event-catalog'
 
 // Handed over by live's register() from ctx.eventCatalog. Module-level, matching
 // how the rest of this plugin takes its dependencies (see service.js init).
@@ -55,6 +55,15 @@ export function channel(type, payload) {
  */
 export function severity(type, payload) {
   return catalogSeverity(catalog, type, payload)
+}
+
+/**
+ * Which types carry a severity at all, for narrowing the query rather than the
+ * page. `{ types, prefixes }` — see the catalog accessor for why the feed cannot
+ * do this client-side.
+ */
+export function severityTypes() {
+  return catalogSeverityTypes(catalog)
 }
 
 export const DIRECTIONS = ['in', 'out', 'internal', 'unknown']

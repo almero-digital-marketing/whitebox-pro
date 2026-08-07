@@ -576,6 +576,30 @@ export function severity(catalog, type, payload) {
 }
 
 /**
+ * Every declaration that carries a severity, as something a QUERY can use.
+ *
+ * This exists because filtering a page of recent rows for problems afterwards
+ * does not work, for exactly the reason a passport scope has to reach the query:
+ * a board doing 160 events/min holds under two minutes in a 300-row buffer, so
+ * "show me what went wrong in the last 30 minutes" filtered client-side finds
+ * nothing while the status counters report several. Two numbers on one screen,
+ * both right, disagreeing — which is worse than not offering the filter.
+ *
+ * `{ from, map }` severities are returned as CANDIDATES: their level is per-row
+ * and only readable from the payload, so the query narrows to the right types
+ * and severity() still decides row by row.
+ *
+ * @returns {{types: string[], prefixes: string[]}}
+ */
+export function severityTypes(catalog) {
+  const types = []
+  const prefixes = []
+  for (const [key, spec] of catalog?.byType ?? []) if (spec?.severity) types.push(key)
+  for (const [key, spec] of catalog?.byPrefix ?? []) if (spec?.severity) prefixes.push(key)
+  return { types, prefixes }
+}
+
+/**
  * What this event was ABOUT, in one line — or null when the emitting module has
  * nothing useful to say. Null is a real answer: "—" in the UI is honest, an
  * invented summary is worse than no summary.

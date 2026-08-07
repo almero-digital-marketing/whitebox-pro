@@ -29,9 +29,13 @@ export function register(app, { service, requireRead }) {
   // pushed into the query rather than applied after classification (see
   // service.summary). /recent takes it too, so the backfill matches the cards
   // instead of showing a hundred rows the header says aren't there.
+  // `severity=problems` narrows to what a module declared error or warn, and
+  // belongs in the query for the same reason `passport` does — more so, since
+  // the buffer the client holds is under two minutes of a busy 30-minute window.
   read('/recent', async (req) => ({
     events: await service.recent({
       limit: req.query.limit, window: req.query.window, passport: req.query.passport,
+      severity: req.query.severity,
     }),
   }))
 }

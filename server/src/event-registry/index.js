@@ -283,9 +283,23 @@ export async function lastEventAt() {
 // The actual occurrences — optionally scoped to one event type — most recent
 // first. This is the point of being a log rather than just a registry: you
 // can see what really happened, not just that something did.
-export async function recent({ type, limit = 50, passportId } = {}) {
+export async function recent({ type, types, prefixes, limit = 50, passportId } = {}) {
   let q = db(TABLE).where('occurred_at', '>=', retentionCutoff()).orderBy('occurred_at', 'desc').limit(limit)
   if (type) q = q.andWhere({ type })
+  // A SET of types, for a caller narrowing to a category rather than one name —
+  // live's problems-only feed asks for every type its catalog marks error or
+  // warn. Same reasoning as passportId below, and the same reason it is not done
+  // after the fact: a rare type filtered out of the most recent fifty rows
+  // returns nothing while the counters say otherwise.
+  //
+  // Prefixes come as a separate list because a declaration ending in a dot
+  // covers names chosen at runtime, which no IN () can enumerate.
+  if (types?.length || prefixes?.length) {
+    q = q.andWhere(b => {
+      if (types?.length) b.whereIn('type', types)
+      for (const p of prefixes || []) b.orWhere('type', 'like', `${p}%`)
+    })
+  }
   // Scoped at the QUERY, not by filtering the page afterwards: a passport with
   // three events in a busy window would otherwise return three rows out of the
   // most recent fifty and look like it had gone quiet.

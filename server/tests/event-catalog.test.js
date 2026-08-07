@@ -9,7 +9,7 @@
 //   · a near-miss                        → 'conversions.' for `conversion.`
 //   · a prefix that is not a channel     → `awareness` in the channel filter
 import { describe, it, expect, vi } from 'vitest'
-import { build, direction, channel, detail, severity, lookup, CORE_EVENTS } from '../src/event-catalog.js'
+import { build, direction, channel, detail, severity, severityTypes, lookup, CORE_EVENTS } from '../src/event-catalog.js'
 
 const plugin = (name, events, channels) => ({ name, events, ...(channels && { channels }) })
 
@@ -270,6 +270,32 @@ describe('severity()', () => {
   it('follows a prefix declaration', () => {
     const c = build([plugin('job', { 'job.': { direction: 'internal', severity: 'warn' } })])
     expect(severity(c, 'job.anything')).toBe('warn')
+  })
+
+  // The set a QUERY needs. Filtering a page of recent rows afterwards cannot
+  // answer "what went wrong in the last 30 minutes" on a busy board — the buffer
+  // is under two minutes of it.
+  it('enumerates the declarations that carry a severity', () => {
+    const c = build([
+      plugin('mail', {
+        'mail.sent': 'out',
+        'mail.failed': { direction: 'out', severity: 'error' },
+        'mail.bounced': { direction: 'out', severity: 'warn' },
+      }),
+      plugin('job', { 'job.': { direction: 'internal', severity: 'warn' } }),
+    ])
+    const { types, prefixes } = severityTypes(c)
+    expect(types).toEqual(expect.arrayContaining(['mail.failed', 'mail.bounced']))
+    expect(types).not.toContain('mail.sent')
+    expect(prefixes).toEqual(['job.'])
+  })
+
+  // Empty, not everything. A caller turning this into `WHERE type IN (…)` would
+  // otherwise narrow nothing and return the whole feed labelled "problems".
+  it('enumerates nothing when no plugin declares a severity', () => {
+    const c = build([plugin('mail', { 'mail.sent': 'out' })])
+    expect(severityTypes(c)).toEqual({ types: [], prefixes: [] })
+    expect(severityTypes(null)).toEqual({ types: [], prefixes: [] })
   })
 
   it('reads a per-row level out of the payload when declared that way', () => {
