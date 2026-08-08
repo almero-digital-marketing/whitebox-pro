@@ -97,6 +97,61 @@ export async function record({ passport_id, key, value, type, source, observed_a
   return row
 }
 
+// Record MANY DIFFERENT facts, in one INSERT.
+//
+// The complement of recordMany below: that one is a single key across many
+// passports (a bulk tag), this one is many keys — typically for one passport,
+// though nothing here requires that.
+//
+// Exists because the shape it serves had no bulk path at all. An external
+// system pushing a customer's structured state writes one fact per field, and
+// the CRM adapter did it with `for (const w of writes) await facts.record(w)` —
+// one round trip per field. At ~90 fields for a customer with some history that
+// is ~90 sequential trips to Postgres, and it measured at 7.5 customers/minute:
+// a backfill of 98k customers would have taken nine days.
+//
+// Passport ids are resolved ONCE per distinct id rather than once per fact,
+// since the common case is many facts for one person and resolution walks the
+// merge chain.
+//
+// A malformed entry throws rather than being skipped. These batches are built
+// by code, not by users — a missing key is a bug, and dropping it silently
+// would write a partial state that looks complete.
+export async function recordBatch(facts = []) {
+  if (!facts.length) return []
+
+  for (const f of facts) {
+    if (!f?.passport_id) throw new Error('facts.recordBatch: passport_id is required')
+    if (!f?.key) throw new Error('facts.recordBatch: key is required')
+    if (f?.value === undefined) throw new Error('facts.recordBatch: value is required')
+  }
+
+  const resolved = new Map()
+  for (const id of new Set(facts.map(f => f.passport_id))) {
+    resolved.set(id, await resolveId(id))
+  }
+
+  const rows = facts
+    .filter(f => resolved.get(f.passport_id))
+    .map(f => ({
+      passport_id: resolved.get(f.passport_id),
+      key: f.key,
+      value: JSON.stringify(f.value),
+      type: f.type || inferType(f.value),
+      source: f.source || 'unknown',
+      entity: f.entity || null,
+      // Per row here, unlike recordMany: these facts are not one act observed
+      // once. A booking from 2023 and a total computed today belong at their own
+      // instants, and collapsing them would flatten the history the temporal
+      // operators read.
+      observed_at: f.observed_at ? new Date(f.observed_at) : new Date(),
+    }))
+
+  const out = await store.insertMany(rows)
+  logger?.debug?.({ count: out.length }, 'facts recorded in batch')
+  return out
+}
+
 // Record the SAME fact for many passports — one INSERT, not one per person.
 //
 // Exists because the alternative (a loop over record()) is two round trips per

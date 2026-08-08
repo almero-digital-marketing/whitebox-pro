@@ -248,3 +248,72 @@ describe('facts.describe / label — human labels for fact keys', () => {
     expect(facts.label('geo_city')).toBe('geo_city')
   })
 })
+
+// The complement of recordMany: many DIFFERENT facts in one statement. Exists
+// because the shape it serves — an external system pushing a customer's whole
+// structured state — had no bulk path, and the CRM adapter was doing a round
+// trip per field. That measured 7.5 customers/minute on the gpoint import.
+describe('facts.recordBatch (many keys, one statement)', () => {
+  it('writes every fact and reads back as current state', async () => {
+    const p = await newPassport()
+    const rows = await facts.recordBatch([
+      { passport_id: p, key: 'plan_tier', value: 'pro', source: 'crm' },
+      { passport_id: p, key: 'mrr', value: 240, source: 'crm' },
+      { passport_id: p, key: 'seats', value: 3, source: 'crm' },
+    ])
+    expect(rows).toHaveLength(3)
+    expect(await facts.current(p)).toEqual({ plan_tier: 'pro', mrr: 240, seats: 3 })
+  })
+
+  // Unlike recordMany, these are NOT one act: a booking from 2023 and a total
+  // computed today belong at their own instants, and collapsing them would
+  // flatten the history the temporal operators read.
+  it('keeps a per-row observed_at', async () => {
+    const p = await newPassport()
+    const rows = await facts.recordBatch([
+      { passport_id: p, key: 'mrr', value: 100, observed_at: d('2026-01-10') },
+      { passport_id: p, key: 'mrr', value: 200, observed_at: d('2026-02-10') },
+    ])
+    expect(new Set(rows.map(r => +r.observed_at)).size).toBe(2)
+    // and the later one is what `current` resolves to
+    expect(await facts.get(p, 'mrr')).toBe(200)
+  })
+
+  it('spans passports as happily as keys', async () => {
+    const a = await newPassport()
+    const b = await newPassport()
+    await facts.recordBatch([
+      { passport_id: a, key: 'plan_tier', value: 'pro' },
+      { passport_id: b, key: 'plan_tier', value: 'free' },
+    ])
+    expect(await facts.get(a, 'plan_tier')).toBe('pro')
+    expect(await facts.get(b, 'plan_tier')).toBe('free')
+  })
+
+  it('resolves merged ids, like record() and recordMany()', async () => {
+    const survivor = await newPassport()
+    const absorbed = await newPassport()
+    mergeMap[absorbed] = survivor
+    const rows = await facts.recordBatch([
+      { passport_id: absorbed, key: 'plan_tier', value: 'pro' },
+    ])
+    expect(rows[0].passport_id).toBe(survivor)
+  })
+
+  // Built by code, not by users: a missing key is a bug, and skipping it would
+  // write a partial state that looks complete.
+  it('throws on a malformed entry rather than writing a partial batch', async () => {
+    const p = await newPassport()
+    await expect(facts.recordBatch([
+      { passport_id: p, key: 'plan_tier', value: 'pro' },
+      { passport_id: p, value: 'orphan' },
+    ])).rejects.toThrow(/key is required/)
+    // nothing from the batch landed
+    expect(await facts.current(p)).toEqual({})
+  })
+
+  it('is a no-op for an empty batch', async () => {
+    expect(await facts.recordBatch([])).toEqual([])
+    expect(await facts.recordBatch()).toEqual([])
+  })
+})

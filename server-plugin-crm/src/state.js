@@ -44,10 +44,24 @@ export async function record({ source, kind, external_id, passport_id, status, s
   }
   if (writes.length === 0) writes.push({ key: kind, value: true })   // bare presence
 
+  // One INSERT for the whole record, not one per field.
+  //
+  // This was a loop over facts.record(), which is a round trip to Postgres per
+  // field. A record with a status and half a dozen scalars is seven trips, and a
+  // caller publishing a customer's history sends many records back to back — the
+  // gpoint import measured 7.5 customers a minute that way, most of it latency.
+  //
+  // The batch is all-or-nothing where the loop was per-field tolerant. That is
+  // the better failure for structured state: a record half-written is a customer
+  // whose status landed and whose amount did not, which reads as real data and
+  // is worse than a record that visibly failed and can be re-sent. Ingest is
+  // idempotent by (source, kind, external_id), so re-sending is free.
   let written = 0
-  for (const w of writes) {
-    try { await facts.record({ ...common, ...w }); written++ }
-    catch (err) { logger?.error?.({ err, source, kind, key: w.key }, 'CRM: facts.record failed') }
+  try {
+    const rows = await facts.recordBatch(writes.map(w => ({ ...common, ...w })))
+    written = rows.length
+  } catch (err) {
+    logger?.error?.({ err, source, kind, external_id }, 'CRM: facts.recordBatch failed')
   }
 
   // The primary signal (see header comment) — a distinctly-named event per
