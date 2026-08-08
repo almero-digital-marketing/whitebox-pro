@@ -26,6 +26,13 @@ const fmt = (n) => {
   return String(Number.isInteger(n) ? n : Number(n.toFixed(2)))
 }
 
+// The value at percentile p (0–1) of a sorted copy. Nearest-rank, which is
+// enough for choosing an axis.
+function percentile(values, p) {
+  const s = [...values].sort((a, b) => a - b)
+  return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1))]
+}
+
 // Choose bin edges from the data: nice round widths anchored to a round low
 // edge. Integer data extends one past the max so the top value gets its own
 // half-open bucket; when the width lands on 1, each integer is its own bucket
@@ -34,27 +41,57 @@ function autoEdges(values, maxBins) {
   const min = Math.min(...values), max = Math.max(...values)
   const integer = values.every(Number.isInteger)
   if (min === max) return { edges: [min, min + 1], perValue: true }
-  let step = niceNum((max - min) / maxBins)
+
+  // Clamp the axis to p99 when the top 1% spans more than half of it.
+  //
+  // Linear bins over the full range are correct and useless on skewed data, and
+  // business data is almost always skewed. avg_days_between_visits ran 1 → 1338
+  // because FOUR customers out of 9,626 had year-long gaps: step became 100 and
+  // 96.6% of everyone landed in the first bucket. The chart was accurate and
+  // showed nothing.
+  //
+  // The condition is self-limiting rather than a blanket rule — on data that is
+  // genuinely spread out, p99 is close to max, the ratio is near 1, and nothing
+  // is clamped. It only fires when a tail is actually crushing the resolution.
+  //
+  // The tail is NOT dropped: bucketize collects everything above the last edge
+  // into a labelled `N+` bucket. Hiding outliers would be a worse failure than
+  // the one being fixed.
+  let top = max
+  const p99 = percentile(values, 0.99)
+  if (p99 > min && (p99 - min) < 0.5 * (max - min)) top = p99
+
+  let step = niceNum((top - min) / maxBins)
   if (integer) step = Math.max(1, Math.round(step))
   const lo = Math.floor(min / step) * step
-  const top = integer ? max + 1 : max   // integer: push past max so it isn't merged into the last bucket
-  const n = Math.max(1, Math.ceil((top - lo) / step) || 1)
+  // integer: push past the top so the highest value isn't merged into the last bucket
+  const hi = integer ? top + 1 : top
+  const n = Math.max(1, Math.ceil((hi - lo) / step) || 1)
   const edges = Array.from({ length: n + 1 }, (_, i) => Number((lo + i * step).toFixed(6)))
   return { edges, perValue: integer && step === 1 }
 }
 
 // Count values into half-open buckets [edges[i], edges[i+1]); the final bucket
 // is closed so the maximum value lands in it.
+//
+// Values outside the edges are counted as under/overflow rather than dropped.
+// They used to be skipped, which is a silent lie in two situations that both
+// happen in practice: an auto axis clamped to p99 (see autoEdges), and an
+// explicit `bins` array that does not reach the data's maximum — a cadence chart
+// binned to 365 days quietly discarded the 30 customers with longer gaps, and
+// nothing on the chart said a number was missing.
 function bucketize(values, edges) {
   const counts = new Array(edges.length - 1).fill(0)
   const last = edges.length - 1
+  let under = 0, over = 0
   for (const v of values) {
-    if (v < edges[0] || v > edges[last]) continue
+    if (v < edges[0]) { under++; continue }
+    if (v > edges[last]) { over++; continue }
     let i = last - 1
     for (let k = 0; k < last; k++) { if (v < edges[k + 1]) { i = k; break } }
     counts[i]++
   }
-  return counts
+  return { counts, under, over }
 }
 
 // values: number[]  → { series: [{ bucket, value }] }
@@ -72,7 +109,7 @@ export function buildHistogram(values, { bins, maxBins = 8 } = {}) {
   if (!Array.isArray(edges) || edges.length < 2) {
     ({ edges, perValue } = autoEdges(nums, maxBins))
   }
-  const counts = bucketize(nums, edges)
+  const { counts, under, over } = bucketize(nums, edges)
   // lo/hi = the numeric edges of each half-open bucket [lo, hi). Carried through so a
   // chart selection can turn a bin into a fact-range segment ({ fact: { key: { gte: lo,
   // lt: hi } } }) — which resolves correctly now that the core comparator orders
@@ -83,5 +120,13 @@ export function buildHistogram(values, { bins, maxBins = 8 } = {}) {
     lo: edges[i],
     hi: edges[i + 1],
   }))
+
+  // Open-ended buckets, added only when they hold something. `hi: null` on the
+  // overflow (and `lo: null` on the underflow) is what tells a chart selection to
+  // build a one-sided range — { fact: { key: { gte: lo } } } — rather than
+  // inventing a bound the bucket does not have.
+  if (under) series.unshift({ bucket: `<${fmt(edges[0])}`, value: under, lo: null, hi: edges[0] })
+  if (over) series.push({ bucket: `${fmt(edges[edges.length - 1])}+`, value: over, lo: edges[edges.length - 1], hi: null })
+
   return { series }
 }
