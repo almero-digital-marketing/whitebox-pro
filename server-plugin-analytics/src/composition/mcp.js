@@ -78,7 +78,7 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
     if (w.kind === 'answer') return { explanation: null }
-    let data = await runQuery(deps, w.query)
+    let data = await runQuery(deps, w.query, w.kind)
     if (w.kind === 'table') { try { data = await enrichPeople(data, passports) } catch { /* keep raw */ } }
     const explanation = await compose.explainWidget({ title: w.title, kind: w.kind, data: compactForExplain(w.kind, data) })
     return { explanation }
@@ -93,14 +93,14 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   // --- resolve (live preview / persisted widgets) ---
   const kindEnum = z.enum([...KINDS])
   read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys.', { query: z.any(), kind: kindEnum.optional() }, async ({ query, kind }) => {
-    let data = await runQuery(deps, query || {})
+    let data = await runQuery(deps, query || {}, kind)
     if (kind === 'table') data = await enrichPeople(data, passports)
     return data
   })
   read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data.', { id: z.string() }, async ({ id }) => {
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
-    let data = await runQuery(deps, w.query)
+    let data = await runQuery(deps, w.query, w.kind)
     if (w.kind === 'table') data = await enrichPeople(data, passports)
     return data
   })

@@ -88,11 +88,24 @@ async function resolveSeries(deps, subs) {
   return { multi: true, series }
 }
 
+// Which projection a widget kind actually needs, when the query does not say.
+//
+// A `stat` asks "how many?" and used to be answered with `{count, passports:[…]}`
+// — 153,245 ids, 9.4 MB, for a number sitting in the first field. Enough to
+// exceed an MCP client's budget outright, and pure waste over REST.
+//
+// `table` genuinely wants the rows. Everything else (breakdown, distribution,
+// scatter, funnel, cohort) returns its own shape and never reaches the selector's
+// projection path at all.
+//
+// An explicit `projection` in the query still wins — this only fills the gap.
+const PROJECTION_FOR = { stat: 'count', table: 'people' }
+
 // Resolve one query def. Branches by shape so a widget can be a cohort count, a
 // time-series, a fact-value breakdown, a funnel, a grounded answer, or a multi-
 // series comparison (series[] / splitBy). Exported so mcp.js can run the exact
 // same live-preview/widget-resolve logic the REST routes below use.
-export async function runQuery(deps, query = {}) {
+export async function runQuery(deps, query = {}, kind) {
   // A query def stored or passed as a JSON STRING is still a query def.
   //
   // Belt as well as the braces at the MCP boundary: widgets persisted before
@@ -220,7 +233,7 @@ export async function runQuery(deps, query = {}) {
     return { series: (f.report || []).map((s) => ({ bucket: s.name || `Step ${s.step}`, value: s.count })), report: f.report }
   }
   return selector.resolve(q.selector || {}, {
-    projection: q.projection, scope: await cohortScope(), passport: q.passport,
+    projection: q.projection || PROJECTION_FOR[kind], scope: await cohortScope(), passport: q.passport,
     asOf: q.asOf, limit: q.limit, group: q.group,
   })
 }
@@ -411,7 +424,7 @@ export function mountComposition(app, { requireRead, requireWrite, selector, awa
   // ── resolve ──────────────────────────────────────────────────────────────────
   router.post('/resolve', requireRead, async (req, res) => {
     try {
-      let data = await runQuery(deps, req.body || {})
+      let data = await runQuery(deps, req.body || {}, req.body?.kind)
       if (req.body?.kind === 'table') data = await enrichPeople(data, passports)   // live preview of a people table
       res.json(data)
     } catch (err) { res.status(400).json({ error: err.message }) }
@@ -421,7 +434,7 @@ export function mountComposition(app, { requireRead, requireWrite, selector, awa
     try {
       const w = await store.getWidget(req.params.id)
       if (!w) return res.status(404).json({ error: 'widget not found' })
-      let data = await runQuery(deps, w.query)   // w.query is parsed jsonb
+      let data = await runQuery(deps, w.query, w.kind)   // w.query is parsed jsonb
       if (w.kind === 'table') data = await enrichPeople(data, passports)   // label the rows people see
       res.json(data)
     } catch (err) { res.status(400).json({ error: err.message }) }
