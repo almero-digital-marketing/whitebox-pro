@@ -20,8 +20,36 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   if (!ctx.mcp) return
   const deps = { selector, awareness }
   const ok = data => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] })
+
+  // Structured arguments arrive as JSON STRINGS from some MCP clients.
+  //
+  // `query`, `layout`, `presentation` and `position` are all declared z.any(),
+  // and a client that serialises them hands us '{"selector":{...}}' rather than
+  // the object. Nothing then throws: runQuery reads `q.selector` off a string,
+  // gets undefined, and falls through to an unfiltered resolve — so
+  // analytics_resolve answered every question with the ENTIRE population, and
+  // add_widget persisted the string, saving a widget that would do the same on
+  // every view forever after. A chart confidently reporting 153,000 people is
+  // worse than one that errors.
+  //
+  // Parsed here, once, rather than in eight handlers. A string that is not JSON
+  // is passed through untouched — `question` is legitimately a string, and so is
+  // anything a future tool takes.
+  const parsed = (v) => {
+    if (typeof v !== 'string') return v
+    const s = v.trim()
+    if (!s.startsWith('{') && !s.startsWith('[')) return v
+    try { return JSON.parse(s) } catch { return v }
+  }
+  const STRUCTURED = ['query', 'layout', 'presentation', 'position', 'scope']
+  const coerce = (args = {}) => {
+    const out = { ...args }
+    for (const k of STRUCTURED) if (k in out) out[k] = parsed(out[k])
+    return out
+  }
+
   const tool = (scope) => (name, description, inputSchema, handler) =>
-    ctx.mcp.tool({ name, description, inputSchema, scope, handler: async (args) => ok(await handler(args)) })
+    ctx.mcp.tool({ name, description, inputSchema, scope, handler: async (args) => ok(await handler(coerce(args))) })
   const read = tool('analytics:read')
   const write = tool('analytics:write')
 

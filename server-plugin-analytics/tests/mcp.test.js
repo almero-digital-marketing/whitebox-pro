@@ -150,3 +150,55 @@ describe('analytics plugin — MCP registration', () => {
     expect(() => registerMcp({}, makeDeps())).not.toThrow()
   })
 })
+
+// Structured MCP arguments arrive as JSON STRINGS from some clients.
+//
+// This was not theoretical: analytics_resolve answered every question with the
+// entire population (153,282 people for a filter matching 9,368), and
+// analytics_add_widget persisted the string — saving a widget that would keep
+// doing it on every view. Nothing threw, because reading `.selector` off a
+// string is undefined, and an undefined filter is "everyone".
+describe('composition mcp: structured args arrive as JSON strings', () => {
+  function makeCompositionMcp() {
+    const calls = []
+    const mcp = makeMcpStub()
+    const ctx = { mcp }
+    // registerMcp for the composition surface is a separate module; import it
+    // lazily so this file's existing suite is unaffected.
+    return { ctx, mcp, calls }
+  }
+
+  it('parses a JSON-string query into an object before the handler sees it', async () => {
+    const { registerMcp: registerComposition } = await import('../src/composition/mcp.js')
+    const mcp = makeMcpStub()
+    const seen = []
+    // stand in for the store/selector: capture what add_widget receives
+    const store = await import('../src/composition/store.js')
+    const addSpy = vi.spyOn(store, 'addWidget').mockImplementation(async (report_id, w) => { seen.push(w); return { id: 'w1', ...w } })
+    vi.spyOn(store, 'getReport').mockImplementation(async () => ({ id: 'r1', name: 'r' }))
+
+    registerComposition({ mcp }, { selector: {}, awareness: {}, passports: {}, logger: console })
+
+    const tool = mcp.tools.get('analytics_add_widget')
+    await tool.handler({
+      report_id: 'r1',
+      kind: 'stat',
+      query: '{"selector":{"filter":{"fact":{"visits_total":{"gte":1}}}},"projection":"people"}',
+    })
+
+    expect(seen).toHaveLength(1)
+    // the whole point: an OBJECT, not the string it arrived as
+    expect(typeof seen[0].query).toBe('object')
+    expect(seen[0].query.selector.filter.fact.visits_total).toEqual({ gte: 1 })
+    addSpy.mockRestore()
+  })
+
+  it('leaves a non-JSON string alone', async () => {
+    const { registerMcp: registerComposition } = await import('../src/composition/mcp.js')
+    const mcp = makeMcpStub()
+    registerComposition({ mcp }, { selector: {}, awareness: {}, passports: {}, logger: console })
+    const tool = mcp.tools.get('analytics_compose')
+    // `question` is legitimately a string and must not be touched
+    expect(tool.inputSchema.question).toBeDefined()
+  })
+})

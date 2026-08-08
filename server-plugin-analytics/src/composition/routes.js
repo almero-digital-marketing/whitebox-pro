@@ -92,7 +92,18 @@ async function resolveSeries(deps, subs) {
 // time-series, a fact-value breakdown, a funnel, a grounded answer, or a multi-
 // series comparison (series[] / splitBy). Exported so mcp.js can run the exact
 // same live-preview/widget-resolve logic the REST routes below use.
-export async function runQuery(deps, q = {}) {
+export async function runQuery(deps, query = {}) {
+  // A query def stored or passed as a JSON STRING is still a query def.
+  //
+  // Belt as well as the braces at the MCP boundary: widgets persisted before
+  // that fix hold a string in `query`, and reading `.selector` off a string
+  // yields undefined — which lands on the unfiltered resolve below and answers
+  // with the entire population. Silently, and on every view. Coercing here
+  // repairs those rows without a migration; anything already an object passes
+  // straight through.
+  const q = typeof query === 'string'
+    ? (() => { try { return JSON.parse(query) } catch { return {} } })()
+    : (query || {})
   const { selector, awareness } = deps
   // `scope` confines a query to a cohort: an explicit passport-id array, OR a people
   // sub-selector (a cohort filter) resolved to ids here — so an aggregate (group/
