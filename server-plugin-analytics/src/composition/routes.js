@@ -167,14 +167,35 @@ export async function runQuery(deps, query = {}, kind) {
     const key = q.breakdownFact?.key || factGroup
     // never break a chart down by a contact identifier — its bucket labels would be raw PII
     if (CONTACT_KEYS.has(key)) { const e = new Error(`cannot group by the identity field "${key}"`); e.status = 400; throw e }
-    let values = q.breakdownFact?.values
-    if (!values || !values.length) values = await store.factDistinctValues(key, scope)
-    const series = []
-    for (const v of values) {
-      const r = await selector.resolve({ filter: { fact: { [key]: { eq: v } } } }, { projection: 'people', asOf: q.asOf, scope })
-      series.push({ bucket: String(v), value: r.count })
+    const values = q.breakdownFact?.values
+
+    // An explicit value list still resolves one bucket at a time, because the
+    // caller may be asking about values that no longer occur (a plan tier
+    // nobody is on is a legitimate zero, and a GROUP BY cannot produce a row
+    // for something absent from the data).
+    if (values?.length) {
+      const series = []
+      for (const v of values) {
+        const r = await selector.resolve({ filter: { fact: { [key]: { eq: v } } } }, { projection: 'count', asOf: q.asOf, scope })
+        series.push({ bucket: String(v), value: r.count })
+      }
+      return { series }
     }
-    return { series }
+
+    // Discovered buckets: ONE aggregation rather than one resolve per value.
+    //
+    // The loop this replaces asked "how many people have key = v" once per
+    // value, each time re-deriving current-value-per-passport across the whole
+    // key partition — N full passes to answer N slices of a single GROUP BY.
+    // It also took its values from factDistinctValues, which returns an
+    // arbitrary twelve with no ORDER BY, so the chart was neither complete nor
+    // the top of anything: gpoint has 56 services and the two most used did not
+    // appear at all.
+    //
+    // `total` rides along so a caller can say "top 12 of 56" instead of
+    // implying twelve is all there is.
+    const { series, total } = await store.factBreakdown(key, scope)
+    return { series, total }
   }
   if (q.distribution) {
     // Histogram of a numeric fact's value per person, or of how many of an event
