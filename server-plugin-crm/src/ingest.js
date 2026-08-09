@@ -346,7 +346,22 @@ export async function ingestEvents({ source, customer, events: incoming = [], re
         session_id: null,
         ts: e.ts ? new Date(e.ts) : new Date(),
         channel: 'crm',
-        direction: 'activity',
+        // CORE's vocabulary, never a word of our own. Two separate consumers read
+        // this string and neither guesses: the console's DIRECTIONS list drives the
+        // icon and the filter chips, and event-catalog.js maps it to the live
+        // board's in/out/internal — `map[raw] ?? 'unknown'`, explicitly refusing to
+        // infer. This endpoint shipped with 'activity', which is in neither, so its
+        // rows drew a blank circle, matched no filter, and counted 34,571 into the
+        // board's `unknown` bucket. The bug was invisible from in here; it only
+        // showed up on a screen two modules away.
+        //
+        // `expression` — "they acted" — because an occurrence published through
+        // this endpoint is by definition something the customer did. Not
+        // `conversion`: that reads "money changed hands" and belongs to the
+        // transactional pixel events, while these rows are deduplicated per
+        // customer and dated at last use, describing a person rather than a
+        // payment.
+        direction: e.direction || 'expression',
         source,
         // The dedupe handle. Must start with `replace` when the caller uses it,
         // or the row it writes is not the row a later run deletes.

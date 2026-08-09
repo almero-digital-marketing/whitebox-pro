@@ -353,7 +353,7 @@ describe('crm.ingest — events', () => {
     expect(first.meta).toMatchObject({ event: 'service', service: 'Мишници' })
     expect(first.content_id).toBe('gpoint:service:1:Мишници')
     expect(first.channel).toBe('crm')
-    expect(first.direction).toBe('activity')
+    expect(first.direction).toBe('expression')
   })
 
   it('does not delete anything when replace is absent', async () => {
@@ -409,5 +409,39 @@ describe('crm.ingest — events', () => {
     })
 
     expect(order).toEqual(['delete', 'insert'])
+  })
+})
+
+describe('crm.ingest — event direction', () => {
+  it('defaults to a direction CORE actually knows', async () => {
+    const awareness = makeAwareness()
+    ingest.init({ passports: makePassports(), awareness, logger, db: makeDb() })
+
+    await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [{ event: 'service', external_id: 'x', text: 'X' }],
+    })
+
+    const [row] = awareness.record.mock.calls[0]
+    // event-catalog.js maps awareness directions to the live board's in/out via
+    // `map[raw] ?? 'unknown'` and refuses to infer, so a word outside core's
+    // vocabulary is not a new category — it is an invisible row.
+    expect(row.direction).toBe('expression')
+    expect(['conversion', 'expression', 'conversation', 'exposure'])
+      .toContain(row.direction)
+  })
+
+  it('honours an explicit direction from the caller', async () => {
+    const awareness = makeAwareness()
+    ingest.init({ passports: makePassports(), awareness, logger, db: makeDb() })
+
+    await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [{ event: 'refund', external_id: 'r1', text: 'R', direction: 'conversion' }],
+    })
+
+    expect(awareness.record.mock.calls[0][0].direction).toBe('conversion')
   })
 })

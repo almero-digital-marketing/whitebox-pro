@@ -5,6 +5,7 @@
 
 import express from 'express'
 import { z } from 'zod'
+import { CORE_EVENTS } from 'whitebox-pro-server/event-catalog'
 
 // Customer block — shared between records and facts. At least one of
 // email / phone / external_id must resolve to an identity at ingest time,
@@ -61,11 +62,30 @@ const factsRequestSchema = z.object({
 // sending `replace: "gpoint:service:"` therefore declares "these are now all of
 // this customer's service events from this source", which is what makes a
 // backfill safe to re-run — exposures have no unique constraint of their own.
+// `direction` is CORE's vocabulary, not a free string, and it is READ FROM CORE
+// rather than restated here.
+//
+// It is the spine of a person's history — whether we reached out, they acted, the
+// two sides talked, or money changed hands — and two consumers depend on it: the
+// console renders the icon and the filter chips from it, and event-catalog.js maps
+// it to the live board's in/out/internal via `map[raw] ?? 'unknown'`, explicitly
+// refusing to infer. A word outside the set is therefore not a new category, it is
+// an invisible row. This endpoint shipped with a made-up 'activity' and produced
+// 71,596 of them before anyone saw one on a screen two modules away.
+//
+// Derived, because a copy is how that happens twice. The first draft of this fix
+// hardcoded four values and silently omitted `observation` — wrong on the same day
+// it was written, in the same way, for the same reason. classify.js already tells
+// this story about itself: a local map of another module's vocabulary "was wrong
+// in five ways at once and none of them were visible from inside this file."
+const DIRECTIONS = Object.keys(CORE_EVENTS['awareness.recorded'].direction.map)
+
 const eventSchema = z.object({
   event:       z.string().min(1).max(64),
   external_id: z.union([z.string(), z.number()]).optional(),
   text:        z.string().min(1).optional(),
   ts:          z.string().datetime().optional(),
+  direction:   z.enum(DIRECTIONS).optional(),
   attrs:       z.record(z.any()).optional(),
 })
 
