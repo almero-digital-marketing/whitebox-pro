@@ -51,6 +51,31 @@ const factsRequestSchema = z.object({
   facts:    z.array(factSchema).min(1),
 })
 
+// Occurrences over time — one row per thing that happened, fed to awareness as
+// events rather than facts. Use this when a customer can have MANY of something
+// (each service they have had, each visit): a fact is single-valued per key, so
+// the same key written twice keeps only the later value.
+//
+// `external_id` is the dedupe handle, not a reference: it becomes the exposure's
+// content_id, and `replace` deletes by prefix over it before inserting. A batch
+// sending `replace: "gpoint:service:"` therefore declares "these are now all of
+// this customer's service events from this source", which is what makes a
+// backfill safe to re-run — exposures have no unique constraint of their own.
+const eventSchema = z.object({
+  event:       z.string().min(1).max(64),
+  external_id: z.union([z.string(), z.number()]).optional(),
+  text:        z.string().min(1).optional(),
+  ts:          z.string().datetime().optional(),
+  attrs:       z.record(z.any()).optional(),
+})
+
+const eventsRequestSchema = z.object({
+  source:   z.string().min(1).max(64),
+  customer: customerSchema,
+  events:   z.array(eventSchema).min(1),
+  replace:  z.string().min(1).max(128).optional(),
+})
+
 // Client-reported observations (browser SDK). Passport-scoped, low-trust — no
 // customer block (identity is the current passport), no bearer secret.
 const observationSchema = z.object({
@@ -95,6 +120,17 @@ export function mountRoutes(app, { requireAuth, state, ingest, logger }) {
     } catch (err) {
       logger.error({ err }, 'CRM facts ingest failed')
       res.status(500).json({ error: 'CRM facts ingest failed' })
+    }
+  })
+
+  router.post('/events', requireAuth, async (req, res) => {
+    const parsed = eventsRequestSchema.safeParse(req.body)
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
+    try {
+      respond(res, await ingest.ingestEvents(parsed.data))
+    } catch (err) {
+      logger.error({ err }, 'CRM events ingest failed')
+      res.status(500).json({ error: 'CRM events ingest failed' })
     }
   })
 

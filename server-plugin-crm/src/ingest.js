@@ -285,3 +285,94 @@ export async function status({ since } = {}) {
     note,
   }
 }
+
+// ── events ────────────────────────────────────────────────────────────────────
+//
+// Repeated occurrences over time — "this customer had service X on booking Y" —
+// which are NOT facts. A fact is single-valued per key: current value is the
+// latest observed_at, so publishing a customer's 8 services under key `service`
+// leaves 7 of them invisible to every query. That is not a bug to work around,
+// it is what a fact IS (selector.md: "Lifetime / current / source-authoritative
+// → fact"). A set of occurrences belongs in the event stream, where `metric`
+// can ask "ever" and "in the last N days" — neither of which a fact can express.
+//
+// REPLACE SEMANTICS, and they are the point of this endpoint rather than a
+// convenience. Exposures have no uniqueness — content_id is indexed, not unique
+// (awareness/migrations/001) — so a re-run of a source's backfill would insert a
+// second copy of every event and double every count, silently. Records survive
+// re-runs because they upsert by (source, kind, external_id); events had no
+// equivalent until this.
+//
+// So a batch carrying `replace` first deletes this passport's prior rows for
+// that content_id prefix, then inserts. The scope is deliberately narrow —
+// (plugin='crm', passport, source, content_id LIKE prefix) — so a publisher
+// replacing its own service events cannot touch another source's rows, another
+// customer's, or its own events of a different kind.
+//
+// The caller owns the prefix because only the caller knows what constitutes a
+// complete set. gpoint sends every service for one customer in one batch with
+// prefix `gpoint:service:`, so replace = "these are now ALL the service events
+// this customer has", which is exactly what a re-runnable backfill needs.
+export async function ingestEvents({ source, customer, events: incoming = [], replace = null }) {
+  if (!source) throw new Error('source is required')
+  if (!Array.isArray(incoming) || !incoming.length) {
+    return { reason: 'empty_payload', events: { accepted: 0, dropped: 0 } }
+  }
+
+  const resolved = await resolvePassport({ source, ...customer })
+  if (!resolved) {
+    logger.info({ source }, 'CRM events dropped — no identity information')
+    return { reason: 'no_identity', events: { accepted: 0, dropped: incoming.length } }
+  }
+  const { passportId, created } = resolved
+
+  // Delete BEFORE insert, not after: a crash between the two leaves the customer
+  // with no service events, which a re-run fixes. The other order would leave
+  // duplicates, which nothing detects.
+  let replaced = 0
+  if (replace) {
+    replaced = await db(EXPOSURES)
+      .where({ plugin: 'crm', passport_id: passportId, source })
+      .andWhere('content_id', 'like', `${replace}%`)
+      .del()
+  }
+
+  let accepted = 0
+  for (const e of incoming) {
+    if (!e?.event) continue
+    try {
+      await awareness.record({
+        passport_id: passportId,
+        session_id: null,
+        ts: e.ts ? new Date(e.ts) : new Date(),
+        channel: 'crm',
+        direction: 'activity',
+        source,
+        // The dedupe handle. Must start with `replace` when the caller uses it,
+        // or the row it writes is not the row a later run deletes.
+        content_id: e.external_id ? String(e.external_id) : null,
+        // `text` is required by awareness.record and is what vector search sees,
+        // so it carries the human-readable form rather than a code.
+        text: e.text || e.event,
+        // meta.event is what the selector's `metric` clause filters on
+        // (attrs: { event: … }); the rest of attrs joins it in the same jsonb.
+        meta: { event: e.event, ...(e.attrs || {}) },
+      })
+      accepted++
+    } catch (err) {
+      logger.error({ err, event: { event: e.event, external_id: e.external_id } },
+        'Failed to record CRM event')
+    }
+  }
+
+  logger.info(
+    { source, passportId, passportCreated: created, accepted, replaced,
+      dropped: incoming.length - accepted },
+    'CRM events ingested: %d from %s (replaced %d)', accepted, source, replaced,
+  )
+  return {
+    passport_id: passportId,
+    passport_created: created,
+    events: { accepted, dropped: incoming.length - accepted, replaced },
+  }
+}

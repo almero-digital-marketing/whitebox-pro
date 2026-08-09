@@ -300,3 +300,114 @@ describe('ingestObservations (client-reported, low-trust)', () => {
     expect(awareness.record).not.toHaveBeenCalled()
   })
 })
+
+// A knex-shaped stub just deep enough for the one query ingestEvents builds:
+// db(table).where({...}).andWhere(col, 'like', pattern).del(). Records the call
+// so a test can assert WHAT would be deleted — the scoping is the safety
+// property here, not the deletion itself.
+function makeDb({ deleted = 0 } = {}) {
+  const calls = []
+  const db = vi.fn((table) => {
+    const call = { table, where: null, like: null }
+    const chain = {
+      where: vi.fn((w) => { call.where = w; return chain }),
+      andWhere: vi.fn((col, op, val) => { call.like = { col, op, val }; return chain }),
+      del: vi.fn(async () => { calls.push(call); return deleted }),
+    }
+    return chain
+  })
+  db._calls = calls
+  return db
+}
+
+describe('crm.ingest — events', () => {
+  it('drops events when the customer has no identity', async () => {
+    const passports = makePassports()
+    ingest.init({ passports, awareness: makeAwareness(), logger, db: makeDb() })
+
+    const result = await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: {},
+      events: [{ event: 'service', external_id: 'gpoint:service:1:X', text: 'X' }],
+    })
+
+    expect(result).toMatchObject({ reason: 'no_identity', events: { accepted: 0, dropped: 1 } })
+  })
+
+  it('writes one awareness row per event, with meta.event set for the metric clause', async () => {
+    const awareness = makeAwareness()
+    ingest.init({ passports: makePassports(), awareness, logger, db: makeDb() })
+
+    const result = await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [
+        { event: 'service', external_id: 'gpoint:service:1:Мишници', text: 'Мишници', attrs: { service: 'Мишници' } },
+        { event: 'service', external_id: 'gpoint:service:1:Интим',   text: 'Интим',   attrs: { service: 'Интим' } },
+      ],
+    })
+
+    expect(result.events).toMatchObject({ accepted: 2, dropped: 0 })
+    expect(awareness.record).toHaveBeenCalledTimes(2)
+    const [first] = awareness.record.mock.calls[0]
+    expect(first.meta).toMatchObject({ event: 'service', service: 'Мишници' })
+    expect(first.content_id).toBe('gpoint:service:1:Мишници')
+    expect(first.channel).toBe('crm')
+    expect(first.direction).toBe('activity')
+  })
+
+  it('does not delete anything when replace is absent', async () => {
+    const db = makeDb()
+    ingest.init({ passports: makePassports(), awareness: makeAwareness(), logger, db })
+
+    await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [{ event: 'service', external_id: 'x', text: 'x' }],
+    })
+
+    expect(db._calls).toHaveLength(0)
+  })
+
+  it('replace deletes only this passport+source+prefix, scoped to the crm plugin', async () => {
+    const db = makeDb({ deleted: 7 })
+    ingest.init({ passports: makePassports({ newPassportId: 'p-1' }), awareness: makeAwareness(), logger, db })
+
+    const result = await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [{ event: 'service', external_id: 'gpoint:service:9:X', text: 'X' }],
+      replace: 'gpoint:service:',
+    })
+
+    expect(db._calls).toHaveLength(1)
+    const [call] = db._calls
+    expect(call.table).toBe('whitebox_awareness_exposures')
+    // every dimension of the scope matters: another plugin's rows, another
+    // customer's rows, another source's rows and this source's OTHER events
+    // must all survive.
+    expect(call.where).toMatchObject({ plugin: 'crm', passport_id: 'p-1', source: 'gpoint' })
+    expect(call.like).toMatchObject({ col: 'content_id', op: 'like', val: 'gpoint:service:%' })
+    expect(result.events).toMatchObject({ accepted: 1, replaced: 7 })
+  })
+
+  it('deletes BEFORE inserting, so a crash cannot leave duplicates', async () => {
+    const order = []
+    const db = vi.fn(() => ({
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      del: vi.fn(async () => { order.push('delete'); return 3 }),
+    }))
+    const awareness = { record: vi.fn(async () => { order.push('insert'); return { id: 1 } }) }
+    ingest.init({ passports: makePassports(), awareness, logger, db })
+
+    await ingest.ingestEvents({
+      source: 'gpoint',
+      customer: { email: 'a@b.c' },
+      events: [{ event: 'service', external_id: 'gpoint:service:1:X', text: 'X' }],
+      replace: 'gpoint:service:',
+    })
+
+    expect(order).toEqual(['delete', 'insert'])
+  })
+})
