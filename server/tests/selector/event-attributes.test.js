@@ -68,6 +68,41 @@ describe('selector metric — session-joined dimensions', () => {
     expect(asMap(series)).toEqual({ spring_botox: 2, winter_filler: 1, '∅': 1 })   // ∅ = p3 (no session)
   })
 
+  it('present: true keeps only sessions carrying the column — no null bucket', async () => {
+    const { p1, p2 } = await fixture()
+    const res = await selector.resolve(
+      { filter: { metric: { session: { utm_source: { present: true } }, count: { gte: 1 } } } },
+      { projection: 'people' })
+    // p3 has no session at all, so the LEFT JOIN leaves utm_source NULL for it
+    expect(ids(res).sort()).toEqual([p1, p2].sort())
+  })
+
+  it('present: true removes the null bucket from a session breakdown', async () => {
+    await fixture()
+    const series = await selector.resolve(
+      { filter: { metric: { session: { utm_campaign: { present: true } }, count: {} } } },
+      { group: { by: 'session:utm_campaign' } })
+    // the same breakdown WITHOUT the filter carries '∅': 1 — see the test above.
+    // This is the escape hatch for a chart where "we don't know" is the biggest bar.
+    expect(asMap(series)).toEqual({ spring_botox: 2, winter_filler: 1 })
+  })
+
+  it('present: false selects exactly the unattributed traffic', async () => {
+    const { p3 } = await fixture()
+    const res = await selector.resolve(
+      { filter: { metric: { session: { utm_source: { present: false } }, count: { gte: 1 } } } },
+      { projection: 'people' })
+    expect(ids(res)).toEqual([p3])
+  })
+
+  it('rejects a session condition object it does not understand', async () => {
+    await fixture()
+    await expect(selector.resolve(
+      { filter: { metric: { session: { utm_source: { gte: 'x' } }, count: { gte: 1 } } } },
+      { projection: 'people' }))
+      .rejects.toThrow(/needs a value/)
+  })
+
   it('rejects an unknown session column (allowlist)', async () => {
     await fixture()
     await expect(selector.resolve(

@@ -71,9 +71,25 @@ function applyFilters(db, q, { content, channel, direction, last, session, attrs
   if (last) q = q.where('e.ts', '>=', new Date(now.getTime() - windowMs(last)))   // lookback window
 
   // Session-joined typed dimensions (allowlisted column name, bound value).
+  //
+  // `{ present: true }` mirrors what `attrs` accepts below, and exists for the
+  // grouped case rather than the gate. A `session:` breakdown puts everyone whose
+  // session carries no UTM into a null bucket (§7), and on a site where most
+  // traffic is direct that bucket is both the largest bar and the least
+  // informative — it is "we don't know", drawn at the same weight as an answer.
+  // Without this the only way to exclude it was to enumerate every source you did
+  // want, which is a list that goes stale the first time a campaign adds one.
+  //
+  // The LEFT JOIN means a row with no session at all also has NULL here, so this
+  // reads as "attributable traffic" — sessions we have, carrying a value.
   for (const [col, val] of Object.entries(session || {})) {
     const c = `s.${sessionCol(col)}`
-    q = Array.isArray(val) ? q.whereIn(c, val) : q.where(c, val)
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      if (val.present === true) q = q.whereNotNull(c)
+      else if (val.present === false) q = q.whereNull(c)
+      else if (Array.isArray(val.in)) q = q.whereIn(c, val.in)
+      else throw new Error(`selector.metric: session "${col}" needs a value, { in: [...] }, or { present: true|false }`)
+    } else q = Array.isArray(val) ? q.whereIn(c, val) : q.where(c, val)
   }
 
   // Open per-event dims in `meta` jsonb — key AND value are bind params (injection-safe).

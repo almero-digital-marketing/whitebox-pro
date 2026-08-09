@@ -132,13 +132,14 @@ where `<agg>` is `count` · `distinct_sessions` · `sum_dwell_ms` · `recency_da
 | dimension | filter key | reads |
 |---|---|---|
 | event basics | `channel` · `direction` | exposure columns (equality) |
-| acquisition | `session: { utm_campaign: … }` | `whitebox_sessions` via `session_id` join (typed UTM columns) |
+| acquisition | `session: { utm_campaign: … }` | `whitebox_sessions` via `session_id` join (typed UTM columns) — `=`, `[…]`, `{ in: [...] }`, `{ present: true \| false }` |
 | open per-event dims | `attrs: { event: "email_open" }` | `meta` jsonb — `=`, `{ in: [...] }`, `{ present: true }` (key + value bound) |
 
 ```js
 { metric: { attrs: { event: "purchase" }, sum: { field: "value", gte: 500 } } }          // lifetime spend ≥ $500
 { metric: { attrs: { event: "purchase" }, sum: { field: "value", gte: 500 }, last: "30d" } }  // ≥ $500 in 30d
 { metric: { session: { utm_campaign: "spring_botox_2026" }, count: { gte: 1 } } }        // touched via a campaign
+{ metric: { session: { utm_source: { present: true } }, count: { gte: 1 } } }            // attributable traffic only
 { metric: { attrs: { event: "pricing_view" }, last: "7d", count: { gte: 2 } } }          // ≥ 2 pricing views this week
 ```
 
@@ -231,7 +232,12 @@ resolve({ filter: { metric: { attrs: { event: "email_click" }, count: {} } } },
 ```
 
 - A `session:`/`attr:` bucket falls in a **`null`** bucket where the value is absent
-  (no session, or the key isn't on that event's `meta`).
+  (no session, or the key isn't on that event's `meta`). It is kept rather than
+  dropped because "we don't know" is a real answer and usually a large one —
+  silently omitting it would make every share in the chart wrong. To exclude it,
+  narrow the COHORT rather than the chart: `session: { utm_source: { present: true } }`
+  (or `attrs: { <key>: { present: true } }`) answers "of attributable traffic, how
+  does it split", which is a different and honest question.
 - **`limit`** is the high-cardinality guardrail: an open key (`attr:<raw>`, a url) can
   produce thousands of buckets, so `limit: N` returns the **top-N by value** instead
   of the full chronological series.
