@@ -328,7 +328,16 @@ export async function composeReport({ selector, awareness, passports, logger }, 
       logger?.warn?.({ err: e.message, title: s.title, kind: s.kind }, 'compose: dropping widget whose query failed to resolve')
       continue
     }
-    const row = await store.addWidget(report.id, { ...s, provenance: 'ai', sort: sort++ })
+    // Guarded like the resolve above, and for the same reason: the contract is
+    // that a widget the pipeline rejects is dropped and never saved — not that
+    // one bad widget costs the user every good one in the batch. The store
+    // validates the query now, so this can throw where it previously could not.
+    let row
+    try { row = await store.addWidget(report.id, { ...s, provenance: 'ai', sort: sort++ }) }
+    catch (e) {
+      logger?.warn?.({ err: e.message, title: s.title, kind: s.kind }, 'compose: dropping widget the store rejected')
+      continue
+    }
     if (row.kind === 'table') { try { data = await enrichPeople(data, passports) } catch { /* keep raw */ } }
     widgets.push({ ...row, data, error: null })
   }
@@ -354,7 +363,18 @@ export async function widgetSummary(logger, id) {
 export function mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger }) {
   const router = express.Router()
   const deps = { selector, awareness }
-  const fail = (res, err, msg) => { logger.error({ err }, msg); res.status(500).json({ error: msg }) }
+  // A client error carries its own status and message — a malformed query is a
+  // 422 with a path per problem — and flattening that to a generic 500 would
+  // discard the only part the caller can act on, while logging our own noise as
+  // if it were a fault. Anything without a sub-500 status is still ours: still
+  // logged, still opaque to the caller.
+  const fail = (res, err, msg) => {
+    if (err?.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message, ...(err.errors ? { errors: err.errors } : {}) })
+    }
+    logger.error({ err }, msg)
+    res.status(500).json({ error: msg })
+  }
 
   // ── reports ────────────────────────────────────────────────────────────────
   router.get('/reports', requireRead, async (req, res) => {

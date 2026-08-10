@@ -99,3 +99,36 @@ describe('assertValidQuery', () => {
     expect(caught.message).toMatch(/query\.selector\.filter\.all\[1\]\.metric/)
   })
 })
+
+// The check lives in the store, not in the tools, so every writer is covered by
+// one call — the two MCP tools, the AI compose loop, and the HTTP routes. These
+// assert it at that boundary rather than at the module, because "the validator
+// works" and "the validator runs" are different claims and only the second one
+// keeps a bad query out of the table.
+//
+// No database needed: the assertion is deliberately the first statement in each
+// function, so it throws before anything touches the connection. That ordering
+// is itself the thing under test.
+describe('the store enforces it for every writer', () => {
+  it('addWidget rejects a malformed query before inserting', async () => {
+    const store = await import('../src/composition/store.js')
+    await expect(
+      store.addWidget('some-report', { kind: 'stat', query: { selector: { filter: { metric: { count: {} } } } } }),
+    ).rejects.toMatchObject({ status: 422 })
+  })
+
+  it('updateWidget rejects a malformed query patch', async () => {
+    const store = await import('../src/composition/store.js')
+    await expect(
+      store.updateWidget('some-widget', { query: { selector: { filter: { fact: { a: { bogus: 1 } } } } } }),
+    ).rejects.toMatchObject({ status: 422 })
+  })
+
+  it('a patch that does not touch the query is not rejected by the check', async () => {
+    const store = await import('../src/composition/store.js')
+    // It still fails — there is no database here — but it must get PAST the
+    // validator to do so, or every title edit on a legacy widget would break.
+    await expect(store.updateWidget('some-widget', { title: 'renamed' }))
+      .rejects.not.toMatchObject({ status: 422 })
+  })
+})

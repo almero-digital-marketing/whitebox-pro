@@ -7,6 +7,7 @@
 // routes) so it fires for ANY caller — the REST UI, an MCP tool, a background job —
 // and all connected clients (tabs) stay in sync live.
 
+import { assertValidQuery } from './validate-query.js'
 import { randomUUID } from 'node:crypto'
 
 const REPORTS = 'whitebox_reports'
@@ -75,6 +76,12 @@ export async function getWidget(id) {
 }
 
 export async function addWidget(reportId, w) {
+  // Every writer lands here — the MCP tools, the AI compose loop, and the HTTP
+  // routes the UI uses — so this is the one place a malformed query can be
+  // stopped for all of them. Before the insert: a widget whose query cannot be
+  // evaluated is not a widget, and storing it only defers the failure to a
+  // render that has no way to say where it came from.
+  assertValidQuery(w.query)
   const [row] = await db(WIDGETS)
     .insert({
       id: randomUUID(),
@@ -95,6 +102,9 @@ export async function addWidget(reportId, w) {
 }
 
 export async function updateWidget(id, patch) {
+  // Only when a query is actually being patched — a title or sort change must
+  // not be rejected because of a query written before this check existed.
+  if (patch.query !== undefined) assertValidQuery(patch.query)
   const fields = { updated_at: db.fn.now() }
   for (const k of ['title', 'kind', 'provenance', 'sort']) if (patch[k] !== undefined) fields[k] = patch[k]
   for (const k of ['query', 'presentation', 'position']) if (patch[k] !== undefined) fields[k] = j(patch[k])
