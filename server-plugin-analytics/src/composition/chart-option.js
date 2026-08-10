@@ -42,13 +42,34 @@ const PALETTE = [
 ]
 const LOSS = '#f43f5e'   // --p-rose-500, the drop-off bars
 
-// Pinned rather than inherited. The app resolves --p-font-family to a system-ui
-// stack, and a headless server has no such stack — a rasterizer handed
-// `system-ui` finds nothing and drops the text silently. So the family is named
-// here and must match a font the renderer actually loads.
-const FONT = 'DejaVu Sans, sans-serif'
+// A stack rather than a single family, and it has to end in something concrete.
+//
+// The app resolves --p-font-family to the usual system-ui stack, which is right
+// for an SVG a browser or a mail client will lay out — it renders in the same
+// face the app does. It is wrong for a rasterizer: resvg has no notion of
+// `system-ui`, finds nothing, and drops the text SILENTLY. The SVG looks
+// perfect in a browser and the PNG comes back wordless.
+//
+// So the app's preference leads and a real, redistributable font closes it. A
+// browser stops at the first family it has; the rasterizer walks past the ones
+// it lacks and lands on the last. Whatever chart-render.js loads for PNG must
+// be that last entry.
+//
+// SINGLE quotes around the multi-word families, and that is not a style choice.
+// ECharts writes this string into a double-quoted SVG attribute
+// (style="font-family:…"), so a double quote here closes the attribute early
+// and the markup is malformed from that character on. A browser recovers and
+// looks fine; a rasterizer is a strict XML parser and does not.
+const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, 'DejaVu Sans', sans-serif"
 
 const at = (i) => PALETTE[i % PALETTE.length]
+
+
+// ECharts warns "the ticks may be not readable … alignTicks: true" on every
+// radar render. It is an ECharts radar quirk, not a property of the data —
+// rounding the maximum to 100 does not silence it — and the app's own console
+// shows the same line today. Left alone rather than "fixed": a deviation from
+// the UI needs a reason that survives being tested, and this one did not.
 
 // Ported verbatim from charts/theme.ts — already DOM-free there.
 const nfmt = (n) =>
