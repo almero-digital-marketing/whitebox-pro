@@ -69,6 +69,43 @@ function decodedPath(url) {
   }
 }
 
+// The event's own time, from a clock we do not control.
+//
+// `ts` comes from the BROWSER — the tracker stamps an event when it happens so
+// a queued or beacon-on-unload send keeps its real time, which is right. What
+// it also means is that a device with a wrong clock writes a wrong row, and
+// nothing downstream can tell the difference: a page view dated six days ahead
+// is a perfectly ordinary row that quietly sits in the future.
+//
+// Nine of them reached gpoint's exposures, one of them a week out. Harmless at
+// that volume, but they distort every bounded window — a "last 7 days" figure
+// silently includes events that have not happened, and a by-day chart grows a
+// tail of empty future buckets.
+//
+// So a future timestamp is refused and the arrival time used instead. The
+// tolerance absorbs ordinary clock drift and the flight time of the request;
+// past timestamps are left alone, because a legitimately delayed send (offline
+// queue, sendBeacon on unload) is exactly what the field is for.
+//
+// This clamp belongs HERE and not in awareness.record. Core records
+// forward-dated exposures on purpose — a booked appointment is a service event
+// stamped with the appointment date, and gpoint has 25 of them sitting in
+// September quite correctly. The difference is not the value, it is who
+// supplied it: a server-side integration stating a known future fact, versus a
+// browser reporting its own clock.
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000
+
+function eventTime(ts) {
+  const now = new Date()
+  if (!ts) return now
+  const supplied = new Date(ts)
+  const t = supplied.getTime()
+  // Unparseable is not the same as absent, but the answer is: an invalid Date
+  // reaching the insert is a driver-level error naming a column, not an event.
+  if (!Number.isFinite(t)) return now
+  return t > now.getTime() + CLOCK_SKEW_TOLERANCE_MS ? now : supplied
+}
+
 // Process one raw wire event for a passport.
 //   raw: { standard|event, event_id?, ts?, url?, ...payload }
 // Returns { event_id, name, status: 'recorded'|'duplicate', networks }.
@@ -96,7 +133,7 @@ export async function ingestEvent(passportId, raw = {}, reqCtx = {}) {
   }
 
   const eventId = clean.event_id || randomUUID()
-  const when = ts ? new Date(ts) : new Date()
+  const when = eventTime(ts)
 
   // Idempotency: the browser may double-fire (sendBeacon on unload), and the
   // pixel dedupes on the same id — so do too.

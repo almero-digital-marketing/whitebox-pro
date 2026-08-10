@@ -210,3 +210,47 @@ describe('the session a conversion happened in', () => {
     expect(awareness.record.mock.calls[0][0].session_id).toBeNull()
   })
 })
+
+// The browser stamps `ts` so a queued or beacon-on-unload send keeps its real
+// time. That also means a device with a wrong clock writes a wrong row, and
+// nothing downstream can tell — nine reached gpoint's exposures, one of them a
+// week out, quietly inflating every bounded window and growing a tail of empty
+// future buckets on a by-day chart.
+describe('ingest — the event time comes from a clock we do not control', () => {
+  const at = (aw) => aw.record.mock.calls[0][0].ts
+
+  it('keeps a past timestamp — a delayed send is what the field is for', async () => {
+    const { awareness } = setup()
+    const earlier = new Date(Date.now() - 60 * 60 * 1000)
+    await ingest.ingestEvent(PID, { standard: 'page_view', ts: earlier.toISOString() })
+    expect(at(awareness).toISOString()).toBe(earlier.toISOString())
+  })
+
+  it('refuses a future timestamp and uses the arrival time', async () => {
+    const { awareness } = setup()
+    const before = Date.now()
+    await ingest.ingestEvent(PID, { standard: 'page_view', ts: '2026-08-17T08:11:39.029Z' })
+    const t = at(awareness).getTime()
+    expect(t).toBeGreaterThanOrEqual(before)
+    expect(t).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('tolerates ordinary clock drift rather than flattening it', async () => {
+    // A minute ahead is a normal desktop; rewriting it would lose real ordering
+    // within a session for no gain.
+    const { awareness } = setup()
+    const slightlyAhead = new Date(Date.now() + 60 * 1000)
+    await ingest.ingestEvent(PID, { standard: 'page_view', ts: slightlyAhead.toISOString() })
+    expect(at(awareness).toISOString()).toBe(slightlyAhead.toISOString())
+  })
+
+  it('falls back to now when ts is absent or unparseable', async () => {
+    // An invalid Date reaching the insert is a driver error naming a column,
+    // not an event — useless for finding the client that sent it.
+    for (const ts of [undefined, '', 'not-a-date', 'yesterday']) {
+      const { awareness } = setup()
+      await ingest.ingestEvent(PID, { standard: 'page_view', ...(ts === undefined ? {} : { ts }) })
+      expect(Number.isFinite(at(awareness).getTime()), String(ts)).toBe(true)
+    }
+  })
+})
