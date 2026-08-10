@@ -260,6 +260,47 @@ describe('severity()', () => {
     expect(severity(c, 'x.a')).toBeNull()
   })
 
+  // Per-ROW severity — one type whose outcome is only known from the payload.
+  // voip is the real case: a completed call and an unanswered one are both
+  // `voip.call`, and only `data.status` separates them. This shape existed
+  // untested until something needed it.
+  describe('{ from, map } — decided per row', () => {
+    const rowCat = () => build([plugin('voip', {
+      'voip.call': { direction: 'in', severity: { from: 'data.status', map: { missed: 'warn' } } },
+    })])
+
+    it('reads the level out of the payload', () => {
+      expect(severity(rowCat(), 'voip.call', { data: { status: 'missed' } })).toBe('warn')
+    })
+
+    it('is routine for a value the map does not name', () => {
+      // An answered call is not a problem, and must not be styled as one.
+      expect(severity(rowCat(), 'voip.call', { data: { status: 'ended' } })).toBeNull()
+    })
+
+    it('is routine when the field is missing entirely', () => {
+      // A payload shape that predates the declaration must not become a warning.
+      expect(severity(rowCat(), 'voip.call', { data: {} })).toBeNull()
+      expect(severity(rowCat(), 'voip.call', {})).toBeNull()
+      expect(severity(rowCat(), 'voip.call')).toBeNull()
+    })
+
+    it('still refuses a level outside the vocabulary', () => {
+      const c = build([plugin('x', {
+        'x.a': { direction: 'in', severity: { from: 'data.s', map: { bad: 'critical' } } },
+      })])
+      expect(severity(c, 'x.a', { data: { s: 'bad' } })).toBeNull()
+    })
+
+    // severityTypes() is what the QUERY narrows on, and it cannot evaluate a
+    // per-row severity — so the type has to be offered as a candidate and
+    // severity() decides afterwards. If it were omitted here, the problems view
+    // would never fetch the rows it then filters.
+    it('is offered as a query candidate', () => {
+      expect(severityTypes(rowCat()).types).toContain('voip.call')
+    })
+  })
+
   it('does not disturb direction or channel on the same declaration', () => {
     expect(direction(cat(), 'mail.failed')).toBe('out')
     expect(channel(cat(), 'mail.failed')).toBe('mail')

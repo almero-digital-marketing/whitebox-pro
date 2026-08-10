@@ -52,6 +52,21 @@ const isDefaultPinned = computed(() => {
   return pinned.value.length === d.length && d.every(k => pinned.value.includes(k))
 })
 
+// The problem flag's action. Switching `feedSeverity` refetches over the window
+// rather than filtering the loaded buffer, which is the whole reason this is
+// useful: at this event rate the buffer holds under two minutes, so the rows the
+// flag is complaining about have usually scrolled out of it already.
+//
+// Clears the search too. Arriving at a problems list silently narrowed by a word
+// typed ten minutes ago is the kind of empty result that reads as "nothing to
+// see" — the opposite of what was just clicked.
+const feedCard = ref<HTMLElement | null>(null)
+function showProblems() {
+  feedSeverity.value = 'problems'
+  feedQuery.value = ''
+  feedCard.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
 const WINDOWS: WindowKey[] = ['5m', '30m', '1h', '24h']
 
 onActivated(() => { store.load(); store.start() })
@@ -315,18 +330,31 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
 
     <!-- Last, deliberately: the feed is where you drop AFTER a number looks
          wrong, not the thing you read first. -->
-    <section class="lv-card lv-feed-card">
+    <section ref="feedCard" class="lv-card lv-feed-card">
       <div class="blk-head lv-feed-head">
         <span>
           Feed
           <span v-if="dropped" class="lv-flag warn">{{ dropped }} dropped — arriving faster than this view renders</span>
           <span v-if="feed.length >= store.maxFeed" class="lv-flag">showing the most recent {{ store.maxFeed }}</span>
           <!-- The one flag worth interrupting for: a send that isn't arriving. It
-               carries the word "failed" and a count, never colour alone. -->
-          <span v-if="failing" class="lv-flag warn">
+               carries the word "failed" and a count, never colour alone.
+               A BUTTON, because a count of problems with no way to reach them is
+               an alarm with no handle — it tells you to look and then offers
+               nowhere to look. Clicking switches the feed to `problems`, which
+               refetches over the window rather than filtering the buffer, so the
+               rows it names are actually fetched.
+               It does not narrow to the one counter that was clicked. The flag
+               counts status counters and the feed holds rows; the two are
+               different populations (see the note on the segmented control
+               below), so promising "these 2" and delivering a list of a
+               different length would be worse than showing every problem in the
+               window and letting the search box narrow it. -->
+          <button v-if="failing" type="button" class="lv-flag warn lv-flag-btn"
+            v-tooltip.top="'Show these in the feed'"
+            @click="showProblems">
             {{ failing.total }} problem{{ failing.total === 1 ? '' : 's' }}
             ({{ failing.items.map(i => `${i.value} ${i.label} ${i.key}`).join(', ') }})
-          </span>
+          </button>
         </span>
         <!-- No direction/channel filter here any more: the Live pane's filters are
              board-wide and already govern this list, so a second control for the same

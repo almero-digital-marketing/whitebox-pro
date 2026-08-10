@@ -327,6 +327,11 @@
 .lv-empty { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 4px 0 0; }
 .lv-flag { margin-left: 10px; font-size: 10.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted); }
 .lv-flag.warn { color: #d97706; }
+/* The problem flag is a button so it can be clicked through to the feed. It must
+   still READ as the flag it was — no chrome, inherited type, pointer only. */
+.lv-flag-btn { appearance: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.lv-flag-btn:hover { text-decoration: underline; }
+.lv-flag-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
 
 .lv-feed-card { flex: 1 1 auto; min-height: 220px; display: flex; flex-direction: column; }
 .lv-feed { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1 1 auto; min-height: 0; }

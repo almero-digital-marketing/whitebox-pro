@@ -35,7 +35,20 @@ export function voip(options = {}) {
     events: {
       'voip.ring': 'in',
       'voip.click': 'in',
-      'voip.call': 'in',
+      // Severity per ROW, not per type. A completed call is routine and a call
+      // nobody answered is the one voip outcome an operator acts on, and they
+      // are the same event — `voip.call`, with `data.status` carrying which.
+      //
+      // Without this the header read `1 problem (1 voip missed)` from
+      // calls.stats(), while the feed's `problems` view filtered on severity
+      // and showed nothing: the row existed and was classified routine. Two
+      // true numbers on one screen that could not be reconciled by looking,
+      // and no way to reach the call being complained about.
+      //
+      // `warn`, not `error`: nothing malfunctioned. Someone rang and nobody
+      // picked up, which is a business problem rather than a broken system —
+      // the same distinction conversions draws between `rejected` and `error`.
+      'voip.call': { direction: 'in', severity: { from: 'data.status', map: { missed: 'warn' } } },
       'voip.pick': 'internal',
     },
 
