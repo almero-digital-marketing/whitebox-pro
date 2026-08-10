@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DOMParser } from '@xmldom/xmldom'
-import { renderChart, renderOption, DEFAULT_WIDTH, DEFAULT_HEIGHT } from '../src/composition/chart-render.js'
+import { renderChart, renderOption, toPng, DEFAULT_WIDTH, DEFAULT_HEIGHT } from '../src/composition/chart-render.js'
 import { chartOption, CHART_FONT } from '../src/composition/chart-option.js'
 
 // One case per kind, shaped the way runQuery returns it.
@@ -105,5 +105,46 @@ describe('the output is strict XML', () => {
       const o = chartOption(kindOf(label), data)
       expect(JSON.stringify(o.textStyle), label).not.toContain('\\"')
     }
+  })
+})
+
+describe('PNG', () => {
+  const SERIES = [{ bucket: 'Крака (м.) - бедра', value: 812 }, { bucket: 'Fire & Ice', value: 463 }]
+  const dims = (png) => [png.readUInt32BE(16), png.readUInt32BE(20)]
+
+  it('is produced only when asked', () => {
+    expect(renderChart('breakdown', SERIES).png).toBeUndefined()
+    expect(renderChart('breakdown', SERIES, { png: true }).png).toBeInstanceOf(Buffer)
+  })
+
+  it('is a real PNG at 2x the logical size', () => {
+    const out = renderChart('breakdown', SERIES, { png: true, width: 600, height: 320 })
+    expect(out.png.subarray(1, 4).toString()).toBe('PNG')
+    // Declared logical size stays 600x320 — the caller sets those on the img, and
+    // the extra pixels are what make it sharp rather than large.
+    expect(out.width).toBe(600)
+    expect(dims(out.png)).toEqual([1200, 640])
+  })
+
+  it('honours an explicit scale', () => {
+    const out = renderChart('breakdown', SERIES, { png: true, width: 300, height: 200, scale: 1 })
+    expect(dims(out.png)).toEqual([300, 200])
+  })
+
+  it('actually rasterises TEXT — the failure resvg does not report', () => {
+    // resvg draws no glyphs when it resolves no font, and says nothing. Two
+    // charts differing only in their labels must therefore differ in bytes; if
+    // they match, every chart is a coloured shape with nothing written on it.
+    // Cyrillic on purpose: gpoint's categories are Bulgarian, and a Latin-only
+    // fallback would pass this check written with "A" and draw boxes for real
+    // labels.
+    const withText = renderChart('breakdown', [{ bucket: 'Крака', value: 5 }], { png: true, width: 300, height: 200 })
+    const other = renderChart('breakdown', [{ bucket: 'Бедра', value: 5 }], { png: true, width: 300, height: 200 })
+    expect(withText.png.equals(other.png)).toBe(false)
+  })
+
+  it('toPng answers null for nothing to draw', () => {
+    expect(toPng(null)).toBeNull()
+    expect(toPng('')).toBeNull()
   })
 })

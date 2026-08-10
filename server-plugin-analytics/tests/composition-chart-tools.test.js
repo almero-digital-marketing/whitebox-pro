@@ -67,19 +67,17 @@ describe('analytics_chart', () => {
     expect(res.content[0].type).toBe('text')
     expect(JSON.parse(res.content[0].text)).toEqual(SERIES)
     expect(res.content[1].type).toBe('image')
-    expect(res.content[1].mimeType).toBe('image/svg+xml')
+    expect(res.content[1].mimeType).toBe('image/png')
   })
 
-  it('the image is the real chart, base64 of valid SVG', () => {
+  it('the image is a real PNG, not the SVG it was rasterised from', async () => {
+    // An SVG image block was tried against a real client and stored as a file
+    // rather than drawn. PNG is what renders.
     runQuery.mockResolvedValue(SERIES)
-    return register().tools.get('analytics_chart').handler({ query: {}, kind: 'timeseries' }).then((res) => {
-      const svg = Buffer.from(res.content[1].data, 'base64').toString('utf8')
-      expect(svg.startsWith('<svg')).toBe(true)
-      expect(svg).toContain('Aug')
-      const errors = []
-      new DOMParser({ onError: (lvl, m) => { if (lvl !== 'warning') errors.push(m) } }).parseFromString(svg, 'text/xml')
-      expect(errors).toEqual([])
-    })
+    const res = await register().tools.get('analytics_chart').handler({ query: {}, kind: 'timeseries' })
+    const png = Buffer.from(res.content[1].data, 'base64')
+    expect(png.subarray(1, 4).toString()).toBe('PNG')
+    expect(png.readUInt32BE(16)).toBe(1200)   // 600 logical at 2x
   })
 
   it('sends the figures alone when the kind has no chart', async () => {
@@ -119,8 +117,8 @@ describe('analytics_chart', () => {
     runQuery.mockResolvedValue(SERIES)
     const mcp = register()
     const res = await mcp.tools.get('analytics_chart').handler({ query: {}, kind: 'timeseries', width: 900, height: 200 })
-    const svg = Buffer.from(res.content[1].data, 'base64').toString('utf8')
-    expect(svg).toContain('width="900"')
+    const png = Buffer.from(res.content[1].data, 'base64')
+    expect(png.readUInt32BE(16)).toBe(1800)   // 900 logical at 2x
   })
 })
 
@@ -135,10 +133,21 @@ describe('analytics_widget_chart', () => {
     const res = await mcp.tools.get('analytics_widget_chart').handler({ id: 'w1' })
 
     expect(res.content[1].type).toBe('image')
-    const svg = Buffer.from(res.content[1].data, 'base64').toString('utf8')
-    // stack:'pct' normalises to percentages — 1 and 3 become 25 and 75, so the
-    // axis tops out at 100. Proves the stored stack reached the option builder.
-    expect(svg).toContain('100')
+
+    // The stored `stack: 'pct'` must reach the option builder, and the only
+    // honest way to show that is against the tool's OWN output: rasterise the
+    // same data both ways and check which one the tool produced. Asserting on a
+    // chart the test renders itself would prove nothing about the tool.
+    const { renderChart } = await import('../src/composition/chart-render.js')
+    const data = { multi: true, series: [
+      { name: 'A', points: [{ bucket: 'x', value: 1 }] },
+      { name: 'B', points: [{ bucket: 'x', value: 3 }] },
+    ] }
+    const stacked = renderChart('breakdown', data, { stack: 'pct', png: true })
+    const plain = renderChart('breakdown', data, { png: true })
+    expect(stacked.png.equals(plain.png)).toBe(false)          // the two really differ
+    const got = Buffer.from(res.content[1].data, 'base64')
+    expect(got.equals(stacked.png)).toBe(true)                 // and the tool drew the stacked one
   })
 
   it('404s on an unknown widget rather than drawing an empty chart', async () => {

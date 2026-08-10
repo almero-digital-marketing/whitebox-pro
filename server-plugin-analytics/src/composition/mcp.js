@@ -69,10 +69,15 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   // A chart is an ADDITION to the data, never a replacement: a kind with no
   // chart (stat, table) and a query that resolved empty both return the text
   // block alone.
+  //
+  // PNG, not the SVG this is rasterised from. An SVG image block was tried
+  // against a real client and stored as a FILE rather than drawn — which is the
+  // one outcome the image block exists to avoid. Mail clients are worse. So the
+  // format that renders everywhere wins, and the SVG stays an internal step.
   const chartBlocks = (data, chart) => ({
     content: [
       { type: 'text', text: JSON.stringify(data, null, 2) },
-      ...(chart ? [{ type: 'image', data: Buffer.from(chart.svg).toString('base64'), mimeType: 'image/svg+xml' }] : []),
+      ...(chart?.png ? [{ type: 'image', data: chart.png.toString('base64'), mimeType: 'image/png' }] : []),
     ],
   })
 
@@ -144,13 +149,13 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   readBlocks('analytics_chart', 'Run an INLINE query def and return its figures AND a rendered chart image. Same grammar and kinds as analytics_resolve — use that one when you only need the numbers. Kinds with no chart (stat, table, pivot, answer) return the figures alone.', { query: z.any(), kind: kindEnum.optional(), ...chartSize }, async ({ query, kind, width, height }) => {
     const q = query || {}
     const data = await runQuery(deps, q, kind)
-    return chartBlocks(data, renderChart(kind, data, { width, height, stack: q.stack }))
+    return chartBlocks(data, renderChart(kind, data, { width, height, stack: q.stack, png: true }))
   })
   readBlocks('analytics_widget_chart', 'Run a persisted widget\'s stored query and return its figures AND a rendered chart image, drawn the way the app draws it.', { id: z.string(), ...chartSize }, async ({ id, width, height }) => {
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
     const data = await runQuery(deps, w.query, w.kind)
-    return chartBlocks(data, renderChart(w.kind, data, { width, height, stack: w.query?.stack }))
+    return chartBlocks(data, renderChart(w.kind, data, { width, height, stack: w.query?.stack, png: true }))
   })
 
   // --- act (guarded — persists) ---
