@@ -56,6 +56,11 @@ export function useQueryModel(props: QueryBuilderProps) {
   const factKeys = computed(() => factKeyOptions(props.schema))
   const eventOpts = computed(() => (props.schema?.events || []).map((e: string) => ({ label: e, value: e })))
   const campaignOpts = computed(() => (props.schema?.campaigns || []).map((c: string) => ({ label: c, value: c })))
+  // Acquisition sources and channels — already in the discovered schema and
+  // already offered as breakdown dimensions; the condition row could not filter
+  // on either until now.
+  const sourceOpts = computed(() => (props.schema?.sources || []).map((c: string) => ({ label: c, value: c })))
+  const channelOpts = computed(() => (props.schema?.channels || []).map((c: string) => ({ label: c, value: c })))
   // The dimension is picked in two steps instead of one long prefixed list:
   // first the KIND ("Fact", "Event attribute", …), then — only for the two
   // kinds that have many members — WHICH key. breakdownDim stays the single
@@ -409,7 +414,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     compareOn, compareMode, splitKey, splitVals, customSeries, stackMode, target,
     cohortEvent, cohortGrain, cohortPeriods, question, steps,
     // option lists / derived
-    factKeys, eventOpts, campaignOpts, breakdownValueOpts, numericFactKeys, distKeyOpts,
+    factKeys, eventOpts, campaignOpts, sourceOpts, channelOpts, breakdownValueOpts, numericFactKeys, distKeyOpts,
     breakdownSlices, breakdownSlice, breakdownKey, breakdownKeyOpts, needsBreakdownKey,
     attrSource, attrSources, needsAttrSource,
     isFactDim, isBreakdownLike, bdVerb, bdUnit, canCompare, canStack, kindHint,

@@ -10,6 +10,8 @@
 // condition editor — anywhere a person needs to be matched against facts or
 // activity, not just inside a "query."
 
+import { MEASURES, NEEDS_FIELD } from './constants'
+
 export const coerceScalar = (v: string): any => {
   if (v === 'true') return true
   if (v === 'false') return false
@@ -21,19 +23,41 @@ export const eventArr = (ev: any): string[] => ev == null ? [] : (ev.in ? ev.in 
 
 export const newCondition = (defaultKey = '') => ({
   not: false, type: 'fact', key: defaultKey, op: 'eq', value: '',
-  events: [] as string[], campaigns: [] as string[], measure: 'count', cmp: 'gte', mvalue: '1', window: '',
+  events: [] as string[], campaigns: [] as string[], sources: [] as string[],
+  channel: '', direction: '',
+  measure: 'count', sumField: 'value', cmp: 'gte', mvalue: '1', window: '',
 })
 
 function eventClause(events: string[]) { return events.length === 1 ? events[0] : { in: events } }
+// A session column takes a bare value or an array; one entry writes the bare
+// form so the saved JSON matches what a person would write by hand.
+const one = (vals: string[]) => (vals.length === 1 ? vals[0] : vals)
+// …and reads back either, plus the { in: [...] } form the engine also accepts.
+const valueArr = (v: any): string[] =>
+  v == null ? [] : Array.isArray(v) ? v : (Array.isArray(v?.in) ? v.in : [v])
+const MEASURE_KEYS = MEASURES.map((m) => m.value)
 
 export function buildClause(c: any): any {
   let cl: any
   if (c.type === 'metric') {
     const m: any = {}
     if (c.events?.length) m.attrs = { event: eventClause(c.events) }
-    if (c.campaigns?.length) m.session = { utm_campaign: c.campaigns.length === 1 ? c.campaigns[0] : c.campaigns }
+    // Both session dimensions the app already treats as first-class elsewhere
+    // (see BREAKDOWN_SLICES); they compose, so "campaign X from source Y" is one
+    // condition rather than two.
+    const session: any = {}
+    if (c.campaigns?.length) session.utm_campaign = one(c.campaigns)
+    if (c.sources?.length) session.utm_source = one(c.sources)
+    if (Object.keys(session).length) m.session = session
+    // Own columns on the exposure, not attrs — '' means "don't narrow".
+    if (c.channel) m.channel = c.channel
+    if (c.direction) m.direction = c.direction
     const bound = { [c.cmp]: coerceScalar(c.mvalue) }
-    if (c.measure === 'sum') m.sum = { field: 'value', ...bound }; else m.count = bound
+    // `sum` is the only aggregate that names a field; the rest take the bound
+    // alone. Writing { field } on the others would be a key metric.js rejects.
+    m[c.measure] = NEEDS_FIELD.has(c.measure)
+      ? { field: (c.sumField || 'value').trim(), ...bound }
+      : bound
     if (c.window) m.last = c.window
     cl = { metric: m }
   } else {
@@ -55,14 +79,20 @@ export function parseClause(cl: any): any | null {
   }
   if (cl?.metric) {
     const m = cl.metric
-    const measure = m.sum ? 'sum' : 'count'
-    const agg = m.sum || m.count || {}
+    // Whichever aggregate is present, not just the two the row used to build —
+    // a saved condition can hold any of them, and defaulting an unrecognised
+    // one to `count` would silently rewrite the query on the next save.
+    const measure = MEASURE_KEYS.find((k) => k in m) || 'count'
+    const agg = m[measure] || {}
     const cmp = agg.lte !== undefined ? 'lte' : 'gte'
     const mvalue = agg.gte ?? agg.lte ?? ''
-    const camp = m.session?.utm_campaign
     return {
       ...newCondition(), not, type: 'metric', events: eventArr(m.attrs?.event),
-      campaigns: camp == null ? [] : (Array.isArray(camp) ? camp : [camp]), measure, cmp, mvalue: String(mvalue), window: m.last || '',
+      campaigns: valueArr(m.session?.utm_campaign),
+      sources: valueArr(m.session?.utm_source),
+      channel: m.channel || '', direction: m.direction || '',
+      measure, sumField: agg.field || 'value',
+      cmp, mvalue: String(mvalue), window: m.last || '',
     }
   }
   return null
@@ -106,8 +136,21 @@ export function parseFilter(filter: any): { combinator: 'all' | 'any'; condition
   return { combinator: 'all', conditions: [], unrepresented: [] }
 }
 
+// A row counts once it narrows ANYTHING. The test used to be events-or-
+// campaigns, which was the whole of what the row could set; with channel,
+// direction, source and lookback now settable, that test would have thrown each
+// of them away on save — silently, the way a dropped condition always goes.
+//
+// Still a test rather than "keep everything": clicking + and leaving the row
+// untouched must not add `count >= 1` (anyone with any activity at all) to the
+// query behind the user's back.
+const narrows = (c: any) => !!(
+  c.events?.length || c.campaigns?.length || c.sources?.length ||
+  c.channel || c.direction || c.window
+)
+
 export function buildFilter(combinator: 'all' | 'any', conditions: any[]): any {
-  const valid = conditions.filter((c) => (c.type === 'metric' ? (c.events?.length || c.campaigns?.length) : c.key))
+  const valid = conditions.filter((c) => (c.type === 'metric' ? narrows(c) : c.key))
   const clauses = valid.map(buildClause)
   if (!clauses.length) return undefined
   return clauses.length === 1 ? clauses[0] : { [combinator]: clauses }

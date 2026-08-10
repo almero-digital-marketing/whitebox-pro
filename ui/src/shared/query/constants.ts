@@ -34,6 +34,42 @@ export const factKeyOptions = (schema: any) => (schema?.factKeys || []).map((k: 
   max: k.max ?? null,
 }))
 export const CLAUSE_TYPES = [{ label: 'Fact', value: 'fact' }, { label: 'Activity', value: 'metric' }]
-export const MEASURES = [{ label: 'count', value: 'count' }, { label: 'sum', value: 'sum' }]
+// Every aggregate a GATE metric can use — selector/metric.js GATE_AGGS. The row
+// offered `count` and `sum` only, so four fifths of what the engine can already
+// answer had no way to be asked: how many distinct SESSIONS someone had, how
+// long they spent, how many days since they were last seen.
+//
+// Labelled by what they mean to someone reading the row rather than by their
+// key. "events >= 3" and "sessions >= 3" are different questions and the key
+// names do not say so.
+//
+// `distinct_passports` is deliberately absent: it is a GROUP aggregate. Counting
+// distinct people cannot gate the very people it counts, and the engine rejects
+// it here.
+export const MEASURES = [
+  { label: 'events', value: 'count' },
+  { label: 'sessions', value: 'distinct_sessions' },
+  { label: 'time spent (ms)', value: 'sum_dwell_ms' },
+  { label: 'sum of', value: 'sum' },
+  { label: 'days since last', value: 'recency_days' },
+]
+
+// The aggregate that needs a field named alongside it — sum reads meta.<field>
+// per event, and the row hardcoded 'value'. Anything else recorded on an event
+// (a price, a duration, a score) was unreachable.
+export const NEEDS_FIELD = new Set(['sum'])
+
+// Both are open strings in the engine, so these are the values actually in use
+// rather than a schema-declared enum. Left free of a "must be one of" claim: an
+// unknown value is a legitimate saved condition, the same way an unrecorded
+// fact key is.
+export const DIRECTIONS = [
+  { label: 'any direction', value: '' },
+  { label: 'expression', value: 'expression' },
+  { label: 'conversion', value: 'conversion' },
+  { label: 'exposure', value: 'exposure' },
+  { label: 'conversation', value: 'conversation' },
+  { label: 'observation', value: 'observation' },
+]
 export const CMPS = [{ label: '≥', value: 'gte' }, { label: '≤', value: 'lte' }]
 export const COMBINATORS = [{ label: 'all', value: 'all' }, { label: 'any', value: 'any' }]

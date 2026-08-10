@@ -22,6 +22,8 @@ const props = defineProps<{
   factKeys: any[]
   eventOpts: any[]
   campaignOpts?: any[]
+  sourceOpts?: any[]
+  channelOpts?: any[]
   disabled?: boolean
   // Clauses this flat builder cannot draw — a nested all/any group, or a `not`
   // around one. Preserved on save, so the rows above are a SUBSET of what the
@@ -61,7 +63,8 @@ function remove(i: number) { props.conditions.splice(i, 1) }
     </div>
 
     <ConditionRow v-for="(c, i) in conditions" :key="i" :condition="c"
-      :fact-keys="factKeys" :event-opts="eventOpts" :campaign-opts="campaignOpts" :disabled="disabled"
+      :fact-keys="factKeys" :event-opts="eventOpts" :campaign-opts="campaignOpts"
+      :source-opts="sourceOpts" :channel-opts="channelOpts" :disabled="disabled"
       @remove="remove(i)" />
     <p v-if="!conditions.length && !hidden?.length" class="cb-hint">No conditions — matches everyone.</p>
     <template v-if="hidden?.length">

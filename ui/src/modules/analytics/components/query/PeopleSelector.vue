@@ -24,6 +24,7 @@ defineProps<{ model: any }>()
 
   <ConditionsBuilder v-model:combinator="model.combinator" :conditions="model.conditions"
     :fact-keys="model.factKeys" :event-opts="model.eventOpts" :campaign-opts="model.campaignOpts"
+    :source-opts="model.sourceOpts" :channel-opts="model.channelOpts"
     :hidden="model.unrepresented" />
 
   <label class="lab">Judge <span class="muted small">(optional)</span></label>

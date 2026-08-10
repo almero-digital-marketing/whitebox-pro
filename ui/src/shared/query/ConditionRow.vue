@@ -11,7 +11,7 @@ import MultiSelect from 'primevue/multiselect'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
-import { OPS, OP_GROUP, CLAUSE_TYPES, MEASURES, CMPS } from './constants'
+import { OPS, OP_GROUP, CLAUSE_TYPES, MEASURES, NEEDS_FIELD, CMPS, DIRECTIONS } from './constants'
 import './conditions.css'
 
 const props = defineProps<{
@@ -19,6 +19,11 @@ const props = defineProps<{
   factKeys: any[]
   eventOpts: any[]
   campaignOpts?: any[]
+  // Acquisition sources and channels come from the discovered schema, same as
+  // events and campaigns. Both optional: a caller that has not got them yet
+  // renders the row without those pickers rather than with empty ones.
+  sourceOpts?: any[]
+  channelOpts?: any[]
   compact?: boolean
   disabled?: boolean
 }>()
@@ -47,6 +52,27 @@ const windowUnit = computed({
 // wants the population. The numbers come from the discovered schema
 // (factKeyOptions), so they're the real data, never a guess.
 const factMeta = computed(() => props.factKeys.find((k: any) => k.value === props.condition.key))
+
+// `sum` is the only aggregate that reads a named field off each event; the
+// others take the bound alone, so the field input appears only for it.
+const needsField = computed(() => NEEDS_FIELD.has(props.condition.measure))
+
+// What the threshold is counting, in words. "≥ 3" against five different
+// aggregates means five different things, and the unit is the only thing on the
+// row that says which.
+const MEASURE_UNIT: Record<string, string> = {
+  count: 'events', distinct_sessions: 'sessions', sum_dwell_ms: 'ms', sum: '', recency_days: 'days',
+}
+const measureUnit = computed(() => MEASURE_UNIT[props.condition.measure] ?? '')
+
+// An empty channel list means the schema has not reported any yet; the picker
+// still has to show whatever the saved condition is set to.
+const channelChoices = computed(() => {
+  const opts = (props.channelOpts || []).map((c: any) => (typeof c === 'string' ? { label: c, value: c } : c))
+  const cur = props.condition.channel
+  const has = opts.some((o: any) => o.value === cur)
+  return [{ label: 'any channel', value: '' }, ...(cur && !has ? [{ label: cur, value: cur }] : []), ...opts]
+})
 
 // A saved condition can name a fact the schema has never seen — facts are
 // core and channel-agnostic (any plugin, import or API call can write one via
@@ -139,10 +165,18 @@ const factHint = computed(() => {
       <template v-if="!compact">
         <div class="m-group"><span class="m-lab">Campaigns</span>
           <MultiSelect v-model="condition.campaigns" :options="campaignOpts" optionLabel="label" optionValue="value" filter display="chip" placeholder="any campaign" class="m-grow" :disabled="disabled" /></div>
+        <div class="m-group"><span class="m-lab">Sources</span>
+          <MultiSelect v-model="condition.sources" :options="sourceOpts || []" optionLabel="label" optionValue="value" filter display="chip" placeholder="any source" class="m-grow" :disabled="disabled" /></div>
+        <div class="m-row">
+          <Select v-model="condition.channel" :options="channelChoices" optionLabel="label" optionValue="value" class="m-grow" :disabled="disabled" />
+          <Select v-model="condition.direction" :options="DIRECTIONS" optionLabel="label" optionValue="value" class="m-grow" :disabled="disabled" />
+        </div>
         <div class="m-row">
           <Select v-model="condition.measure" :options="MEASURES" optionLabel="label" optionValue="value" class="f-op" :disabled="disabled" />
+          <InputText v-if="needsField" v-model="condition.sumField" class="f-num" placeholder="field" :disabled="disabled" />
           <Select v-model="condition.cmp" :options="CMPS" optionLabel="label" optionValue="value" class="f-cmp" :disabled="disabled" />
           <InputText v-model="condition.mvalue" class="f-num" placeholder="n" :disabled="disabled" />
+          <span v-if="measureUnit" class="m-lab">{{ measureUnit }}</span>
         </div>
         <div class="m-row">
           <span class="m-lab f-win-lab">Lookback</span>
