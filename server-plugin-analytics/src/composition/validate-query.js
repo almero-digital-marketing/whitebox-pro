@@ -24,7 +24,13 @@ import { validate as validateFilter } from 'whitebox-pro-server/selector-dsl'
 function collect(query, path, out) {
     if (!query || typeof query !== 'object') return
 
-    if (query.selector?.filter != null) out.push([`${path}.selector.filter`, query.selector.filter])
+    // `group` decides how this one filter is EVALUATED, and therefore which
+    // aggregates and bounds are legal in it. resolveGroup demands a bare
+    // `selector.filter.metric` and hands it to metric.group; without `group` the
+    // same clause is a gate through metric.evaluate. Nothing else in a query def
+    // is ever grouped — a scope, a funnel step and a series' own scope are all
+    // gates — so the flag is set here and nowhere else.
+    if (query.selector?.filter != null) out.push([`${path}.selector.filter`, query.selector.filter, { grouped: !!query.group }])
     if (query.scope != null && !Array.isArray(query.scope) && query.scope.filter != null) {
         out.push([`${path}.scope.filter`, query.scope.filter])
     }
@@ -41,8 +47,8 @@ function collect(query, path, out) {
 export function validateQuery(query) {
     const found = []
     collect(query, 'query', found)
-    return found.flatMap(([path, filter]) =>
-        validateFilter(filter).map((e) => ({
+    return found.flatMap(([path, filter, opts]) =>
+        validateFilter(filter, opts).map((e) => ({
             // validateFilter reports paths rooted at `filter`; re-root them at
             // the position inside the query def so the message names something
             // the caller actually sent.

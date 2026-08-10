@@ -34,7 +34,26 @@
 const FACT_OPS = { '=': 'eq', '!=': 'ne', '>': 'gt', '>=': 'gte', '<': 'lt', '<=': 'lte' }
 const FACT_OP_TEXT = Object.fromEntries(Object.entries(FACT_OPS).map(([text, op]) => [op, text]))
 const FACT_OP_NAMES = new Set([...Object.values(FACT_OPS), 'in', 'present'])
-const AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
+// The engine has TWO aggregate sets, and which one applies depends on how the
+// clause is evaluated — not on how it is written.
+//
+//   gate  (filter.metric, no `group`)  → metric.evaluate, GATE_AGGS
+//   group (filter.metric with `group`) → metric.group,    GROUP_AGGS
+//
+// They are not the same list. `recency_days` is a gate only — there is nothing
+// to bucket about "days since" — and `distinct_passports` is a group only,
+// because a per-passport aggregate cannot gate the passports it counts.
+//
+// Bounds differ too: a gate NEEDS gte/lte (an aggregate with no bound matches
+// nothing), while a group IGNORES them — `count: {}` is the correct and
+// documented way to write a timeseries.
+//
+// Validating both against the gate rules rejected the two commonest widget
+// shapes there are, which is exactly what happened.
+const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
+const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum']
+// The notation can write either, so parse and print span both.
+const AGGS = [...new Set([...GATE_AGGS, ...GROUP_AGGS])]
 // Metric filter keys that are their own column. Anything else in an aggregate's
 // argument list is an open per-event dimension and lands in `attrs`, which is
 // what `event = '...'` relies on.
@@ -332,7 +351,8 @@ export function print(filter) {
 // Separate from print() on purpose. print() is not a validator: a metric with
 // neither gte nor lte prints `<= undefined` rather than failing, so using it as
 // a check would pass exactly the malformed input worth catching.
-export function validate(filter) {
+export function validate(filter, { grouped = false } = {}) {
+    const aggs = grouped ? GROUP_AGGS : GATE_AGGS
     const errors = []
     const err = (path, message) => errors.push({ path, message })
 
@@ -380,17 +400,19 @@ export function validate(filter) {
         if (key === 'metric') {
             const m = node.metric
             if (!m || typeof m !== 'object') return err(path, '`metric` takes an object')
-            const aggs = AGGS.filter((a) => a in m)
-            if (aggs.length !== 1) {
-                return err(`${path}.metric`, `needs exactly one aggregate (${AGGS.join('/')}), got ${aggs.length ? aggs.join(' + ') : 'none'}`)
+            const found = aggs.filter((a) => a in m)
+            if (found.length !== 1) {
+                return err(`${path}.metric`, `needs exactly one aggregate (${aggs.join('/')}), got ${found.length ? found.join(' + ') : 'none'}`)
             }
-            const agg = aggs[0]
+            const agg = found[0]
             for (const k of Object.keys(m)) {
                 if (k !== agg && !METRIC_KEYS.has(k)) err(`${path}.metric`, `unknown key "${k}" — one of ${[...METRIC_KEYS].join(', ')} or an aggregate`)
             }
             const bounds = m[agg]
             if (!bounds || typeof bounds !== 'object') return err(`${path}.metric.${agg}`, 'takes a { gte } or { lte } bound')
-            if (typeof bounds.gte !== 'number' && typeof bounds.lte !== 'number') {
+            // A grouped aggregate is bucketed, not compared — metric.group reads
+            // no bound at all, and `count: {}` is how a timeseries is written.
+            if (!grouped && typeof bounds.gte !== 'number' && typeof bounds.lte !== 'number') {
                 err(`${path}.metric.${agg}`, 'needs a numeric gte or lte — an aggregate with no bound matches nothing')
             }
             if (agg === 'sum' && !bounds.field) err(`${path}.metric.sum`, 'needs a `field`')

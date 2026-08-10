@@ -16,6 +16,49 @@ describe('validateQuery — well-formed queries pass', () => {
     ]) expect(validateQuery(q)).toEqual([])
   })
 
+  // `group` decides how a filter.metric is EVALUATED, and the two modes do not
+  // share an aggregate list or a bounds rule. Validating everything as a gate
+  // rejected the two commonest widget shapes there are — the timeseries the
+  // compose prompt literally teaches, and any breakdown counting people — and
+  // did so in production for two hours.
+  it('accepts a GROUPED metric: no bound needed, distinct_passports allowed', () => {
+    expect(validateQuery({
+      selector: { filter: { metric: { attrs: { event: 'booking' }, count: {} } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })).toEqual([])
+    expect(validateQuery({
+      selector: { filter: { metric: { distinct_passports: {}, channel: 'web' } } },
+      group: { by: 'day' },
+    })).toEqual([])
+  })
+
+  it('still holds a GATE metric to the gate rules', () => {
+    // No group → metric.evaluate → a bound is required, and an aggregate with
+    // none matches nobody.
+    const [noBound] = validateQuery({ selector: { filter: { metric: { attrs: { event: 'x' }, count: {} } } } })
+    expect(noBound.message).toMatch(/numeric gte or lte/)
+    // distinct_passports cannot gate the passports it counts.
+    const [wrongAgg] = validateQuery({ selector: { filter: { metric: { distinct_passports: { gte: 1 } } } } })
+    expect(wrongAgg.message).toMatch(/needs exactly one aggregate/)
+  })
+
+  it('rejects recency_days when grouped — there is nothing to bucket about "days since"', () => {
+    const [err] = validateQuery({ selector: { filter: { metric: { recency_days: {} } } }, group: { by: 'day' } })
+    expect(err.message).toMatch(/needs exactly one aggregate/)
+  })
+
+  it('only the selector filter is grouped — a scope and a funnel step stay gates', () => {
+    // resolveGroup reads selector.filter.metric and nothing else, so a bare
+    // aggregate anywhere else is still a gate and still needs its bound.
+    const [err] = validateQuery({
+      selector: { filter: { metric: { count: {} } } },
+      scope: { filter: { metric: { count: {} } } },
+      group: { by: 'day' },
+    })
+    expect(err.path).toBe('query.scope.filter.metric.count')
+    expect(err.message).toMatch(/numeric gte or lte/)
+  })
+
   it('has no opinion on a query with no filter at all', () => {
     expect(validateQuery({ scatter: { x: 'a', y: 'b' } })).toEqual([])
     expect(validateQuery({})).toEqual([])
