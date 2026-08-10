@@ -1,3 +1,5 @@
+import { whereScope } from '../db.js'
+
 const EXPOSURES = 'whitebox_awareness_exposures'
 const CHUNKS = 'whitebox_awareness_chunks'
 const SESSIONS = 'whitebox_sessions'
@@ -168,7 +170,7 @@ export async function populationStats({ scope, last, from } = {}) {
   // so the LLM isn't told "12,000 customers" while answering about 43.
   const since = sinceFrom({ last, from })
   const confine = q => {
-    if (scope?.length) q = q.whereIn('passport_id', scope)
+    if (scope?.length) q = whereScope(q, 'passport_id', scope)
     if (since) q = q.where('ts', '>=', since)
     return q
   }

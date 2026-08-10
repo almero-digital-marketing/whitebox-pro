@@ -13,6 +13,8 @@
 // and nothing structural may depend on it. It keeps resolving for now; nothing new
 // uses it; it is removed once analytics migrates off (docs/event-attributes.md §4/§7).
 
+import { whereScope } from '../db.js'
+
 const EXPOSURES = 'whitebox_awareness_exposures'
 const SESSIONS = 'whitebox_sessions'
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
@@ -63,7 +65,7 @@ function base(db, joinSession) {
 
 // Apply the shared event filters to a knex query (all exposure cols qualified `e.`).
 function applyFilters(db, q, { content, channel, direction, last, session, attrs }, { at, scope, now }) {
-  if (scope?.length) q = q.whereIn('e.passport_id', scope)
+  if (scope?.length) q = whereScope(q, 'e.passport_id', scope)
   if (content && content !== '*') q = q.whereILike('e.content_id', `%${content}%`)   // DEPRECATED — do not extend
   if (channel) q = q.where('e.channel', channel)
   if (direction) q = q.where('e.direction', direction)

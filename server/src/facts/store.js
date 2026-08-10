@@ -1,6 +1,8 @@
 // Knex queries over whitebox_facts. init + module-singleton, matching the core
 // pattern (awareness/store, passports, …). All reads are valid-time: "current"
 // is the latest row per key; "as-of D" is the latest row with observed_at <= D.
+import { whereScope } from '../db.js'
+
 const TABLE = 'whitebox_facts'
 
 let db
@@ -72,7 +74,7 @@ export async function historyRows(passportId, key) {
 export async function currentByKey(key, { at, scope } = {}) {
   let q = db(TABLE).distinctOn('passport_id').where({ key })
   if (at) q = q.where('observed_at', '<=', at)
-  if (scope?.length) q = q.whereIn('passport_id', scope)
+  if (scope?.length) q = whereScope(q, 'passport_id', scope)
   return q
     .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
     .select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
@@ -83,7 +85,7 @@ export async function currentByKey(key, { at, scope } = {}) {
 export async function keyRows(key, { at, scope } = {}) {
   let q = db(TABLE).where({ key })
   if (at) q = q.where('observed_at', '<=', at)
-  if (scope?.length) q = q.whereIn('passport_id', scope)
+  if (scope?.length) q = whereScope(q, 'passport_id', scope)
   return q
     .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }])
     .select('passport_id', 'value', 'observed_at')
