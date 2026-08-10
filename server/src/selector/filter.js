@@ -11,8 +11,10 @@ import * as metric from './metric.js'
 //
 // matched_at provenance:
 //   · fact   → exact (value row / qualifying event observed_at)
-//   · metric → null in v1 (threshold-crossing time needs window functions — a
-//              metric step can still be un-windowed membership; see §14)
+//   · metric → the threshold-crossing time for a monotone `gte` (the first row
+//              at which the running aggregate reached the bound). `lte` and
+//              recency_days have no crossing and stay null — un-windowed
+//              membership only; see §14 and metric.evaluateTimed.
 //   · not / empty / universe → null (an absence has no single event)
 
 // ── Map<id, time> combinators ───────────────────────────────────────────────
@@ -20,7 +22,8 @@ const mapNull = ids => { const m = new Map(); for (const id of ids) m.set(id, nu
 
 // `all`: the composite anchor is the LATEST positive leaf time (when every
 // condition was finally met). Null-propagating — if any positive leaf's time is
-// unknown (e.g. a metric), the composite can't be a clean anchor → null.
+// unknown (an lte metric, a recency gate), the composite can't be a clean
+// anchor → null.
 const combineAll = (x, y) => (x == null || y == null) ? null : (x >= y ? x : y)
 // `any`: the EARLIEST branch that qualified (first time any path matched).
 const combineAny = (x, y) => (x == null) ? y : (y == null) ? x : (x <= y ? x : y)
@@ -49,7 +52,7 @@ async function evalTimed(node, ctx) {
   if (node.any) return unionTimed(await Promise.all(node.any.map(c => evalTimed(c, ctx))))
   if (node.not) return differenceTimed(mapNull(await ctx.universe()), await evalTimed(node.not, ctx))
   if (node.fact) return evalFact(node.fact, ctx)
-  if (node.metric) return mapNull(await metric.evaluate(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope }))
+  if (node.metric) return metric.evaluateTimed(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope })
   throw new Error(`selector.filter: unknown clause ${JSON.stringify(node)}`)
 }
 

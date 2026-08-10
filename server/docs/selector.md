@@ -256,6 +256,15 @@ steps:
   `fact`'s `observed_at`.
 - **Null** for `about` / `judge` — a fuzzy or LLM match has no clean event time, so
   these can't anchor a windowed step (they still work as plain membership).
+- **Null** for a `metric` with no crossing. A `gte` bound rises and stays risen,
+  so "the first row at which the running total reached it" is a real moment. An
+  `lte` bound holds at the start and is *lost* later, and `recency_days` is
+  measured backwards from now rather than accumulated — neither has one.
+
+A crossing is the moment the bound was *reached*, not the first matching event:
+with three page views, `count: { gte: 3 }` anchors on the third. `distinct_sessions`
+counts a session at its first exposure, so a second visit in the same session
+does not advance it.
 
 ### `answer` is a layer on top, not a projection
 

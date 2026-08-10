@@ -83,11 +83,41 @@ describe('selector matched_at (the funnel anchor)', () => {
     expect(iso(matchedAt(res, a))).toBe(d('2026-04-10').toISOString())
   })
 
-  it('metric match → no matched_at (threshold-crossing time is v1 out of scope)', async () => {
+  it('metric gte → matched_at is the moment the running total crossed the bound', async () => {
     const a = await newPassport()
     await expose(a, '2026-05-01')
-    const res = await selector.resolve({ filter: { metric: { count: { gte: 1 } } } }, { projection: 'people' })
-    expect(res.passports.find(p => p.id === a)).toEqual({ id: a })   // matched, but no matched_at key
+    await expose(a, '2026-05-08')
+    await expose(a, '2026-05-20')
+
+    const first = await selector.resolve({ filter: { metric: { count: { gte: 1 } } } }, { projection: 'people' })
+    expect(iso(matchedAt(first, a))).toBe(d('2026-05-01').toISOString())
+
+    // the CROSSING, not the earliest exposure — the third one is what reached 3
+    const third = await selector.resolve({ filter: { metric: { count: { gte: 3 } } } }, { projection: 'people' })
+    expect(iso(matchedAt(third, a))).toBe(d('2026-05-20').toISOString())
+  })
+
+  it('metric gte counts a session once, at its first exposure', async () => {
+    const a = await newPassport()
+    const [s1, s2] = [8801, 8802]
+    for (const [id, ts] of [[s1, '2026-05-01'], [s1, '2026-05-02'], [s2, '2026-05-09']]) {
+      await db('whitebox_sessions').insert({ id, passport_id: a }).onConflict('id').ignore()
+      await db('whitebox_awareness_exposures')
+        .insert({ passport_id: a, session_id: id, ts: d(ts), channel: 'web', direction: 'expression', text: 'x' })
+    }
+    // 2 distinct sessions is reached by s2, on the 9th — not by s1's second hit
+    const res = await selector.resolve(
+      { filter: { metric: { distinct_sessions: { gte: 2 } } } }, { projection: 'people' })
+    expect(iso(matchedAt(res, a))).toBe(d('2026-05-09').toISOString())
+  })
+
+  it('metric bounds with no crossing (lte, recency_days) still carry no matched_at', async () => {
+    const a = await newPassport()
+    await expose(a, '2026-05-01')
+    for (const metric of [{ count: { lte: 5 } }, { recency_days: { lte: 3650 } }]) {
+      const res = await selector.resolve({ filter: { metric } }, { projection: 'people' })
+      expect(res.passports.find(p => p.id === a)).toEqual({ id: a })   // matched, but no anchor
+    }
   })
 
   it('about-only and judge matches carry no matched_at', async () => {
