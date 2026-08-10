@@ -44,6 +44,12 @@ const mode = ref<'audience' | 'filter' | 'judge'>(
 const parsed = parseFilter(cond.filter)
 const combinator = ref(parsed.combinator)
 const conditions = ref<any[]>(parsed.conditions)
+// Clauses this flat builder cannot draw — a nested all/any group, a `not` around
+// one. Held verbatim and written back below, because the watcher re-serializes
+// the whole condition on every keystroke: without this, opening a branch whose
+// filter came from anywhere richer than this form and touching one field would
+// rewrite it down to what the form can see.
+const unrepresented = ref<any[]>(parsed.unrepresented)
 const criteria = ref<string>(cond.judge?.criteria || '')
 // The selector's own default (rt.defaults / judge.evaluate), so a branch and an
 // audience asked the same question agree by default.
@@ -62,8 +68,15 @@ watch([mode, audienceId, combinator, conditions, criteria, confidence], () => {
       // Trimmed, because the criteria IS the prompt — trailing whitespace from a
       // textarea would otherwise ride into the model call.
       ? { judge: { criteria: criteria.value.trim(), confidence: confidence.value } }
-      : { filter: buildFilter(combinator.value, conditions.value) || {} }
+      : { filter: filterWithPreserved() }
 }, { deep: true })
+
+function filterWithPreserved() {
+  const built = buildFilter(combinator.value, conditions.value)
+  if (!unrepresented.value.length) return built || {}
+  const visible = built ? (built[combinator.value] ?? [built]) : []
+  return { [combinator.value]: [...visible, ...unrepresented.value] }
+}
 
 
 const setMode = (m: 'audience' | 'filter' | 'judge') => {
@@ -117,7 +130,8 @@ const pick = (id: string) => { if (!props.disabled) audienceId.value = id }
   </template>
 
   <ConditionsBuilder v-else v-model:combinator="combinator" :conditions="conditions"
-    :fact-keys="vocab.factKeys" :event-opts="vocab.eventOpts" :campaign-opts="vocab.campaignOpts" :disabled="disabled" />
+    :fact-keys="vocab.factKeys" :event-opts="vocab.eventOpts" :campaign-opts="vocab.campaignOpts" :disabled="disabled"
+    :hidden="unrepresented" />
 
   <p class="step-tip">Connect the "Yes"/"No" handles on the canvas to the next steps.</p>
 </template>

@@ -16,6 +16,12 @@ export function useQueryModel(props: QueryBuilderProps) {
   const about = ref('')
   const combinator = ref<'all' | 'any'>('all')
   const conditions = ref<any[]>([])
+  // Clauses the row builder cannot represent — nested all/any groups, a `not`
+  // around one — held verbatim so build() can put them back. A query composed
+  // through MCP can use the whole recursive filter DSL; this form is one
+  // combinator over a flat list. Without this, editing the title of such a
+  // query rebuilt its filter from the visible rows alone and the rest was gone.
+  const unrepresented = ref<any[]>([])
   const judgeCriteria = ref('')
   const judgeConfidence = ref(0.7)
   const tsEvents = ref<string[]>([])   // timeseries: event action(s)
@@ -213,7 +219,7 @@ export function useQueryModel(props: QueryBuilderProps) {
     // the kind fields from the first series' query (bq); read the compare config from q.
     const bq = (Array.isArray(q.series) && q.series[0]?.query) ? q.series[0].query : q
     about.value = bq.selector?.about || ''
-    combinator.value = 'all'; conditions.value = []
+    combinator.value = 'all'; conditions.value = []; unrepresented.value = []
     judgeCriteria.value = bq.selector?.judge?.criteria || ''
     judgeConfidence.value = bq.selector?.judge?.confidence ?? 0.7
     tsEvents.value = []; tsAgg.value = 'count'; grain.value = 'week'
@@ -251,6 +257,7 @@ export function useQueryModel(props: QueryBuilderProps) {
       const parsed = parseFilter(bq.selector?.filter)
       combinator.value = parsed.combinator
       conditions.value = parsed.conditions
+      unrepresented.value = parsed.unrepresented
     }
 
     // compare config (splitBy sugar, or explicit named series)
@@ -268,7 +275,7 @@ export function useQueryModel(props: QueryBuilderProps) {
 
   function reset() {
     title.value = ''; kind.value = 'stat'; about.value = ''
-    combinator.value = 'all'; conditions.value = []; judgeCriteria.value = ''; judgeConfidence.value = 0.7
+    combinator.value = 'all'; conditions.value = []; unrepresented.value = []; judgeCriteria.value = ''; judgeConfidence.value = 0.7
     tsEvents.value = []; tsAgg.value = 'count'; grain.value = 'week'
     breakdownDim.value = ''; breakdownValues.value = []; breakdownMeasure.value = 'people'; sliceRef.value = ''; attrSourceRef.value = ''
     distSource.value = 'fact'; distKey.value = ''; distBins.value = ''
@@ -283,6 +290,20 @@ export function useQueryModel(props: QueryBuilderProps) {
 
   // ── build: form → query def ────────────────────────────────────────────────────
   function eventClause(events: string[]) { return events.length === 1 ? events[0] : { in: events } }
+
+  // buildFilter, plus the clauses the row builder could not show, put back
+  // under the combinator they arrived under. Editing a title on an MCP-composed
+  // query must not amputate the half of its filter this form cannot draw.
+  //
+  // The combinator toggle is disabled while these exist (QueryEditor), because
+  // moving hidden clauses from `all` to `any` would silently rewrite a query
+  // the user cannot see — the one edit here that is worse than refusing.
+  function buildFilterPreserving(): any {
+    const built = buildFilter(combinator.value, conditions.value)
+    if (!unrepresented.value.length) return built
+    const visible = built ? (built[combinator.value] ?? [built]) : []
+    return { [combinator.value]: [...visible, ...unrepresented.value] }
+  }
 
   function buildBase(): any {
     if (kind.value === 'answer') return { question: question.value }
@@ -320,7 +341,7 @@ export function useQueryModel(props: QueryBuilderProps) {
       })) } }
     }
     // stat / table → people, full selector
-    const filter = buildFilter(combinator.value, conditions.value)
+    const filter = buildFilterPreserving()
     const selector: any = {}
     if (about.value.trim()) selector.about = about.value.trim()
     if (filter) selector.filter = filter
@@ -382,7 +403,7 @@ export function useQueryModel(props: QueryBuilderProps) {
   // so children bind v-model="model.x" and the writes flow back to the refs above.
   return reactive({
     // state
-    title, kind, about, combinator, conditions, judgeCriteria, judgeConfidence,
+    title, kind, about, combinator, conditions, unrepresented, judgeCriteria, judgeConfidence,
     tsEvents, tsAgg, grain, breakdownDim, breakdownValues, breakdownMeasure,
     distSource, distKey, distBins, scatterX, scatterY, scatterColor,
     compareOn, compareMode, splitKey, splitVals, customSeries, stackMode, target,

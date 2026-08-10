@@ -23,7 +23,8 @@ defineProps<{ model: any }>()
   <p class="hint">Semantic narrow — keep only people whose memory mentions this idea.</p>
 
   <ConditionsBuilder v-model:combinator="model.combinator" :conditions="model.conditions"
-    :fact-keys="model.factKeys" :event-opts="model.eventOpts" :campaign-opts="model.campaignOpts" />
+    :fact-keys="model.factKeys" :event-opts="model.eventOpts" :campaign-opts="model.campaignOpts"
+    :hidden="model.unrepresented" />
 
   <label class="lab">Judge <span class="muted small">(optional)</span></label>
   <Textarea v-model="model.judgeCriteria" rows="2" autoResize class="w" placeholder="e.g. genuinely at risk of churning" />

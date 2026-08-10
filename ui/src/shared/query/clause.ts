@@ -72,11 +72,38 @@ export function parseClause(cl: any): any | null {
 // undefined) → the flat {combinator, conditions[]} shape a ConditionsBuilder
 // edits, and back. A single condition round-trips through a bare clause
 // (no {all:[...]} wrapper) — buildFilter only wraps once there are 2+.
-export function parseFilter(filter: any): { combinator: 'all' | 'any'; conditions: any[] } {
-  if (filter?.all) return { combinator: 'all', conditions: filter.all.map(parseClause).filter(Boolean) }
-  if (filter?.any) return { combinator: 'any', conditions: filter.any.map(parseClause).filter(Boolean) }
-  if (filter) { const c = parseClause(filter); return { combinator: 'all', conditions: c ? [c] : [] } }
-  return { combinator: 'all', conditions: [] }
+//
+// `unrepresented` carries the clauses this flat shape CANNOT hold, verbatim.
+// The filter DSL is recursive — all/any/not each take a filter, not a clause —
+// so a nested group, or a `not` wrapping one, has no row to become. The builder
+// is one combinator over a list, and widening it to a recursive tree makes the
+// common two-condition case worse; that limit is deliberate.
+//
+// What is not deliberate is losing them. These used to be dropped on the floor
+// by .filter(Boolean), and because buildFilter reconstructs the filter from
+// whatever survived, opening such a query and saving ANY unrelated edit — a
+// title, a chart kind — silently deleted the nested branch. Queries composed
+// through MCP are the ones that use the full grammar, so they were exactly the
+// ones at risk.
+//
+// Returning them makes that the caller's decision instead of an accident: a
+// caller with a non-empty `unrepresented` must not persist the result of
+// buildFilter over the original.
+export function parseFilter(filter: any): { combinator: 'all' | 'any'; conditions: any[]; unrepresented: any[] } {
+  const split = (clauses: any[]) => {
+    const conditions: any[] = []
+    const unrepresented: any[] = []
+    for (const cl of clauses) {
+      const c = parseClause(cl)
+      if (c) conditions.push(c)
+      else unrepresented.push(cl)
+    }
+    return { conditions, unrepresented }
+  }
+  if (filter?.all) return { combinator: 'all', ...split(filter.all) }
+  if (filter?.any) return { combinator: 'any', ...split(filter.any) }
+  if (filter) return { combinator: 'all', ...split([filter]) }
+  return { combinator: 'all', conditions: [], unrepresented: [] }
 }
 
 export function buildFilter(combinator: 'all' | 'any', conditions: any[]): any {

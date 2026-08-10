@@ -114,3 +114,22 @@
 .f-win-unit { width: 92px; flex: none; }            /* 'hours' / 'days' / 'weeks' */
 /* keep every select's text from clipping: the label area fills its box, no ellipsis */
 .cond .p-select-label, .cond .p-multiselect-label { text-overflow: clip; }
+
+/* The clauses the row builder cannot draw, shown verbatim. Read-only and
+   deliberately plain — this is the only thing in the panel scoped to exactly
+   what is missing, so it must not be mistaken for an editable row. Capped and
+   scrollable: a nested group is small, but nothing stops it being large. */
+.cb-raw {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 180px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-soft, transparent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: pre;
+}
