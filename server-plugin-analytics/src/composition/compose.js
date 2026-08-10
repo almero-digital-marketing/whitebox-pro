@@ -7,9 +7,39 @@
 let db, ai, selector, awareness, facts, logger
 let schemaCache = null
 
+// What business this is, in the model's words.
+//
+// The one domain-specific input to this plugin that was NOT declared. Every
+// other one arrives properly: fact keys and events discover themselves from the
+// data below, tokens come from env, everything else through the factory call.
+// The model's entire understanding of the vertical was a string literal in the
+// middle of a prompt.
+//
+// That matters more than a normal hardcoded value, because it is not inert
+// text — it is what makes the model answer "what are they interested in" with
+// `attr:treatment` rather than asking. Point this plugin at a different
+// business and every generated widget is subtly wrong in a way no test catches:
+// valid JSON, real keys, wrong question.
+//
+// The default is deliberately generic. A deployment that says nothing gets a
+// model with no invented assumptions about its customers, which is the right
+// failure — vague beats confidently foreign.
+const DEFAULT_DOMAIN = 'customer'
+let domain = DEFAULT_DOMAIN
+
 export function init(deps) {
   ({ db, ai, selector, awareness, facts, logger } = deps)
+  domain = deps.domain?.trim() || DEFAULT_DOMAIN
 }
+
+// `a beauty-clinic customer database` / `a customer database`
+const domainDb = () => (domain === DEFAULT_DOMAIN
+    ? 'a customer database (WhiteBox)'
+    : `a ${domain} customer database (WhiteBox)`)
+// Who is reading the answer. "the clinic owner" / "the owner".
+const domainOwner = () => (domain === DEFAULT_DOMAIN ? 'the owner' : `the ${domain} owner`)
+// The noun for one of them. "clinic customers" / "customers".
+const domainCustomers = () => (domain === DEFAULT_DOMAIN ? 'customers' : `${domain} customers`)
 
 // Discover the queryable vocabulary so the model only references real keys/tags.
 export async function discoverSchema({ refresh = false } = {}) {
@@ -132,7 +162,7 @@ function systemPrompt({ factKeys, events, attrKeys, campaigns, sources, channels
     const named = k.label !== k.key ? ` — call it "${k.label}" in titles` : ''
     return `  - ${k.key}${named}${sample}`
   }).join('\n')
-  return `You compose analytics widgets for a beauty-clinic customer database (WhiteBox).
+  return `You compose analytics widgets for ${domainDb()}.
 Turn the user's question into 1–4 widgets. Output ONLY a JSON array — no prose, no code fences.
 
 YOUR JOB IS TO MODEL THE QUESTION AS A STRUCTURED QUERY. First DECOMPOSE it; model
@@ -205,6 +235,12 @@ Channels: ${channels.join(', ')}
 
 Prefer 1–3 widgets. Keep titles short. Use only the keys/events/values above.
 
+The examples below are ILLUSTRATIVE — they teach the SHAPE of each query kind, not
+the vocabulary. Their key names (client_status, treatment, lifetime_value, …) belong
+to a different dataset. NEVER use a key, event or value from an example unless it
+also appears in the vocabulary above; pick the closest real one instead, and if
+there is none, choose a different widget kind.
+
 Examples:
 Q: "How many active clients?" → [{"title":"Active clients","kind":"stat","query":{"selector":{"filter":{"fact":{"client_status":{"eq":"active"}}}},"projection":"people"}}]
 Q: "How many did the flash_sale_sms campaign reach, and how many clicked?" → [{"title":"Reached","kind":"stat","query":{"selector":{"filter":{"metric":{"session":{"utm_campaign":"flash_sale_sms"},"count":{"gte":1}}}},"projection":"people"}},{"title":"Clicked","kind":"stat","query":{"selector":{"filter":{"metric":{"attrs":{"event":"sms_click"},"session":{"utm_campaign":"flash_sale_sms"},"count":{"gte":1}}}},"projection":"people"}}]
@@ -256,7 +292,7 @@ function usableQuery(kind, q) {
 export async function describeQuery(query) {
   if (!ai?.prompt) throw new Error('AI provider not configured')
   const sys = `Translate this analytics query (JSON) back into ONE short, plain-language question a marketer would ask about their customers — the inverse of composing a query. Output only the sentence, no JSON, no preamble.
-The query selects/aggregates clinic customers:
+The query selects/aggregates ${domainCustomers()}:
 - filter.fact gates on an attribute (e.g. client_status eq active)
 - filter.metric counts/sums events; attrs.event = the action (email_open, booking…); session.utm_campaign/source = acquisition; last = a window
 - about = a semantic topic
@@ -276,7 +312,7 @@ The query selects/aggregates clinic customers:
 // `data` is already compacted to the essentials (see routes.compactForExplain).
 export async function explainWidget({ title, kind, data }) {
   if (!ai?.prompt) throw new Error('AI provider not configured')
-  const sys = `You are a beauty-clinic analytics co-pilot. In 1–2 short, plain sentences, turn this widget's result into the OPPORTUNITY it points to for the clinic owner — the cohort worth targeting or winning back, the leak to plug, the upsell, the channel or treatment to double down on. Lead with that opportunity, then anchor it in ONE concrete number: the top/bottom item, the trend direction, a share, the biggest funnel drop-off, (for a drop-off / negative funnel) the step with the biggest leak and how many people fell out there — that lost cohort is a re-engagement audience, (for a comparison of named series) which series leads and by how much, or (when a target is given) progress toward it (count vs target, pctOfTarget).
+  const sys = `You are an analytics co-pilot for ${domainDb()}. In 1–2 short, plain sentences, turn this widget's result into the OPPORTUNITY it points to for ${domainOwner()} — the cohort worth targeting or winning back, the leak to plug, the upsell, the channel or treatment to double down on. Lead with that opportunity, then anchor it in ONE concrete number: the top/bottom item, the trend direction, a share, the biggest funnel drop-off, (for a drop-off / negative funnel) the step with the biggest leak and how many people fell out there — that lost cohort is a re-engagement audience, (for a comparison of named series) which series leads and by how much, or (when a target is given) progress toward it (count vs target, pctOfTarget).
 Be concrete with the numbers and only claim what the data supports — never invent a recommendation the result can't back. Start DIRECTLY with the finding/opportunity. Never open with "The widget shows", "The headline", "This shows", "The result", or by restating the title. No markdown, no bullet points, no preamble. If the result is empty, say so plainly.`
   const text = await ai.prompt(sys, JSON.stringify({ title, kind, data }))
   return (text || '').trim()
@@ -286,7 +322,7 @@ Be concrete with the numbers and only claim what the data supports — never inv
 // about THEM. `facts`/`activity` are gathered by the caller (routes); we only prompt.
 export async function explainPerson({ who, facts = {}, activity = [], context } = {}) {
   if (!ai?.prompt) throw new Error('AI provider not configured')
-  const sys = `You are a beauty-clinic analytics co-pilot. In 1–2 short, plain sentences, profile THIS ONE client for the clinic owner — who they are and the most decision-useful specifics (lifecycle status, lifetime value, visit count, last/next treatment, recent engagement). Be concrete with their actual numbers and dates; only state what the data shows.${context ? ` They appear in the list "${context}".` : ''}
+  const sys = `You are an analytics co-pilot for ${domainDb()}. In 1–2 short, plain sentences, profile THIS ONE client for ${domainOwner()} — who they are and the most decision-useful specifics (lifecycle status, lifetime value, visit count, last/next treatment, recent engagement). Be concrete with their actual numbers and dates; only state what the data shows.${context ? ` They appear in the list "${context}".` : ''}
 Start DIRECTLY with the finding. No "This client"/"The client" preamble, no markdown, no bullet points.`
   const text = await ai.prompt(sys, JSON.stringify({ who, facts, recentActivity: activity }))
   return (text || '').trim()
@@ -329,13 +365,13 @@ function suggestPrompt(schema, { name, widgets }) {
     task = 'Suggest FOLLOW-UP questions that deepen or complement what is already there — a different cut, a cohort split, a trend, a related metric. Do NOT repeat an existing widget.'
   } else if (isMeaningfulName(name)) {
     context = `The report is titled "${name}" but has no widgets yet.`
-    task = 'Suggest starter questions that fit that title — the widgets a clinic owner opening this report would want first.'
+    task = `Suggest starter questions that fit that title — the widgets ${domainOwner()} opening this report would want first.`
   } else {
     context = 'A brand-new, empty, untitled report.'
     task = 'Suggest broad but useful starter questions that showcase the data — mix a count, a trend, a breakdown, a funnel, a distribution.'
   }
 
-  return `You suggest analytics questions for a beauty-clinic customer database (WhiteBox).
+  return `You suggest analytics questions for ${domainDb()}.
 ${context}
 
 ${task}

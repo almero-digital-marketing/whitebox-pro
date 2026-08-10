@@ -114,3 +114,53 @@ describe('discoverSchema — fact bounds', () => {
     expect(await bounds('client_status')).toMatchObject({ min: null, max: null })
   })
 })
+
+// `domain` is the one domain-specific input this plugin cannot discover for
+// itself. Fact keys, events and attributes all come from the data; what business
+// this IS arrived as a string literal inside a prompt, which meant pointing the
+// plugin at a different vertical produced valid JSON answering the wrong
+// question — a failure no schema check catches.
+describe('the domain reaches the model, and defaults to something neutral', () => {
+  const capture = () => {
+    const seen = []
+    const ai = { prompt: async (sys) => { seen.push(sys); return '[]' } }
+    return { ai, seen }
+  }
+
+  it('names the business when told', async () => {
+    const { ai, seen } = capture()
+    compose.init({ ai, domain: 'dental practice' })
+    await compose.explainWidget({ title: 't', kind: 'stat', data: {} })
+    expect(seen[0]).toContain('a dental practice customer database')
+    expect(seen[0]).toContain('the dental practice owner')
+    expect(seen[0]).not.toMatch(/beauty|clinic/i)
+  })
+
+  it('says nothing specific when not told', async () => {
+    // Vague beats confidently foreign: a deployment that configures nothing gets
+    // a model with no invented assumptions about its customers.
+    const { ai, seen } = capture()
+    compose.init({ ai })
+    await compose.explainWidget({ title: 't', kind: 'stat', data: {} })
+    expect(seen[0]).toContain('a customer database')
+    expect(seen[0]).toContain('the owner')
+    expect(seen[0]).not.toMatch(/beauty|clinic|dental/i)
+  })
+
+  it('reaches the person-profile prompt too', async () => {
+    const { ai, seen } = capture()
+    compose.init({ ai, domain: 'gym' })
+    await compose.explainPerson({ who: 'x' })
+    expect(seen[0]).toContain('a gym customer database')
+  })
+
+  it('blank or whitespace falls back rather than emitting a hole', async () => {
+    for (const d of ['', '   ', null]) {
+      const { ai, seen } = capture()
+      compose.init({ ai, domain: d })
+      await compose.explainWidget({ title: 't', kind: 'stat', data: {} })
+      expect(seen[0], JSON.stringify(d)).toContain('a customer database')
+      expect(seen[0], JSON.stringify(d)).not.toMatch(/a\s{2,}customer|for a  /)
+    }
+  })
+})

@@ -68,7 +68,12 @@ export function analytics(options = {}) {
       // selector + AI. Guarded: db + selector are absent in some unit tests.
       if (db && selector) {
         compositionStore.init({ db, connect })   // store broadcasts every mutation → all clients live
-        compose.init({ db, ai, selector, awareness, facts, logger })
+        // `domain` names the business in the model's own words — "beauty
+        // clinic", "dental practice", "gym". It reaches the four AI prompts and
+        // nothing else, and defaults to a neutral "customer". Declared here
+        // because it is the one domain input this plugin cannot discover for
+        // itself: fact keys, events and attributes all come from the data.
+        compose.init({ db, ai, selector, awareness, facts, logger, domain: options.domain })
         mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger })
         registerCompositionMcp(ctx, { selector, awareness, passports, logger })
         logger.info('Analytics composition surface ready (reports · resolve · compose)')
