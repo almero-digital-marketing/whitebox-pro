@@ -15,6 +15,7 @@ import * as store from './store.js'
 import * as compose from './compose.js'
 import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS } from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
+import { renderChart } from './chart-render.js'
 
 export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   if (!ctx.mcp) return
@@ -52,6 +53,28 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
     ctx.mcp.tool({ name, description, inputSchema, scope, handler: async (args) => ok(await handler(coerce(args))) })
   const read = tool('analytics:read')
   const write = tool('analytics:write')
+
+  // The chart tools answer with TWO content blocks, so they cannot go through
+  // `tool` above — its ok() wraps whatever the handler returns in a single text
+  // block. This one lets a handler build the content array itself.
+  const readBlocks = (name, description, inputSchema, handler) =>
+    ctx.mcp.tool({ name, description, inputSchema, scope: 'analytics:read', handler: async (args) => handler(coerce(args)) })
+
+  // Figures first, picture second — and the order is the point.
+  //
+  // A client that cannot render the image still receives the numbers, so the
+  // tool degrades to analytics_resolve rather than to nothing. That falls out
+  // of MCP's content model instead of needing a fallback path.
+  //
+  // A chart is an ADDITION to the data, never a replacement: a kind with no
+  // chart (stat, table) and a query that resolved empty both return the text
+  // block alone.
+  const chartBlocks = (data, chart) => ({
+    content: [
+      { type: 'text', text: JSON.stringify(data, null, 2) },
+      ...(chart ? [{ type: 'image', data: Buffer.from(chart.svg).toString('base64'), mimeType: 'image/svg+xml' }] : []),
+    ],
+  })
 
   // --- inspect ---
   read('analytics_list_reports', 'List all saved reports (newest first), each with its widget_count.', {}, () => store.listReports())
@@ -103,6 +126,31 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
     let data = await runQuery(deps, w.query, w.kind)
     if (w.kind === 'table') data = await enrichPeople(data, passports)
     return data
+  })
+
+  // --- draw (the same two resolves, plus a picture) ---
+  //
+  // Deliberately separate tools rather than a flag on the resolves. A caller
+  // that wants numbers should not pay for a render, and a caller that wants to
+  // LOOK at twelve months of anything should not have to read them as JSON —
+  // which is the case these exist for. A timeseries, a cohort grid or a funnel
+  // is close to unreadable as text and immediate as a shape.
+  //
+  // The image is SVG. Whether a given client renders an SVG image block is not
+  // something to guess at, and it is the only open question left in this
+  // pipeline: the figures always arrive either way, and PNG (via a rasterizer)
+  // is the answer if the answer turns out to be no.
+  const chartSize = { width: z.number().optional(), height: z.number().optional() }
+  readBlocks('analytics_chart', 'Run an INLINE query def and return its figures AND a rendered chart image. Same grammar and kinds as analytics_resolve — use that one when you only need the numbers. Kinds with no chart (stat, table, pivot, answer) return the figures alone.', { query: z.any(), kind: kindEnum.optional(), ...chartSize }, async ({ query, kind, width, height }) => {
+    const q = query || {}
+    const data = await runQuery(deps, q, kind)
+    return chartBlocks(data, renderChart(kind, data, { width, height, stack: q.stack }))
+  })
+  readBlocks('analytics_widget_chart', 'Run a persisted widget\'s stored query and return its figures AND a rendered chart image, drawn the way the app draws it.', { id: z.string(), ...chartSize }, async ({ id, width, height }) => {
+    const w = await store.getWidget(id)
+    if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
+    const data = await runQuery(deps, w.query, w.kind)
+    return chartBlocks(data, renderChart(w.kind, data, { width, height, stack: w.query?.stack }))
   })
 
   // --- act (guarded — persists) ---
