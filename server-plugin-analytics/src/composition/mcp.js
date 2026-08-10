@@ -15,6 +15,7 @@ import * as store from './store.js'
 import * as compose from './compose.js'
 import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS } from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
+import { assertValidQuery } from './validate-query.js'
 
 export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   if (!ctx.mcp) return
@@ -110,11 +111,15 @@ export function registerMcp(ctx, { selector, awareness, passports, logger }) {
   write('analytics_update_report', 'Rename a report or update its saved grid layout.', { id: z.string(), name: z.string().optional(), layout: z.any().optional() }, ({ id, ...patch }) => store.updateReport(id, patch).then(row => { if (!row) { const e = new Error('report not found'); e.status = 404; throw e } return row }))
   write('analytics_delete_report', 'Delete a report (cascades its widgets).', { id: z.string() }, ({ id }) => store.deleteReport(id).then(deleted => ({ deleted })))
   write('analytics_add_widget', `Add a widget to a report. kind must be one of: ${[...KINDS].join(', ')}. query is the query-def grammar (see analytics_schema/analytics_describe_query).`, { report_id: z.string(), kind: kindEnum, query: z.any(), title: z.string().optional(), presentation: z.any().optional(), position: z.any().optional() }, async ({ report_id, ...w }) => {
+    // Before the report lookup: a malformed query is the caller's mistake
+    // whether or not the report exists, and saying so first is the more useful
+    // of the two answers.
+    assertValidQuery(w.query)
     const report = await store.getReport(report_id)
     if (!report) { const e = new Error('report not found'); e.status = 404; throw e }
     return store.addWidget(report_id, w)
   })
-  write('analytics_update_widget', 'Partially update a saved widget. Changing `query` or `kind` clears the cached AI summary (it re-generates on next view) and triggers a live re-resolve for connected viewers.', { id: z.string(), title: z.string().optional(), kind: kindEnum.optional(), query: z.any().optional(), presentation: z.any().optional(), position: z.any().optional(), sort: z.number().optional() }, ({ id, ...patch }) => store.updateWidget(id, patch).then(row => { if (!row) { const e = new Error('widget not found'); e.status = 404; throw e } return row }))
+  write('analytics_update_widget', 'Partially update a saved widget. Changing `query` or `kind` clears the cached AI summary (it re-generates on next view) and triggers a live re-resolve for connected viewers.', { id: z.string(), title: z.string().optional(), kind: kindEnum.optional(), query: z.any().optional(), presentation: z.any().optional(), position: z.any().optional(), sort: z.number().optional() }, ({ id, ...patch }) => { if (patch.query !== undefined) assertValidQuery(patch.query); return store.updateWidget(id, patch).then(row => { if (!row) { const e = new Error('widget not found'); e.status = 404; throw e } return row }) })
   write('analytics_delete_widget', 'Delete a widget.', { id: z.string() }, ({ id }) => store.deleteWidget(id).then(deleted => ({ deleted })))
   write('analytics_reorder_widgets', 'Reorder a report\'s widgets to match the given id order.', { report_id: z.string(), order: z.array(z.string()) }, ({ report_id, order }) => store.reorderWidgets(report_id, order).then(() => ({ ok: true })))
 

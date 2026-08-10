@@ -13,6 +13,7 @@
     "./logger": "./src/logger.js",
     "./ai": "./src/ai.js",
     "./pagination": "./src/pagination.js",
+    "./selector-dsl": "./src/selector/dsl.js",
     "./test-setup/neon": "./tests/setup/neon.js",
     "./test-manifest": "./tests/support/manifest.js"
   },

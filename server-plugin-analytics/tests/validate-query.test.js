@@ -1,0 +1,101 @@
+import { describe, it, expect } from 'vitest'
+import { validateQuery, assertValidQuery } from '../src/composition/validate-query.js'
+
+// The MCP write tools declare `query: z.any()`, so an agent composing one works
+// from a prose description of the grammar and nothing checks the result. These
+// cover the check that now stands between it and the database.
+
+describe('validateQuery — well-formed queries pass', () => {
+  it('accepts the shapes the compose prompt teaches', () => {
+    for (const q of [
+      { selector: { filter: { fact: { membership: { eq: 'gold' } } } }, projection: 'people' },
+      { selector: { filter: { metric: { attrs: { event: 'x' }, count: { gte: 1 } } } }, projection: 'knowledge', group: { by: 'week' } },
+      { funnel: { steps: [{ name: 'Sent', select: { filter: { metric: { attrs: { event: 'email_sent' }, count: { gte: 1 } } } } }] } },
+      { scope: { filter: { fact: { city: { in: ['Sofia'] } } } }, distribution: { source: 'fact', key: 'visits' } },
+      { series: [{ name: 'A', query: { selector: { filter: { fact: { a: { eq: 1 } } } } } }] },
+    ]) expect(validateQuery(q)).toEqual([])
+  })
+
+  it('has no opinion on a query with no filter at all', () => {
+    expect(validateQuery({ scatter: { x: 'a', y: 'b' } })).toEqual([])
+    expect(validateQuery({})).toEqual([])
+    expect(validateQuery(undefined)).toEqual([])
+  })
+
+  it('leaves a scope that is a plain passport array alone', () => {
+    // `scope` is either a selector or an already-resolved id list; only the
+    // former has a filter to check.
+    expect(validateQuery({ scope: ['a', 'b'], group: { by: 'week' } })).toEqual([])
+  })
+})
+
+describe('validateQuery — malformed queries are named precisely', () => {
+  it('catches an aggregate with no bound', () => {
+    // The case a print-based check would have passed: it renders as
+    // `count(...) <= undefined` rather than failing.
+    const errs = validateQuery({ selector: { filter: { metric: { attrs: { event: 'x' }, count: {} } } } })
+    expect(errs).toHaveLength(1)
+    expect(errs[0].path).toBe('query.selector.filter.metric.count')
+    expect(errs[0].message).toMatch(/numeric gte or lte/)
+  })
+
+  it('names an unknown fact operator and lists the real ones', () => {
+    const [err] = validateQuery({ selector: { filter: { fact: { city: { contains: 'Sof' } } } } })
+    expect(err.message).toMatch(/unknown operator "contains"/)
+    expect(err.message).toMatch(/eq, ne, gt, gte, lt, lte, in, present/)
+  })
+
+  it('reaches inside a funnel step', () => {
+    const [err] = validateQuery({ funnel: { steps: [
+      { name: 'ok', select: { filter: { metric: { attrs: { event: 'a' }, count: { gte: 1 } } } } },
+      { name: 'bad', select: { filter: { metric: { count: { gte: 1 }, nonsense: 1 } } } },
+    ] } })
+    expect(err.path).toBe('query.funnel.steps[1].select.filter.metric')
+    expect(err.message).toMatch(/unknown key "nonsense"/)
+  })
+
+  it('recurses into a series, which carries a whole query of its own', () => {
+    const [err] = validateQuery({ series: [
+      { name: 'A', query: { selector: { filter: { fact: { a: { eq: 1 } } } } } },
+      { name: 'B', query: { scope: { filter: { all: [] } } } },
+    ] })
+    expect(err.path).toBe('query.series[1].query.scope.filter')
+    expect(err.message).toMatch(/non-empty array/)
+  })
+
+  it('reports every problem at once rather than one per round trip', () => {
+    const errs = validateQuery({ selector: { filter: { all: [
+      { fact: { a: { nope: 1 } } },
+      { metric: { sum: { gte: 1 } } },
+      { wat: {} },
+    ] } } })
+    expect(errs.length).toBeGreaterThanOrEqual(3)
+    expect(errs.map(e => e.path)).toEqual(expect.arrayContaining([
+      'query.selector.filter.all[0].fact.a',
+      'query.selector.filter.all[1].metric.sum',
+      'query.selector.filter.all[2]',
+    ]))
+  })
+})
+
+describe('assertValidQuery', () => {
+  it('is silent on a good query', () => {
+    expect(() => assertValidQuery({ selector: { filter: { fact: { a: { eq: 1 } } } } })).not.toThrow()
+  })
+
+  it('throws 422 carrying every error, and lists them in the message', () => {
+    let caught
+    try {
+      assertValidQuery({ selector: { filter: { all: [{ fact: { a: { nope: 1 } } }, { metric: {} }] } } })
+    } catch (e) { caught = e }
+
+    expect(caught).toBeDefined()
+    // 422, not 400: the request parsed and the field types are right — it is the
+    // query's own content that cannot be evaluated.
+    expect(caught.status).toBe(422)
+    expect(caught.errors).toHaveLength(2)
+    expect(caught.message).toMatch(/query is not well-formed/)
+    expect(caught.message).toMatch(/query\.selector\.filter\.all\[0\]\.fact\.a/)
+    expect(caught.message).toMatch(/query\.selector\.filter\.all\[1\]\.metric/)
+  })
+})
