@@ -35,7 +35,10 @@ function stepSelector(step, named) {
 }
 
 // run(spec, { resolveStep, asOf, named, now }) → { report, steps, gaps }
-//   resolveStep(selector, { scope }) → a people result ({ passports: [{ id, matched_at? }] })
+//   resolveStep(selector, { scope, anchors }) → a people result
+//     ({ passports: [{ id, matched_at? }] }). `anchors` is Map(id → time|null),
+//     absent on step 1: each survivor's current anchor, so a step that
+//     aggregates a stream can measure from it instead of from all of history.
 //   now — the clock for gap pending/dropped status (defaults to asOf, then real now)
 export async function run(spec, { resolveStep, asOf, named, now } = {}) {
   const steps = spec?.steps
@@ -56,7 +59,17 @@ export async function run(spec, { resolveStep, asOf, named, now } = {}) {
     if (k > 0 && current.size === 0) { cohorts[k] = new Set(); stateAfter[k] = new Map(); continue }
 
     const scope = k === 0 ? undefined : [...current.keys()]
-    const res = await resolveStep(sel, { scope })
+    // Hand each survivor its own anchor down with the scope. A `fact` step does
+    // not need it — a fact has one timestamp and the comparison below is enough
+    // — but a `metric` step aggregates a stream, and without the anchor its
+    // crossing is the FIRST time the passport ever crossed the bound, which for
+    // a repeat customer is years before the step it is supposed to follow. It
+    // then fails `ev > prior.anchor` and the funnel reports nobody, when what it
+    // measured was "ever" rather than "since".
+    const anchors = k === 0
+      ? undefined
+      : new Map([...current].map(([id, st]) => [id, st.anchor]))
+    const res = await resolveStep(sel, { scope, anchors })
     const evAt = new Map((res?.passports || []).map(p => [p.id, p.matched_at != null ? new Date(p.matched_at).getTime() : null]))
 
     const next = new Map()

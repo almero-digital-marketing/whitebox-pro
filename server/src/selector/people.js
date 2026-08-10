@@ -80,7 +80,7 @@ function withMatchedAt(id, at) {
 // boolean tree). Both resolvePeople and preview run exactly this, so they can
 // never disagree about who the judge sees. Returns the candidate ids plus the
 // metadata preview reports (`aboutCohort`, `fullScan`).
-export async function narrow(selector, { scope, asOf } = {}) {
+export async function narrow(selector, { scope, asOf, anchors } = {}) {
   const at = asOf ? new Date(asOf) : null
   let scopeArr = scope == null ? null : [].concat(scope)
   let aboutCohort = null
@@ -104,6 +104,10 @@ export async function narrow(selector, { scope, asOf } = {}) {
   const ctx = {
     at,
     scope: scopeArr,
+    // Per-passport funnel anchors, when a funnel supplied them. A metric
+    // clause measures its crossing from here rather than from the start of
+    // the passport's history; everything else ignores it.
+    anchors,
     db: rt.db,                   // metric clauses aggregate the awareness exposure stream
     universe: async () => {
       if (scopeArr) return scopeArr

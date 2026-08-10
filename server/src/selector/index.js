@@ -54,7 +54,7 @@ export async function funnel(spec, { asOf, named } = {}) {
   return funnelEngine.run(spec, {
     asOf,
     named,
-    resolveStep: (sel, { scope }) => resolvePeople(sel, { projection: 'people', scope, asOf }),
+    resolveStep: (sel, { scope, anchors }) => resolvePeople(sel, { projection: 'people', scope, anchors, asOf }),
   })
 }
 export const funnelSlot = funnelEngine.slot

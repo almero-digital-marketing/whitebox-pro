@@ -52,7 +52,7 @@ async function evalTimed(node, ctx) {
   if (node.any) return unionTimed(await Promise.all(node.any.map(c => evalTimed(c, ctx))))
   if (node.not) return differenceTimed(mapNull(await ctx.universe()), await evalTimed(node.not, ctx))
   if (node.fact) return evalFact(node.fact, ctx)
-  if (node.metric) return metric.evaluateTimed(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope })
+  if (node.metric) return metric.evaluateTimed(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope, anchors: ctx.anchors })
   throw new Error(`selector.filter: unknown clause ${JSON.stringify(node)}`)
 }
 

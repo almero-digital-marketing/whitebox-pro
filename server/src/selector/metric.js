@@ -153,7 +153,23 @@ export async function evaluate(db, spec, { at, scope } = {}) {
 // is satisfied at the start and lost later, and recency_days is measured from
 // now rather than accumulated, so neither has one — those stay null and behave
 // exactly as they do today.
-export async function evaluateTimed(db, spec, { at, scope } = {}) {
+// `anchors` — Map(passport_id → Date|ms), supplied by a funnel for step 2 and
+// beyond. With it, the crossing is measured from that passport's own anchor
+// instead of from the beginning of its history, and exposures at or before the
+// anchor are not counted toward the bound at all.
+//
+// This is the difference between "has this person ever booked" and "did this
+// person book AFTER the visit", and only the second is a funnel. Without it a
+// repeat customer's crossing is their first booking years ago, which precedes
+// the web session the funnel is measuring from, so funnel.js drops them on
+// `ev > prior.anchor` — and a site-to-booking funnel reports the acquisition
+// rate of brand-new customers while being read as a conversion rate.
+//
+// Membership still comes from evaluate(), unanchored. A passport whose only
+// qualifying activity predates its anchor therefore appears in `ids` with a
+// null time, and a windowed step drops it — the right answer, reached without
+// a second membership query.
+export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
   const ids = await evaluate(db, spec, { at, scope })
   if (!ids.length) return new Map()
 
@@ -175,8 +191,34 @@ export async function evaluateTimed(db, spec, { at, scope } = {}) {
   }[agg]
   if (agg === 'sum' && !field) throw new Error('selector.metric: `sum` needs a `field`')
 
-  const inner = applyFilters(db, base(db, needsSession(filters)), filters, { at, scope: ids, now })
-    .select('e.passport_id as passport_id', 'e.ts as ts', inc.wrap('', ' as inc'))
+  // Anchored passports only, and only where the anchor is a real time. A
+  // funnel step whose predecessor produced no clean time hands us null; that
+  // passport gets no row here, so no crossing, so the windowed step drops it —
+  // which is what funnel.js would have done with the null anyway.
+  const anchored = anchors
+    ? ids
+        .map(id => [id, anchors.get?.(id) ?? anchors[id]])
+        .filter(([, at_]) => at_ != null)
+        .map(([id, at_]) => [id, new Date(at_)])
+    : []
+
+  let inner = applyFilters(db, base(db, needsSession(filters)), filters, { at, scope: ids, now })
+
+  if (anchors) {
+    // unnest over two parallel arrays rather than a VALUES literal: a funnel's
+    // surviving cohort runs to tens of thousands, and that is a query text of
+    // tens of thousands of tuples versus two bind parameters.
+    inner = inner
+      .joinRaw(
+        'join (select * from unnest(?::uuid[], ?::timestamptz[]) as t(passport_id, anchor)) a on a.passport_id = e.passport_id',
+        [anchored.map(([id]) => id), anchored.map(([, at_]) => at_)],
+      )
+      // Strictly after. An exposure AT the anchor is the thing that produced
+      // it — counting it would let a step satisfy itself.
+      .whereRaw('e.ts > a.anchor')
+  }
+
+  inner = inner.select('e.passport_id as passport_id', 'e.ts as ts', inc.wrap('', ' as inc'))
 
   const rows = await db
     .from(
