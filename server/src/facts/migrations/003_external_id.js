@@ -25,23 +25,20 @@
 // a stable external_id could hold exactly one row ever and `history()` would
 // have nothing to return.
 //
-// PARTIAL, so nothing changes for a writer that does not opt in. Every existing
-// caller — geolocation, journeys, people, and every fact already in the table —
-// leaves external_id null and keeps appending exactly as before.
-export const up = async knex => {
-  await knex.schema.alterTable('whitebox_facts', t => {
-    t.string('external_id', 256)
-  })
-  await knex.raw(`
-    CREATE UNIQUE INDEX IF NOT EXISTS whitebox_facts_external_identity_uidx
-      ON whitebox_facts (source, external_id, key, observed_at)
-      WHERE external_id IS NOT NULL
-  `)
-}
+// The column ONLY. The unique index that enforces it lives in 004, after the
+// existing rows have adopted their identity from `entity` and been deduped —
+// creating it here would look harmless (nothing has an external_id yet, so it
+// builds over zero rows) and then reject 004's backfill outright, because the
+// history it adopts contains 171,858 rows left by re-runs from before there was
+// anything to resolve against.
+//
+// PARTIAL when it does arrive, so nothing changes for a writer that does not opt
+// in: geolocation, journeys and people leave external_id null and keep appending
+// exactly as before.
+export const up = knex => knex.schema.alterTable('whitebox_facts', t => {
+  t.string('external_id', 256)
+})
 
-export const down = async knex => {
-  await knex.raw('DROP INDEX IF EXISTS whitebox_facts_external_identity_uidx')
-  await knex.schema.alterTable('whitebox_facts', t => {
-    t.dropColumn('external_id')
-  })
-}
+export const down = knex => knex.schema.alterTable('whitebox_facts', t => {
+  t.dropColumn('external_id')
+})
