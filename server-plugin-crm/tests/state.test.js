@@ -26,8 +26,8 @@ describe('crm state adapter (records → core facts)', () => {
     })
     expect(res.written).toBe(3)
     const by = callsByKey()
-    expect(by.subscription).toMatchObject({ passport_id: 'p-1', key: 'subscription', value: 'active', source: 'stripe', entity: 'subscription:sub_1' })
-    expect(by.plan_tier).toMatchObject({ key: 'plan_tier', value: 'pro', entity: 'subscription:sub_1' })
+    expect(by.subscription).toMatchObject({ passport_id: 'p-1', key: 'subscription', value: 'active', source: 'stripe', external_id: 'subscription:sub_1' })
+    expect(by.plan_tier).toMatchObject({ key: 'plan_tier', value: 'pro', external_id: 'subscription:sub_1' })
     expect(by.seats).toMatchObject({ key: 'seats', value: 9 })
     // starts_at → observed_at on every fact
     for (const f of written()) expect(f.observed_at).toEqual(new Date('2026-01-01T00:00:00Z'))

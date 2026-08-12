@@ -78,10 +78,17 @@ const asArray = k => (k == null ? undefined : [].concat(k))
 
 // Record one observed fact. `observed_at` defaults to now (valid-time); `type`
 // is inferred when omitted. A value change is a new row — nothing is overwritten.
-export async function record({ passport_id, key, value, type, source, observed_at, entity } = {}) {
+//
+// `external_id` is the writer's own handle for this observation, and supplying it
+// is what makes a re-send resolvable (see migrations/003). `resolve` then says
+// what a repeat means — 'skip' if you are re-sending what you already sent,
+// 'replace' if what you sent was wrong. There is no default on purpose: only the
+// writer knows which, and a conflict without one throws rather than guessing.
+export async function record({ passport_id, key, value, type, source, observed_at, external_id, resolve } = {}) {
   if (!passport_id) throw new Error('facts.record: passport_id is required')
   if (!key) throw new Error('facts.record: key is required')
   if (value === undefined) throw new Error('facts.record: value is required')
+  if (resolve && external_id == null) throw new Error('facts.record: resolve needs an external_id to resolve against')
 
   const pid = await resolveId(passport_id)
   const row = await store.insert({
@@ -90,9 +97,9 @@ export async function record({ passport_id, key, value, type, source, observed_a
     value: JSON.stringify(value),   // jsonb; node-pg returns it parsed on read
     type: type || inferType(value),
     source: source || 'unknown',
-    entity: entity || null,
+    external_id: external_id == null ? null : String(external_id),
     observed_at: observed_at ? new Date(observed_at) : new Date(),
-  })
+  }, { resolve })
   logger?.debug?.({ passport_id: pid, key }, 'fact recorded')
   return row
 }
@@ -117,13 +124,19 @@ export async function record({ passport_id, key, value, type, source, observed_a
 // A malformed entry throws rather than being skipped. These batches are built
 // by code, not by users — a missing key is a bug, and dropping it silently
 // would write a partial state that looks complete.
-export async function recordBatch(facts = []) {
+// `resolve` is per BATCH, not per row: it is one INSERT, and ON CONFLICT is a
+// property of the statement. Rows carry their own `external_id` — a batch may
+// mix identified and anonymous facts, and the partial index only sees the former.
+export async function recordBatch(facts = [], { resolve } = {}) {
   if (!facts.length) return []
 
   for (const f of facts) {
     if (!f?.passport_id) throw new Error('facts.recordBatch: passport_id is required')
     if (!f?.key) throw new Error('facts.recordBatch: key is required')
     if (f?.value === undefined) throw new Error('facts.recordBatch: value is required')
+  }
+  if (resolve && !facts.some(f => f.external_id != null)) {
+    throw new Error('facts.recordBatch: resolve needs at least one external_id to resolve against')
   }
 
   const resolved = new Map()
@@ -139,7 +152,7 @@ export async function recordBatch(facts = []) {
       value: JSON.stringify(f.value),
       type: f.type || inferType(f.value),
       source: f.source || 'unknown',
-      entity: f.entity || null,
+      external_id: f.external_id == null ? null : String(f.external_id),
       // Per row here, unlike recordMany: these facts are not one act observed
       // once. A booking from 2023 and a total computed today belong at their own
       // instants, and collapsing them would flatten the history the temporal
@@ -147,8 +160,10 @@ export async function recordBatch(facts = []) {
       observed_at: f.observed_at ? new Date(f.observed_at) : new Date(),
     }))
 
-  const out = await store.insertMany(rows)
-  logger?.debug?.({ count: out.length }, 'facts recorded in batch')
+  const out = await store.insertMany(rows, { resolve })
+  // requested vs count: with resolve 'skip' they differ, and the difference is
+  // the number of facts the writer had already sent. That is the useful figure.
+  logger?.debug?.({ count: out.length, requested: rows.length }, 'facts recorded in batch')
   return out
 }
 
@@ -163,7 +178,7 @@ export async function recordBatch(facts = []) {
 // Returns the rows actually written, which can be FEWER than the ids passed:
 // two people who were merged resolve to the same passport, and recording the
 // same key twice for them would be one fact stated twice, not two facts.
-export async function recordMany({ passport_ids, key, value, type, source, observed_at, entity } = {}) {
+export async function recordMany({ passport_ids, key, value, type, source, observed_at, external_id } = {}) {
   if (!key) throw new Error('facts.recordMany: key is required')
   if (value === undefined) throw new Error('facts.recordMany: value is required')
   const ids = [...new Set((await Promise.all((passport_ids || []).map(resolveId))).filter(Boolean))]
@@ -176,7 +191,7 @@ export async function recordMany({ passport_ids, key, value, type, source, obser
     value: JSON.stringify(value),
     type: type || inferType(value),
     source: source || 'unknown',
-    entity: entity || null,
+    external_id: external_id == null ? null : String(external_id),
     // one timestamp for the whole batch, not one per row: these were observed
     // as a single act, and per-row clock drift would order them arbitrarily
     observed_at: at,

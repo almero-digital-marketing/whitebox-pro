@@ -33,8 +33,10 @@ const isScalar = v => v != null && (typeof v === 'string' || typeof v === 'numbe
 // Write one external record as facts. Returns { written } (number of fact rows).
 export async function record({ source, kind, external_id, passport_id, status, starts_at, data }) {
   const observed_at = starts_at ? new Date(starts_at) : new Date()
-  const entity = `${kind}:${external_id}`
-  const common = { passport_id, observed_at, source, entity }
+  // The writer's handle for this observation. `kind:` prefixes it so two record
+  // kinds sharing an id from the same source stay distinct, and it is what makes
+  // a re-send resolvable — see core facts migrations/003.
+  const common = { passport_id, observed_at, source, external_id: `${kind}:${external_id}` }
 
   const writes = []
   if (status != null) writes.push({ key: kind, value: status })
@@ -54,11 +56,26 @@ export async function record({ source, kind, external_id, passport_id, status, s
   // The batch is all-or-nothing where the loop was per-field tolerant. That is
   // the better failure for structured state: a record half-written is a customer
   // whose status landed and whose amount did not, which reads as real data and
-  // is worse than a record that visibly failed and can be re-sent. Ingest is
-  // idempotent by (source, kind, external_id), so re-sending is free.
+  // is worse than a record that visibly failed and can be re-sent.
+  //
+  // `resolve: 'replace'` is what finally makes "re-sending is free" TRUE. This
+  // endpoint has always described itself as an upsert by
+  // (source, kind, external_id) — routes.js says so, ingest.js says so, and the
+  // line that used to sit here said so. Nothing implemented it: every re-send
+  // appended a second set of rows. gpoint's import ran four times in three days
+  // and left 813,624 booking observations spread across 1,756,015 rows.
+  //
+  // 'replace' rather than 'skip' because that is what an upsert means — a record
+  // re-sent with corrected data should correct what is stored. observed_at is
+  // part of the identity (core facts migrations/003), so a record whose starts_at
+  // moved still APPENDS: the status timeline survives, and only a re-send of the
+  // same record at the same instant collapses.
+  //
+  // `written` is now rows WRITTEN, not rows sent — a re-send that replaces
+  // reports what it touched, and the two numbers were never the same thing.
   let written = 0
   try {
-    const rows = await facts.recordBatch(writes.map(w => ({ ...common, ...w })))
+    const rows = await facts.recordBatch(writes.map(w => ({ ...common, ...w })), { resolve: 'replace' })
     written = rows.length
   } catch (err) {
     logger?.error?.({ err, source, kind, external_id }, 'CRM: facts.recordBatch failed')
@@ -99,17 +116,17 @@ export async function current(passportId) {
 // ATTRIBUTION: core facts is deliberately channel-agnostic — it has a `source`
 // (the external system: 'stripe', 'hubspot') but no `plugin` column, so unlike
 // awareness nothing in the row says "crm wrote this". What is distinctive is
-// `entity`: this adapter always sets it (`kind:external_id`) and no other writer
-// in the suite does — people, journeys and geolocation all leave it null. So
-// entity-tagged rows are a proxy, not a guarantee, and it can only ever
-// over-count (if some other source starts tagging entities). Hence the metric is
-// named for what it counts rather than claimed as exact.
+// `external_id`: this adapter always sets it (`kind:external_id`) and no other
+// writer in the suite does — people, journeys and geolocation all leave it null.
+// So identified rows are a proxy, not a guarantee, and it can only ever
+// over-count (if some other source starts sending external ids). Hence the metric
+// is named for what it counts rather than claimed as exact.
 export async function stats({ since } = {}) {
-  const q = db('whitebox_facts').whereNotNull('entity')
+  const q = db('whitebox_facts').whereNotNull('external_id')
   if (since) q.where('recorded_at', '>=', since instanceof Date ? since : new Date(since))
   const [row] = await q.select(
     db.raw(`count(*)::int                 AS facts`),
-    db.raw(`count(DISTINCT entity)::int   AS records`),
+    db.raw(`count(DISTINCT external_id)::int AS records`),
   )
   return row
 }

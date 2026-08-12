@@ -11,8 +11,29 @@ export function init(deps) {
   db = deps.db
 }
 
-export async function insert(row) {
-  const [out] = await db(TABLE).insert(row).returning('*')
+// The conflict target must REPEAT the index's WHERE clause. Postgres infers
+// which unique index an ON CONFLICT refers to from the target, and a partial
+// index is only inferable when the predicate is given too — `ON CONFLICT
+// (source, external_id, key, observed_at)` alone raises "there is no unique or
+// exclusion constraint matching the ON CONFLICT specification". Knex's
+// .onConflict([columns]) cannot express a predicate, so this is raw.
+const CONFLICT_TARGET = '(source, external_id, key, observed_at) WHERE external_id IS NOT NULL'
+
+// `resolve` belongs to the caller, and there is deliberately no default: only
+// the writer knows whether a repeat means "I already told you this" (skip) or
+// "what I told you was wrong" (replace). Omitted, a conflicting row throws —
+// loud, and only reachable by a writer that opted in by sending external_id.
+function withResolve(q, resolve) {
+  if (resolve === 'skip') return q.onConflict(db.raw(CONFLICT_TARGET)).ignore()
+  if (resolve === 'replace') return q.onConflict(db.raw(CONFLICT_TARGET)).merge()
+  return q
+}
+
+// `.returning('*')` returns FEWER rows than were sent when resolve is 'skip' —
+// a skipped row returns nothing at all. Callers counting the result are counting
+// rows written, not rows accepted, and the two stopped being the same number here.
+export async function insert(row, { resolve } = {}) {
+  const [out] = await withResolve(db(TABLE).insert(row), resolve).returning('*')
   return out
 }
 
@@ -20,11 +41,11 @@ export async function insert(row) {
 // passports and every row here binds 7 parameters — Postgres caps a single
 // statement at 65535 of them.
 const CHUNK = 2000
-export async function insertMany(rows) {
+export async function insertMany(rows, { resolve } = {}) {
   if (!rows?.length) return []
   const out = []
   for (let i = 0; i < rows.length; i += CHUNK) {
-    out.push(...await db(TABLE).insert(rows.slice(i, i + CHUNK)).returning('*'))
+    out.push(...await withResolve(db(TABLE).insert(rows.slice(i, i + CHUNK)), resolve).returning('*'))
   }
   return out
 }

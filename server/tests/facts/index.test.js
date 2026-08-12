@@ -317,3 +317,102 @@ describe('facts.recordBatch (many keys, one statement)', () => {
     expect(await facts.recordBatch()).toEqual([])
   })
 })
+
+// external_id — the writer's idempotency handle (migrations/003).
+//
+// These run against real Postgres deliberately. The mechanism IS the partial
+// unique index and the ON CONFLICT target that has to repeat its predicate; a
+// mocked knex would accept a conflict target Postgres rejects outright with
+// "no unique or exclusion constraint matching the ON CONFLICT specification".
+describe('facts external_id + resolve', () => {
+  const base = (p, over = {}) => ({
+    passport_id: p, key: 'booking', value: true,
+    source: 'gpoint', external_id: 'booking:558231',
+    observed_at: d('2026-03-01T10:00:00Z'), ...over,
+  })
+  const rows = (p) => db('whitebox_facts').where({ passport_id: p }).orderBy('id')
+
+  it('appends as before when no external_id is given', async () => {
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
+    expect(await rows(p)).toHaveLength(2)      // untouched: the index is partial
+  })
+
+  it('resolve:skip makes a re-send free', async () => {
+    const p = await newPassport()
+    const first = await facts.record({ ...base(p), resolve: 'skip' })
+    const again = await facts.record({ ...base(p), resolve: 'skip' })
+    expect(first).toBeTruthy()
+    expect(again).toBeUndefined()              // nothing returned — nothing written
+    expect(await rows(p)).toHaveLength(1)
+  })
+
+  it('resolve:replace corrects what was already sent', async () => {
+    const p = await newPassport()
+    await facts.record({ ...base(p, { value: 'pending' }), resolve: 'replace' })
+    await facts.record({ ...base(p, { value: 'confirmed' }), resolve: 'replace' })
+    const all = await rows(p)
+    expect(all).toHaveLength(1)
+    expect(all[0].value).toBe('confirmed')
+  })
+
+  it('keeps the TIMELINE — a later observation of the same id is a new row', async () => {
+    // observed_at is in the key precisely so this still appends. Without it a
+    // fact with a stable external_id could hold one row ever and history() would
+    // have nothing to return.
+    const p = await newPassport()
+    await facts.record({ ...base(p, { value: 'pending' }), resolve: 'skip' })
+    await facts.record({ ...base(p, { value: 'confirmed', observed_at: d('2026-03-02T10:00:00Z') }), resolve: 'skip' })
+    expect(await rows(p)).toHaveLength(2)
+    expect(await facts.get(p, 'booking')).toBe('confirmed')
+  })
+
+  it('scopes identity to the source — two systems can both observe it', async () => {
+    const p = await newPassport()
+    await facts.record({ ...base(p), resolve: 'skip' })
+    await facts.record({ ...base(p, { source: 'altegio' }), resolve: 'skip' })
+    expect(await rows(p)).toHaveLength(2)
+  })
+
+  it('throws on a conflict when the caller named no resolution', async () => {
+    // No default, on purpose: only the writer knows whether a repeat means
+    // "already sent" or "was wrong". Loud beats guessing.
+    const p = await newPassport()
+    await facts.record(base(p))
+    await expect(facts.record(base(p))).rejects.toThrow()
+  })
+
+  it('rejects resolve without an external_id to resolve against', async () => {
+    const p = await newPassport()
+    await expect(facts.record({ passport_id: p, key: 'k', value: 1, resolve: 'skip' }))
+      .rejects.toThrow(/external_id/)
+  })
+
+  it('recordBatch: skips only the rows already sent, keeps the rest', async () => {
+    const p = await newPassport()
+    await facts.recordBatch([base(p)], { resolve: 'skip' })
+    const out = await facts.recordBatch([
+      base(p),                                              // already sent
+      base(p, { external_id: 'booking:558232', value: 1 }), // new
+    ], { resolve: 'skip' })
+    expect(out).toHaveLength(1)
+    expect(await rows(p)).toHaveLength(2)
+  })
+
+  it('recordBatch: a batch may mix identified and anonymous facts', async () => {
+    const p = await newPassport()
+    await facts.recordBatch([
+      base(p),
+      { passport_id: p, key: 'visits_total', value: 12, source: 'gpoint', observed_at: d('2026-03-01T10:00:00Z') },
+    ], { resolve: 'skip' })
+    // Re-send both: the identified one is skipped, the anonymous one appends.
+    await facts.recordBatch([
+      base(p),
+      { passport_id: p, key: 'visits_total', value: 12, source: 'gpoint', observed_at: d('2026-03-01T10:00:00Z') },
+    ], { resolve: 'skip' })
+    const all = await rows(p)
+    expect(all.filter(r => r.key === 'booking')).toHaveLength(1)
+    expect(all.filter(r => r.key === 'visits_total')).toHaveLength(2)
+  })
+})

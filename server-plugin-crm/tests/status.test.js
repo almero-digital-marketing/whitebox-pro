@@ -50,7 +50,7 @@ function setup(opts) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('crm state.stats (records → core facts)', () => {
-  it('counts entity-tagged fact rows, windowed on recorded_at', async () => {
+  it('counts externally-identified fact rows, windowed on recorded_at', async () => {
     const since = new Date('2026-07-01T00:00:00Z')
     const db = setup({ facts: { records: 4, facts: 11 } })
 
@@ -58,9 +58,9 @@ describe('crm state.stats (records → core facts)', () => {
 
     const q = db.seen[0]
     expect(q.table).toBe('whitebox_facts')
-    // `entity` is what marks a row as this adapter's — core facts has no `plugin`
+    // `external_id` is what marks a row as this adapter's — core facts has no `plugin`
     // column, so there is nothing else to scope by.
-    expect(q.notNull).toEqual(['entity'])
+    expect(q.notNull).toEqual(['external_id'])
     // recorded_at (when we learned it), NOT observed_at — a backdated import is
     // recent ingest with old event times.
     expect(q.wheres).toEqual([['recorded_at', '>=', since]])
