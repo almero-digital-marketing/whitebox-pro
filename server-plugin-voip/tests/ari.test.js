@@ -293,6 +293,65 @@ describe('voip/ari', () => {
     expect(calls.pick).not.toHaveBeenCalled()
   })
 
+  // The bridge POLL, the only pick signal that can fire for a dialplan-built
+  // bridge. ARI's event stream is subscription-scoped and
+  // POST /applications/{app}/subscription takes bridge:{bridgeId} with no
+  // wildcard — so a bridge the ring group created is one we can never subscribe
+  // to, and ChannelEnteredBridge never arrives. Production confirms it:
+  // GET /ari/applications reports bridge_ids [] and 58 of 61 calls were filed
+  // `missed` with picked_at null, 40 of them holding a real conversation.
+  it('polls /ari/bridges and picks a channel found in a mixing bridge', async () => {
+    vi.useFakeTimers()
+    try {
+      const deps = makeDeps()
+      await ari.init(deps)
+
+      emitAriEvent('StasisStart', {
+        id: 'ch-1', linkedid: 'L-1', state: 'Up',
+        caller: { number: '+359894229776' },
+        dialplan: { exten: '+35924374792' },
+      }, { args: [] })
+      await vi.advanceTimersByTimeAsync(0)
+      calls.pick.mockClear()
+
+      // A HOLDING bridge is music-on-hold while the group rings — NOT a pick.
+      fetchBehavior['/ari/bridges'] = { ok: true, status: 200, json: [{ id: 'br-h', bridge_type: 'holding', channels: ['ch-1'] }] }
+      await vi.advanceTimersByTimeAsync(2100)
+      expect(calls.pick).not.toHaveBeenCalled()
+
+      // Now bridged to an agent.
+      fetchBehavior['/ari/bridges'] = { ok: true, status: 200, json: [{ id: 'br-m', bridge_type: 'mixing', channels: ['ch-1', 'agent-9'] }] }
+      await vi.advanceTimersByTimeAsync(2100)
+      expect(calls.pick).toHaveBeenCalledWith(expect.objectContaining({ vaultId: expect.any(String) }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // `destination` was written from channel.caller.number — but that channel IS
+  // the caller's, so the column became a copy of `caller`. Both rows that ever
+  // reached this path in production had destination === caller.
+  it('does not write the caller back into destination', async () => {
+    const deps = makeDeps()
+    await ari.init(deps)
+
+    emitAriEvent('StasisStart', {
+      id: 'ch-1', linkedid: 'L-1',
+      caller: { number: '+359888001122' },
+      dialplan: { exten: '+35921234567' },
+    }, { args: [] })
+    await new Promise(r => setImmediate(r))
+    calls.pick.mockClear()
+
+    emitAriEvent('ChannelStateChange', { id: 'ch-1', state: 'Up', caller: { number: '+359888001122' } })
+    await new Promise(r => setImmediate(r))
+
+    expect(calls.pick).toHaveBeenCalled()
+    const { destination } = calls.pick.mock.calls[0][0]
+    expect(destination).not.toBe('+359888001122')
+    expect(destination ?? null).toBeNull()
+  })
+
   // Regression: a real 69-second call (+359894229776, 2026-08-05 06:35Z) was recorded as
   // `missed`. It reached Stasis already 'Up' — a redirect — so no transition to Up ever
   // followed, ChannelStateChange never fired, picked_at stayed null, and calls.end()

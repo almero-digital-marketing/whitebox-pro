@@ -95,6 +95,8 @@ const continueChannel = (id, opts) => ariRequest('POST', `/ari/channels/${encode
 const deleteRecording = (name)     => ariRequest('DELETE', `/ari/recordings/stored/${encodeURIComponent(name)}`)
 const snoopChannel    = (id, opts) => ariRequest('POST', `/ari/channels/${encodeURIComponent(id)}/snoop`, opts)
 const hangupChannel   = (id)       => ariRequest('DELETE', `/ari/channels/${encodeURIComponent(id)}`)
+// Every bridge on the system, not just ours — see watchForBridge.
+const listBridges     = ()         => ariRequest('GET', '/ari/bridges')
 
 // A channel's implicit event subscription (granted by entering Stasis) ends
 // once it leaves the app via continue() — its later ChannelStateChange and
@@ -133,6 +135,8 @@ function connectWebSocket(appName) {
   })
 }
 
+const seenUnhandled = new Set()
+
 const EVENT_HANDLERS = {
   StasisStart:        (event, channel) => wrap(onStasisStart)(event, channel),
   ChannelStateChange:  (event, channel) => wrap(onStateChange)(event, channel),
@@ -153,7 +157,18 @@ function attachHandlers(socket) {
       return
     }
     const handle = EVENT_HANDLERS[event.type]
-    if (handle) handle(event, event.channel)
+    if (handle) return handle(event, event.channel)
+
+    // Everything else was dropped in silence, and that silence is what made the
+    // pick bug expensive: there was no way to ask what the socket actually
+    // receives, so "ChannelEnteredBridge never arrives" had to be inferred from
+    // an absence rather than read off a log. Debug level and once per type —
+    // this is a busy stream and the useful signal is the SET of types seen, not
+    // the count.
+    if (!seenUnhandled.has(event.type)) {
+      seenUnhandled.add(event.type)
+      logger.debug({ eventType: event.type }, 'ARI WS: unhandled event type (first occurrence)')
+    }
   })
   socket.on('close', () => logger.warn('ARI WebSocket closed'))
   socket.on('error', err => logger.error({ err }, 'ARI WebSocket error'))
@@ -383,6 +398,62 @@ async function onStasisStart(event, channel) {
   await subscribeToChannel(id).catch(err => logger.warn({ err, channelId: id }, 'subscribeToChannel failed'))
 
   await continueInDialplan(channel)
+
+  watchForBridge(id)
+}
+
+// The pick signal that actually works, and the reason it has to be a poll.
+//
+// ARI's event stream is SUBSCRIPTION-scoped; its REST resources are GLOBAL. An
+// application receives ChannelEnteredBridge only for a bridge it is subscribed
+// to, and `POST /applications/{app}/subscription` takes `bridge:{bridgeId}` —
+// there is no wildcard, so a bridge we have never heard of is one we can never
+// subscribe to. The bridge here is built by the dialplan's ring group, not by
+// us. `GET /ari/applications` confirms it: bridge_ids is [] and has always been
+// [], so onEnteredBridge below has never fired once in production.
+//
+// `GET /ari/bridges` has no such limit — it lists every bridge on the system
+// with its member channels, ours included. So we ask for what we cannot be told.
+//
+// This matters because the other signal cannot cover for it. picked_at is
+// otherwise written only on a ChannelStateChange to Up, and the transition that
+// normally causes is our OWN answerChannel(); a channel that arrives already
+// 'Up' produces no transition. Between them, 58 of 61 calls were filed `missed`
+// with picked_at null — 40 of those with a full two-way conversation in the
+// transcript, one of them 494 seconds long. calls.end() reads that one field to
+// choose 'ended' vs 'missed', and the health card flags `missed` severity:'bad',
+// so the operator's "missed enquiries" number was ~95% false.
+//
+// Bounded by construction: stops on the first mixing bridge, on hangup (the
+// entry leaves calls_), or at MAX_BRIDGE_WATCH. Idempotent because recordPick
+// is — where a transition does fire it wins on timing and this changes nothing.
+const BRIDGE_POLL_MS = 2000
+const MAX_BRIDGE_WATCH_MS = 10 * 60 * 1000
+
+function watchForBridge(channelId) {
+  const started = Date.now()
+  const tick = async () => {
+    const entry = calls_.get(channelId)
+    if (!entry || entry.pickDate) return                 // hung up, or already picked
+    if (Date.now() - started > MAX_BRIDGE_WATCH_MS) return
+
+    try {
+      const bridges = await listBridges()
+      // A MIXING bridge holding this channel means it is connected to another
+      // party. A HOLDING bridge means the opposite — music-on-hold while the
+      // ring group is still ringing, i.e. nobody has taken it yet.
+      const bridged = (bridges || []).some(b =>
+        b?.bridge_type === 'mixing' && (b.channels || []).includes(channelId))
+      if (bridged) {
+        await recordPick({ id: channelId }, 'bridged')
+        return
+      }
+    } catch (err) {
+      logger.debug({ err, channelId }, 'bridge poll failed')
+    }
+    setTimeout(tick, BRIDGE_POLL_MS).unref?.()
+  }
+  setTimeout(tick, BRIDGE_POLL_MS).unref?.()
 }
 
 // No explicit context/extension/priority: ARI's /continue, given an
@@ -439,12 +510,17 @@ async function recordPick(channel, via) {
   const date = new Date()
   entry.pickDate = date
 
-  let destination = ''
-  try {
-    destination = phonebook.toE164(channel.caller?.number || '', voipConfig.country)
-  } catch { /* destination is the agent's local extension; OK if it doesn't parse */ }
-
-  await calls.pick({ vaultId: entry.vaultId, destination, date })
+  // `channel` here is the CALLER's channel — it is the one keyed in calls_ — so
+  // channel.caller.number is the caller's own number, not the agent's. Writing
+  // it to `destination` made the column a copy of `caller`: both rows that ever
+  // reached this path had destination === caller, 100% of them.
+  //
+  // The agent's leg is a different channel, created by the dialplan's ring group
+  // in an app we do not see, so ARI gives us no id for it here. Rather than
+  // store something untrue, store nothing and let the column mean what it says.
+  // Recovering it properly needs the bridge's OTHER member, which is available
+  // from GET /ari/bridges — a follow-up, not a guess to leave in place.
+  await calls.pick({ vaultId: entry.vaultId, destination: null, date })
 
   logger.info(
     { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, destination, via,
