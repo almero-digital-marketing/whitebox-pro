@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-engagement",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Web engagement ingestion for whitebox — text reading, image viewing, video watched intervals fed into awareness.",
   "type": "module",
   "main": "src/index.js",
