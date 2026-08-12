@@ -16,10 +16,10 @@ export function registerMcp(ctx, { db }) {
     name: 'voip.list_calls',
     description: 'List recorded calls most-recent-first. Filter by passport, status, tag, or date range.',
     inputSchema: {
-      passport_id: z.string().uuid().optional(),
+      passport_id: z.uuid().optional(),
       status:      z.enum(['ringing', 'active', 'ended', 'missed']).optional(),
       tag:         z.string().max(64).optional(),
-      since:       z.string().datetime().optional(),
+      since:       z.iso.datetime().optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
     handler: async ({ passport_id, status, tag, since, limit = 50 }) => {

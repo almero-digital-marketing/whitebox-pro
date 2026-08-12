@@ -81,8 +81,8 @@ function extractUtms(query) {
 }
 
 const inboxSchema = z.object({
-  from: z.string().email(),
-  to: z.string().email().optional(),
+  from: z.email(),
+  to: z.email().optional(),
   subject: z.string().min(1),
   body: z.string().optional(),
   // Optional structured identity fields — linked to passport in addition to email
@@ -90,8 +90,8 @@ const inboxSchema = z.object({
   name: z.string().optional(),
   address: z.string().optional(),
   country: z.string().length(2).optional(),   // ISO-3166 alpha-2; used for phone parsing
-  data: z.record(z.any()).optional().nullable(),
-  passport_id: z.string().uuid().optional().nullable(),
+  data: z.record(z.string(), z.any()).optional().nullable(),
+  passport_id: z.uuid().optional().nullable(),
 })
 
 // Dependencies captured once via init() — module-level singletons, no

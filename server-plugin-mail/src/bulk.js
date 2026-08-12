@@ -10,8 +10,8 @@ const MAX_RECIPIENTS_PER_BATCH = 10_000
 const DEFAULT_BATCH_SIZE = 500
 
 const recipientSchema = z.object({
-  to: z.string().email(),
-  data: z.record(z.any()).optional().nullable(),
+  to: z.email(),
+  data: z.record(z.string(), z.any()).optional().nullable(),
 })
 
 // Send-level shortener config (UTM defaults for the link-personalization pass).
@@ -33,7 +33,7 @@ const bulkSchema = z.object({
   html: z.string().optional(),
   text: z.string().optional(),
   template: z.string().optional().nullable(),
-  attachment_urls: z.array(z.string().url()).optional(),
+  attachment_urls: z.array(z.url()).optional(),
   recipients: z.array(recipientSchema).min(1).max(MAX_RECIPIENTS_PER_BATCH),
   shorten: shortenSchema,
 }).refine(d => d.html || d.text || d.template, {

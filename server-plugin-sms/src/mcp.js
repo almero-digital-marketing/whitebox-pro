@@ -22,8 +22,8 @@ export function registerMcp(ctx, { db }) {
       from:        z.string().optional(),
       body:        z.string().optional(),
       template:    z.string().optional(),
-      media:       z.array(z.string().url()).optional(),
-      passport_id: z.string().uuid().optional(),
+      media:       z.array(z.url()).optional(),
+      passport_id: z.uuid().optional(),
     },
     scope: SCOPE,
     handler: async ({ to, from, body, template, media, passport_id: passportId }) => {
@@ -55,8 +55,8 @@ export function registerMcp(ctx, { db }) {
     name: 'sms.inbox_list',
     description: 'List inbound SMS (replies, STOP/START) most-recent-first. Filter by passport or date range.',
     inputSchema: {
-      passport_id: z.string().uuid().optional(),
-      since:       z.string().datetime().optional(),
+      passport_id: z.uuid().optional(),
+      since:       z.iso.datetime().optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
     scope: SCOPE,

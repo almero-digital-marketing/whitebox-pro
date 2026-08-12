@@ -7,7 +7,7 @@
 import { z } from 'zod'
 
 export const askSchema = z.object({
-  passport_id: z.string().uuid(),
+  passport_id: z.uuid(),
   question:    z.string().min(1),
   limit:       z.number().int().positive().max(50).optional(),
 })

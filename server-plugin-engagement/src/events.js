@@ -12,11 +12,11 @@ import { z } from 'zod'
 // Manual section (legacy / explicit wb.engagement.section(...) calls)
 const sectionSchema = z.object({
   id:       z.string().optional().nullable(),
-  url:      z.string().url().optional().nullable(),
+  url:      z.url().optional().nullable(),
   text:     z.string().min(1),
   ts:       z.union([z.string(), z.number()]).optional(),
   dwell_ms: z.number().int().nonnegative().optional(),
-  meta:     z.record(z.any()).optional(),
+  meta:     z.record(z.string(), z.any()).optional(),
 })
 
 // Automatic text tracking (data-wb-text)
@@ -26,7 +26,7 @@ const textSchema = z.object({
   level:        z.number().int().min(1).max(6).optional().nullable(),
   text:         z.string().min(1),
   length_chars: z.number().int().nonnegative().optional(),
-  url:          z.string().url().optional().nullable(),
+  url:          z.url().optional().nullable(),
   ts:           z.union([z.string(), z.number()]).optional(),
   ms_spent:     z.number().int().nonnegative().optional(),
   partial:      z.boolean().optional(),
@@ -40,8 +40,8 @@ const videoIntervalSchema = z.object({
 const videoSchema = z.object({
   id:              z.string().optional().nullable(),
   kind:            z.literal('video').optional(),
-  src:             z.string().url().optional().nullable(),
-  url:             z.string().url().optional().nullable(),
+  src:             z.url().optional().nullable(),
+  url:             z.url().optional().nullable(),
   duration_s:      z.number().nonnegative().optional().nullable(),
   intervals:       z.array(videoIntervalSchema).optional(),
   total_watched_s: z.number().nonnegative().optional(),
@@ -70,8 +70,8 @@ const linkSchema = z.object({
 const imageSchema = z.object({
   id:          z.string().optional().nullable(),
   kind:        z.literal('image').optional(),
-  src:         z.string().url().optional().nullable(),
-  url:         z.string().url().optional().nullable(),
+  src:         z.url().optional().nullable(),
+  url:         z.url().optional().nullable(),
   alt:         z.string().optional().nullable(),
   width:       z.number().int().nonnegative().optional().nullable(),
   height:      z.number().int().nonnegative().optional().nullable(),

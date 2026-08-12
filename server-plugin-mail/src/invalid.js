@@ -27,7 +27,7 @@ function normalize(email) {
 }
 
 const createSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   reason: z.enum(REASONS).optional(),
   error_message: z.string().optional().nullable(),
 })

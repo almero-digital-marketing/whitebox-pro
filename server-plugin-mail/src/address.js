@@ -10,7 +10,7 @@
 //
 // `from` is the opposite case. buildMessage puts it in Reply-To and nowhere
 // else; the visible From header is the provider's configured sender. RFC 5322
-// allows a display name in Reply-To, so `z.string().email()` was rejecting a
+// allows a display name in Reply-To, so `z.email()` was rejecting a
 // legal header value — and it did, in production: every G Point booking
 // confirmation carried from "G Point <info@gpoint.bg>" and got back
 // 400 {"fieldErrors":{"from":["Invalid email"]}}, so the outbox row was never
@@ -29,7 +29,7 @@ export function mailboxAddress(value) {
   return match ? match[1] : value.trim()
 }
 
-const emailSchema = z.string().email()
+const emailSchema = z.email()
 
 // A bare address, or a display name plus an address. Stored as given so the
 // display name survives into Reply-To; only the addr-spec is validated.

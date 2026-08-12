@@ -28,9 +28,9 @@ const outboxSchema = z.object({
   from: z.string().optional().nullable(),
   body: z.string().optional(),
   template: z.string().optional().nullable(),
-  media: z.array(z.string().url()).optional(),
-  passport_id: z.string().uuid().optional().nullable(),
-  data: z.record(z.any()).optional().nullable(),
+  media: z.array(z.url()).optional(),
+  passport_id: z.uuid().optional().nullable(),
+  data: z.record(z.string(), z.any()).optional().nullable(),
 }).refine(d => d.body || d.template, { message: 'body or template is required' })
 
 // Dependencies captured once via init() — module-level singletons.

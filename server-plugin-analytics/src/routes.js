@@ -10,7 +10,7 @@ import { createAskHandler, createAskPopulationHandler } from './ask.js'
 // limit/offset are parsed by the shared pagination helper; the schemas just bound
 // them so a bad value 400s rather than silently clamping.
 const recallSchema = z.object({
-  passport_id:    z.string().uuid(),
+  passport_id:    z.uuid(),
   query:          z.string().min(1),
   limit:          z.number().int().positive().max(100).optional(),
   offset:         z.number().int().nonnegative().optional(),

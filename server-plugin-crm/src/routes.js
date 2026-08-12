@@ -11,7 +11,7 @@ import { CORE_EVENTS } from 'whitebox-pro-server/event-catalog'
 // email / phone / external_id must resolve to an identity at ingest time,
 // or the request is dropped with `202 no_identity`.
 const customerSchema = z.object({
-  email:       z.string().email().optional(),
+  email:       z.email().optional(),
   phone:       z.string().optional(),
   country:     z.string().length(2).optional(),
   external_id: z.union([z.string(), z.number()]).optional(),
@@ -22,8 +22,8 @@ const recordSchema = z.object({
   kind:        z.string().min(1).max(64),
   external_id: z.union([z.string(), z.number()]),
   status:      z.string().max(64).optional().nullable(),
-  starts_at:   z.string().datetime().optional().nullable(),
-  data:        z.record(z.any()).optional(),
+  starts_at:   z.iso.datetime().optional().nullable(),
+  data:        z.record(z.string(), z.any()).optional(),
 })
 
 const recordsRequestSchema = z.object({
@@ -39,7 +39,7 @@ const factSchema = z.object({
   id:   z.union([z.string(), z.number()]),
   kind: z.string().min(1).max(64),
   body: z.string().min(1),
-  ts:   z.string().datetime().optional(),
+  ts:   z.iso.datetime().optional(),
   ref:  z.object({
     kind:        z.string().min(1).max(64),
     external_id: z.union([z.string(), z.number()]),
@@ -84,9 +84,9 @@ const eventSchema = z.object({
   event:       z.string().min(1).max(64),
   external_id: z.union([z.string(), z.number()]).optional(),
   text:        z.string().min(1).optional(),
-  ts:          z.string().datetime().optional(),
+  ts:          z.iso.datetime().optional(),
   direction:   z.enum(DIRECTIONS).optional(),
-  attrs:       z.record(z.any()).optional(),
+  attrs:       z.record(z.string(), z.any()).optional(),
 })
 
 const eventsRequestSchema = z.object({
@@ -102,8 +102,8 @@ const observationSchema = z.object({
   id:   z.union([z.string(), z.number()]),
   kind: z.string().min(1).max(64),
   body: z.string().min(1),
-  ts:   z.string().datetime().optional(),
-  meta: z.record(z.any()).optional(),
+  ts:   z.iso.datetime().optional(),
+  meta: z.record(z.string(), z.any()).optional(),
 })
 
 export const observeSchema = z.object({

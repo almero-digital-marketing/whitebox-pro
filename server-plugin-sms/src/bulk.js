@@ -9,14 +9,14 @@ const MAX_RECIPIENTS = 10_000
 
 const recipientSchema = z.object({
   to: z.string().min(3),
-  data: z.record(z.any()).optional().nullable(),
+  data: z.record(z.string(), z.any()).optional().nullable(),
 })
 
 const bulkSchema = z.object({
   from: z.string().optional().nullable(),
   body: z.string().optional(),
   template: z.string().optional().nullable(),
-  media: z.array(z.string().url()).optional(),
+  media: z.array(z.url()).optional(),
   recipients: z.array(recipientSchema).min(1).max(MAX_RECIPIENTS),
 }).refine(d => d.body || d.template, { message: 'body or template is required' })
 

@@ -38,7 +38,7 @@ export function registerMcp(ctx, { db, content }) {
   ctx.mcp.tool({
     name: 'engagement.get_content',
     description: 'Fetch the full cached content entry for a URL: transcript text, segments, and metadata.',
-    inputSchema: { url: z.string().url() },
+    inputSchema: { url: z.url() },
     handler: async ({ url }) => {
       const row = await db('whitebox_engagement_content').where({ url }).first()
       if (!row) {
@@ -51,7 +51,7 @@ export function registerMcp(ctx, { db, content }) {
   ctx.mcp.tool({
     name: 'engagement.invalidate_content',
     description: 'Drop the cached transcript / description for a URL. Next time a visitor engages with this URL, whitebox will regenerate it.',
-    inputSchema: { url: z.string().url() },
+    inputSchema: { url: z.url() },
     handler: async ({ url }) => {
       const deleted = await content.invalidate(url)
       return { content: [{ type: 'text', text: `Invalidated ${deleted} row(s) for ${url}` }] }

@@ -24,7 +24,7 @@ export function registerMcp(ctx, { awareness, context }) {
   tool('whitebox.ask',
     'Answer a natural-language question about a single customer. Returns a grounded synthesis built from semantic recall (mail / voip / web / crm content history) plus current structured context (CRM rows). Cites timestamps. The single most useful tool for understanding a customer.',
     {
-      passport_id: z.string().uuid(),
+      passport_id: z.uuid(),
       question:    z.string().min(1),
       limit:       z.number().int().positive().max(50).optional(),
     },
@@ -52,7 +52,7 @@ export function registerMcp(ctx, { awareness, context }) {
   tool('whitebox.recall',
     'Per-passport semantic search. Returns the top-K content chunks (mail bodies, web reads, call transcripts, CRM notes) most relevant to a query, ranked by vector similarity. Each hit includes channel, direction, timestamp, and UTM attribution when available.',
     {
-      passport_id:    z.string().uuid(),
+      passport_id:    z.uuid(),
       query:          z.string().min(1),
       limit:          z.number().int().positive().max(100).optional(),
       min_similarity: z.number().min(0).max(1).optional(),
@@ -82,9 +82,9 @@ export function registerMcp(ctx, { awareness, context }) {
   tool('whitebox.timeline',
     'Flat content timeline for a single passport, newest first. Returns raw exposures (no embedding work). Filter by channel (mail / voip / web / crm), direction (exposure / expression / conversation / observation), and date range.',
     {
-      passport_id: z.string().uuid(),
-      from:        z.string().datetime().optional(),
-      to:          z.string().datetime().optional(),
+      passport_id: z.uuid(),
+      from:        z.iso.datetime().optional(),
+      to:          z.iso.datetime().optional(),
       channels:    z.array(z.string()).optional(),
       directions:  z.array(z.string()).optional(),
     },
@@ -104,7 +104,7 @@ export function registerMcp(ctx, { awareness, context }) {
   tool('whitebox.context',
     'Inspect the structured context registry for a passport — what every plugin (crm, billing, …) currently knows. This is what whitebox.ask sees before the LLM step; useful for debugging "why didn\'t the answer mention X?".',
     {
-      passport_id: z.string().uuid(),
+      passport_id: z.uuid(),
       providers:   z.array(z.string()).optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
@@ -129,7 +129,7 @@ export function registerMcp(ctx, { awareness, context }) {
   tool('whitebox.forget',
     'GDPR forget — deletes all awareness exposures + orphan chunks for a passport. Cascades through every channel. Irreversible. Use with caution from an LLM context; consider gating on a separate confirmation tool call in production.',
     {
-      passport_id: z.string().uuid(),
+      passport_id: z.uuid(),
     },
     'analytics:write',
     async ({ passport_id }) => {

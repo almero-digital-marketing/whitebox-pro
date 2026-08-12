@@ -9,7 +9,7 @@ import { z } from 'zod'
 
 // Shared customer block — matches the HTTP webhook schema.
 const customerShape = {
-  email:       z.string().email().optional(),
+  email:       z.email().optional(),
   phone:       z.string().optional(),
   country:     z.string().length(2).optional(),
   external_id: z.union([z.string(), z.number()]).optional(),
@@ -35,8 +35,8 @@ export function registerMcp(ctx, { state, ingest }) {
       kind:        z.string().min(1).max(64),
       external_id: z.union([z.string(), z.number()]),
       status:      z.string().max(64).optional().nullable(),
-      starts_at:   z.string().datetime().optional().nullable(),
-      data:        z.record(z.any()).optional(),
+      starts_at:   z.iso.datetime().optional().nullable(),
+      data:        z.record(z.string(), z.any()).optional(),
     },
     handler: async ({ source, customer, kind, external_id, status, starts_at, data }) => {
       const result = await ingest.ingestRecords({
@@ -64,7 +64,7 @@ export function registerMcp(ctx, { state, ingest }) {
       id:       z.union([z.string(), z.number()]),
       kind:     z.string().min(1).max(64),                       // 'note' | 'tag' | 'call_summary' | …
       body:     z.string().min(1),
-      ts:       z.string().datetime().optional(),
+      ts:       z.iso.datetime().optional(),
       ref:      z.object({
         kind:        z.string().min(1).max(64),
         external_id: z.union([z.string(), z.number()]),
@@ -91,7 +91,7 @@ export function registerMcp(ctx, { state, ingest }) {
     name: 'crm.get_state',
     description: 'Get a customer\'s current structured state — the key→value facts CRM records have written for this passport (e.g. { subscription: "active", plan_tier: "pro" }). For history, transitions or cross-customer queries, use the core whitebox.query tool (these are core facts).',
     inputSchema: {
-      passport_id: z.string().uuid(),
+      passport_id: z.uuid(),
     },
     handler: async ({ passport_id }) => {
       const current = await state.current(passport_id)

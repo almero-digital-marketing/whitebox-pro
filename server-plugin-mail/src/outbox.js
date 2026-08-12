@@ -37,15 +37,15 @@ export const shortenSchema = z.object({
 const outboxSchema = z.object({
   // `to` is strict: it is the identity/suppression key, not a header. `from`
   // becomes Reply-To, where a display name is legal. See address.js.
-  to: z.string().email(),
+  to: z.email(),
   from: mailboxSchema.optional().nullable(),
   subject: z.string().min(1),
   html: z.string().optional(),
   text: z.string().optional(),
   template: z.string().optional().nullable(),
-  attachment_urls: z.union([z.string().url(), z.array(z.string().url())]).optional(),
-  passport_id: z.string().uuid().optional().nullable(),
-  data: z.record(z.any()).optional().nullable(),
+  attachment_urls: z.union([z.url(), z.array(z.url())]).optional(),
+  passport_id: z.uuid().optional().nullable(),
+  data: z.record(z.string(), z.any()).optional().nullable(),
   shorten: shortenSchema,
 }).refine(d => d.html || d.text || d.template, {
   message: 'At least one of html, text, or template is required',

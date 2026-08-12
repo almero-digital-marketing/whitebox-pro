@@ -25,11 +25,11 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.send',
     description: 'Send a transactional email. Either `template` (mikser layout id) or one of `html` / `text` must be provided. Returns the outbox row id and initial status.',
     inputSchema: {
-      to:       z.string().email(),
+      to:       z.email(),
       subject:  z.string().min(1),
       from:     mailboxSchema.optional(),
       template: z.string().optional(),
-      data:     z.record(z.any()).optional(),
+      data:     z.record(z.string(), z.any()).optional(),
       html:     z.string().optional(),
       text:     z.string().optional(),
       idempotency_key: z.string().optional(),
@@ -74,9 +74,9 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.inbox_list',
     description: 'List inbound messages (contact-form submissions and email replies) most-recent-first. Filter by passport, source, or date range.',
     inputSchema: {
-      passport_id: z.string().uuid().optional(),
+      passport_id: z.uuid().optional(),
       source:      z.enum(['form', 'inbound']).optional(),
-      since:       z.string().datetime().optional(),
+      since:       z.iso.datetime().optional(),
       limit:       z.number().int().positive().max(200).optional(),
     },
     scope: SCOPE,
@@ -116,7 +116,7 @@ export function registerMcp(ctx, { db }) {
     name: 'mail.suppress',
     description: 'Add an email address to the suppression list (user opt-out). Future sends to this address are blocked at preflight.',
     inputSchema: {
-      email:  z.string().email(),
+      email:  z.email(),
       reason: z.string().max(128).optional(),
       notes:  z.string().optional(),
     },
@@ -130,7 +130,7 @@ export function registerMcp(ctx, { db }) {
   ctx.mcp.tool({
     name: 'mail.unsuppress',
     description: 'Remove an email address from the suppression list. Use when a user re-opts-in.',
-    inputSchema: { email: z.string().email() },
+    inputSchema: { email: z.email() },
     scope: SCOPE,
     handler: async ({ email }) => {
       const removed = await suppressions.remove(email)
