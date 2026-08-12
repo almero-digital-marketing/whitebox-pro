@@ -323,6 +323,17 @@ describe('voip/ari', () => {
       fetchBehavior['/ari/bridges'] = { ok: true, status: 200, json: [{ id: 'br-m', bridge_type: 'mixing', channels: ['ch-1', 'agent-9'] }] }
       await vi.advanceTimersByTimeAsync(2100)
       expect(calls.pick).toHaveBeenCalledWith(expect.objectContaining({ vaultId: expect.any(String) }))
+
+      // The pick must reach the OUTSIDE, not just the row. recordPick writes
+      // picked_at first and emits after, so a throw between the two leaves a
+      // database that looks correct and a system that heard nothing — no live
+      // board, no journey trigger, no webhook. That shipped once: a stale
+      // `destination` reference in the log binding threw a ReferenceError on the
+      // line after calls.pick(), wrap() swallowed it, and the only visible
+      // symptom was a missing log line. Asserting the write alone could not see
+      // it; this can.
+      const published = deps.events.publish.mock.calls.map(([type]) => type)
+      expect(published).toContain('voip.pick')
     } finally {
       vi.useRealTimers()
     }

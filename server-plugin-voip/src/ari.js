@@ -522,8 +522,14 @@ async function recordPick(channel, via) {
   // from GET /ari/bridges — a follow-up, not a guess to leave in place.
   await calls.pick({ vaultId: entry.vaultId, destination: null, date })
 
+  // No `destination` binding here: the variable is gone, and referencing it threw
+  // a ReferenceError on the line after calls.pick() had already committed. The row
+  // came out right — picked_at and status both written — while the log stayed
+  // silent and, far worse, the notify() below never ran, so the pick reached the
+  // database and nothing else: no live board, no journey trigger, no webhook.
+  // Partial success is the failure that looks like health.
   logger.info(
-    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, destination, via,
+    { vaultId: entry.vaultId, caller: entry.caller, line: entry.line, via,
       waitMs: entry.ringDate ? date - entry.ringDate : null },
     'Call picked: %s (%s)', entry.caller, via,
   )
