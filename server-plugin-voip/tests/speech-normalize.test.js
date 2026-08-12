@@ -77,6 +77,30 @@ describe('the editor decides by a field, not by its prose', () => {
     }
   })
 
+  it('keeps the raw transcript when the editor returns a fraction of it', async () => {
+    // The failure `success` cannot see: the model does the job destructively and
+    // reports success. A 227-second call reached normalize() as 2,076 characters
+    // of conversation and left it as the single word "Звънец" — the editor took
+    // the "ТЕЛЕФОННО ЗВОНИТ" Whisper puts at the head of a noisy recording,
+    // decided that was the content, and returned it alone. Stored for two days
+    // as that call's transcript, with success=true and no apology to match on.
+    const long = 'Здравейте. ' .repeat(60)                       // ~660 chars
+    await install({ objectImpl: async () => ({ success: true, transcript: 'Звънец' }), asr: long })
+    const out = await speech.transcribe('x.mp3')
+    expect(out).toBe(long)
+    expect(warnings).toHaveLength(1)
+  })
+
+  it('accepts an edit that changes the text without gutting it', async () => {
+    // The guard is on the OPERATION, not the wording — a real correction moves
+    // the length a little and must pass.
+    const raw = 'здравейте има записен къс за ваше офис в редута '.repeat(8)
+    const fixed = 'Здравейте, има записан час за вашия офис в Редута.'.repeat(8)
+    await install({ objectImpl: async () => ({ success: true, transcript: fixed }), asr: raw })
+    expect(await speech.transcribe('x.mp3')).toBe(fixed)
+    expect(warnings).toHaveLength(0)
+  })
+
   it('keeps every schema field required — optional fields are a 400 from OpenAI', () => {
     // A fake `ai` cannot catch this: it never validates the schema the way the
     // provider does. `z.string().default('')` reads as harmless and makes the

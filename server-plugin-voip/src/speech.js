@@ -29,6 +29,13 @@ export const EDIT = z.object({
   transcript: z.string(),
 })
 
+// How much of the input an edit has to keep to still count as one. Correcting
+// spelling and recognition errors moves the length by a few percent either way;
+// half is far outside that, and the case this exists for lost 99.7% — 2,076
+// characters returned as 6. Deliberately loose: the point is to catch the
+// transcript being replaced by something else, not to police wording.
+const RETAINED_MIN = 0.5
+
 export async function init(deps) {
   language = deps.config.voip.language
   recordsFolder = deps.config.voip.recordsFolder
@@ -77,13 +84,34 @@ async function normalize(transcript) {
 
   // Falling back to the RAW transcript, never to nothing. Whisper's output is
   // the conversation — garbled, but readable and worth keeping. Every call this
-  // path has fired on had a perfectly usable raw transcript behind the apology
-  // that replaced it.
+  // path has fired on had a perfectly usable raw transcript behind whatever
+  // replaced it.
   const edited = result?.success ? result.transcript?.trim() : ''
   if (!edited) {
     logger.warn(
       { chars: transcript.length, declined: result?.success === false },
       'Transcription editor returned no usable text; keeping the raw transcript',
+    )
+    return transcript
+  }
+
+  // An edit that deletes most of the transcript is not an edit, whatever the
+  // model says about it. `success` catches the model announcing it cannot do the
+  // job; it cannot catch the model doing the job destructively and reporting
+  // success — and that happened. One 227-second call reached this function as
+  // 2,076 characters of conversation and left it as the single word "Звънец":
+  // the editor took the "ТЕЛЕФОННО ЗВОНИТ" that Whisper puts at the head of a
+  // noisy recording, decided that was the content, and returned it alone. Stored
+  // for two days as that call's transcript, with success=true.
+  //
+  // This is a check on the OPERATION, not a guess at the meaning. Correcting
+  // spelling and recognition errors moves the length a little in either
+  // direction; losing half of it means the text that came back is not the text
+  // that went in, and no reading of the prose is needed to know that.
+  if (edited.length < transcript.length * RETAINED_MIN) {
+    logger.warn(
+      { from: transcript.length, to: edited.length },
+      'Transcription editor returned a fraction of the input; keeping the raw transcript',
     )
     return transcript
   }
