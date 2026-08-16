@@ -50,6 +50,27 @@ export async function insertMany(rows, { resolve } = {}) {
   return out
 }
 
+// The CURRENT row for each of a set of (passport_id, key) pairs, in ONE query —
+// the read half of no-op suppression (see facts/index.js `suppressNoOps`).
+//
+// Over-fetches slightly: it filters on the DISTINCT sets rather than the exact
+// pairs, so N passports × M keys can return more rows than pairs asked for. That
+// is deliberate — the exact-pair form is a VALUES join that plans worse, and the
+// dominant callers are "one passport, a few keys" (a session hook) or "many
+// passports, one key" (a bulk tag), where the two are identical. The
+// (passport_id, key, observed_at) index serves it either way.
+export async function currentForPairs(pairs) {
+  if (!pairs?.length) return []
+  const passportIds = [...new Set(pairs.map(p => p.passport_id))]
+  const keys = [...new Set(pairs.map(p => p.key))]
+  return db(TABLE)
+    .distinctOn(['passport_id', 'key'])
+    .whereIn('passport_id', passportIds)
+    .whereIn('key', keys)
+    .orderBy([{ column: 'passport_id' }, { column: 'key' }, { column: 'observed_at', order: 'desc' }])
+    .select('*')
+}
+
 // Every fact key this deployment has ever recorded. There is no fixed
 // vocabulary, so this IS the vocabulary — it's what lets a key field suggest
 // `client_status` instead of letting you invent `clientStatus` beside it.

@@ -76,22 +76,98 @@ function inferType(value) {
 
 const asArray = k => (k == null ? undefined : [].concat(k))
 
+// ── no-op suppression ───────────────────────────────────────────────────────
+//
+// A write that restates the CURRENT value of a key changes nothing any reader
+// can observe — `current`, `asOf`, `matches` and the selector's fact predicate
+// all resolve to the latest row per (passport, key), so a second identical row
+// is invisible to every one of them while still costing heap and, far worse,
+// index. It is stored, indexed, vacuumed and backed up to answer no question.
+//
+// This was not hypothetical. The geolocation plugin hooks sessions.onResolve and
+// writes five facts (country/region/city/lat/lon) on EVERY session, with no
+// comparison against what is already there — so a returning visitor from the
+// same city wrote five identical rows per visit. On the GPoint deployment that
+// was ~107k redundant rows per geo key within a week, against a facts table
+// whose indexes (3.6 GB) had grown to nearly twice its heap (1.9 GB).
+//
+// Two carve-outs, both load-bearing:
+//
+//  · A row carrying an `external_id` is never suppressed. It names a distinct
+//    external thing (`booking:123`), and two different bookings legitimately
+//    share a value — `booking_online = true` for both. Collapsing those would
+//    destroy real records, not redundant ones. This is exactly the line the data
+//    showed: geo keys carry no external_id and duplicated heavily; booking keys
+//    carry one and did not duplicate at all.
+//
+//    This is also why suppression and `resolve` never overlap. `resolve`
+//    ('skip'/'replace') settles what a RE-SEND of an identified observation
+//    means, and reaches the database as ON CONFLICT against a partial index the
+//    external_id rows alone occupy. Suppression handles the other half — the
+//    anonymous restatement, which no index can recognise as a repeat because
+//    nothing about it is stable enough to key on.
+//
+//  · A BACK-DATED write is never suppressed. Suppression compares against the
+//    current (latest) row, so a row landing before it can still change what
+//    `asOf(t)` returns for an earlier instant, and `history()` reads the whole
+//    timeline. Only a write that would itself become the new current row, with
+//    an unchanged value, is a true no-op.
+//
+// `force: true` opts out per call, for a caller that genuinely wants an
+// append-only observation log ("we saw this again at T").
+
+// Stable stringify — object key ORDER must not decide equality, or a provider
+// that serialises {lat, lon} today and {lon, lat} tomorrow reads as a change.
+function canonical(v) {
+  return JSON.stringify(v, (_k, val) =>
+    (val && typeof val === 'object' && !Array.isArray(val))
+      ? Object.fromEntries(Object.keys(val).sort().map(k => [k, val[k]]))
+      : val)
+}
+
+// rows in → { write, skipped }. `rows` are fully-built store rows (value and
+// external_id already normalised). One query regardless of batch size.
+async function suppressNoOps(rows) {
+  const comparable = rows.filter(r => r.external_id == null)
+  if (!comparable.length) return { write: rows, skipped: [] }
+
+  const current = await store.currentForPairs(
+    comparable.map(({ passport_id, key }) => ({ passport_id, key })),
+  )
+  const k = (pid, key) => `${pid}\u0000${key}`
+  const idx = new Map(current.map(c => [k(c.passport_id, c.key), c]))
+
+  const write = [], skipped = []
+  for (const r of rows) {
+    const cur = r.external_id != null ? null : idx.get(k(r.passport_id, r.key))
+    const isNoOp = cur
+      && canonical(cur.value) === canonical(JSON.parse(r.value))
+      && new Date(r.observed_at) >= new Date(cur.observed_at)
+    if (isNoOp) skipped.push(cur); else write.push(r)
+  }
+  return { write, skipped }
+}
+
 // Record one observed fact. `observed_at` defaults to now (valid-time); `type`
-// is inferred when omitted. A value change is a new row — nothing is overwritten.
+// is inferred when omitted. A value CHANGE is a new row — nothing is overwritten;
+// a write that merely restates the current value is suppressed (see above), and
+// the existing current row comes back, so the contract holds either way: what is
+// returned is the row that is now current for this (passport, key). `force: true`
+// records the restatement anyway.
 //
 // `external_id` is the writer's own handle for this observation, and supplying it
 // is what makes a re-send resolvable (see migrations/003). `resolve` then says
 // what a repeat means — 'skip' if you are re-sending what you already sent,
 // 'replace' if what you sent was wrong. There is no default on purpose: only the
 // writer knows which, and a conflict without one throws rather than guessing.
-export async function record({ passport_id, key, value, type, source, observed_at, external_id, resolve } = {}) {
+export async function record({ passport_id, key, value, type, source, observed_at, external_id, resolve, force } = {}) {
   if (!passport_id) throw new Error('facts.record: passport_id is required')
   if (!key) throw new Error('facts.record: key is required')
   if (value === undefined) throw new Error('facts.record: value is required')
   if (resolve && external_id == null) throw new Error('facts.record: resolve needs an external_id to resolve against')
 
   const pid = await resolveId(passport_id)
-  const row = await store.insert({
+  const candidate = {
     passport_id: pid,
     key,
     value: JSON.stringify(value),   // jsonb; node-pg returns it parsed on read
@@ -99,7 +175,17 @@ export async function record({ passport_id, key, value, type, source, observed_a
     source: source || 'unknown',
     external_id: external_id == null ? null : String(external_id),
     observed_at: observed_at ? new Date(observed_at) : new Date(),
-  }, { resolve })
+  }
+
+  if (!force) {
+    const { write, skipped } = await suppressNoOps([candidate])
+    if (!write.length) {
+      logger?.debug?.({ passport_id: pid, key }, 'fact unchanged — write suppressed')
+      return skipped[0]
+    }
+  }
+
+  const row = await store.insert(candidate, { resolve })
   logger?.debug?.({ passport_id: pid, key }, 'fact recorded')
   return row
 }
@@ -127,7 +213,10 @@ export async function record({ passport_id, key, value, type, source, observed_a
 // `resolve` is per BATCH, not per row: it is one INSERT, and ON CONFLICT is a
 // property of the statement. Rows carry their own `external_id` — a batch may
 // mix identified and anonymous facts, and the partial index only sees the former.
-export async function recordBatch(facts = [], { resolve } = {}) {
+// `force` is per batch for the same reason, though nothing forces it to be: a
+// caller who wants half a batch suppressed and half of it forced is describing
+// two batches.
+export async function recordBatch(facts = [], { resolve, force } = {}) {
   if (!facts.length) return []
 
   for (const f of facts) {
@@ -160,10 +249,16 @@ export async function recordBatch(facts = [], { resolve } = {}) {
       observed_at: f.observed_at ? new Date(f.observed_at) : new Date(),
     }))
 
-  const out = await store.insertMany(rows, { resolve })
-  // requested vs count: with resolve 'skip' they differ, and the difference is
-  // the number of facts the writer had already sent. That is the useful figure.
-  logger?.debug?.({ count: out.length, requested: rows.length }, 'facts recorded in batch')
+  // Suppression matters most here: this is the CRM re-sync path, where a
+  // customer's ~90 fields are pushed again on every run and typically two or
+  // three of them have actually moved.
+  const { write, skipped } = force ? { write: rows, skipped: [] } : await suppressNoOps(rows)
+
+  const out = await store.insertMany(write, { resolve })
+  // requested vs count: with resolve 'skip' or a suppressed restatement they
+  // differ, and the difference is the number of facts the writer had already
+  // sent. That is the useful figure.
+  logger?.debug?.({ count: out.length, requested: rows.length, suppressed: skipped.length }, 'facts recorded in batch')
   return out
 }
 
@@ -178,14 +273,14 @@ export async function recordBatch(facts = [], { resolve } = {}) {
 // Returns the rows actually written, which can be FEWER than the ids passed:
 // two people who were merged resolve to the same passport, and recording the
 // same key twice for them would be one fact stated twice, not two facts.
-export async function recordMany({ passport_ids, key, value, type, source, observed_at, external_id } = {}) {
+export async function recordMany({ passport_ids, key, value, type, source, observed_at, external_id, force } = {}) {
   if (!key) throw new Error('facts.recordMany: key is required')
   if (value === undefined) throw new Error('facts.recordMany: value is required')
   const ids = [...new Set((await Promise.all((passport_ids || []).map(resolveId))).filter(Boolean))]
   if (!ids.length) return []
 
   const at = observed_at ? new Date(observed_at) : new Date()
-  const rows = await store.insertMany(ids.map(passport_id => ({
+  const candidates = ids.map(passport_id => ({
     passport_id,
     key,
     value: JSON.stringify(value),
@@ -195,8 +290,14 @@ export async function recordMany({ passport_ids, key, value, type, source, obser
     // one timestamp for the whole batch, not one per row: these were observed
     // as a single act, and per-row clock drift would order them arbitrarily
     observed_at: at,
-  })))
-  logger?.debug?.({ count: rows.length, key }, 'facts recorded in bulk')
+  }))
+
+  // Re-tagging a cohort is the norm, not the exception — an audience refresh
+  // re-states the same tag for everyone who was already in it.
+  const { write, skipped } = force ? { write: candidates, skipped: [] } : await suppressNoOps(candidates)
+
+  const rows = await store.insertMany(write)
+  logger?.debug?.({ count: rows.length, suppressed: skipped.length, key }, 'facts recorded in bulk')
   return rows
 }
 
