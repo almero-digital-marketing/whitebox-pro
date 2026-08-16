@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-ui",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "description": "WhiteBox admin console — a Vue 3 SPA served automatically by whitebox-pro-server when installed.",
   "scripts": {
