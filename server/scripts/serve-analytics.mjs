@@ -8,7 +8,7 @@
 // First run: bootstrap an admin user and the UI's OAuth client (from
 // server-plugin-oauth/):
 //   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' node scripts/create-admin.mjs
-//   node scripts/create-client.mjs --name="WhiteBox UI" --redirect-uri=http://localhost:5173/callback
+//   node scripts/create-client.mjs --name="WhiteBox UI" --redirect-uri=http://localhost:9269/callback
 // then put the printed client_id in ui/.env.local as VITE_OAUTH_CLIENT_ID.
 
 import '../src/quiet-deprecations.js'
@@ -49,7 +49,7 @@ import { jwt } from 'whitebox-pro-auth-auth0'
 
 const port = Number(process.env.WB_PORT || 3000)
 // The UI's dev server (vite) — invite links point here, not at this API port.
-const APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'
+const APP_URL = process.env.WB_APP_URL || 'http://localhost:9269'
 const OAUTH_ISSUER = `http://localhost:${port}/oauth`
 const OAUTH_AUDIENCE = 'https://whitebox/api'
 // Each module gets its own read/write scope pair now — see each plugin's

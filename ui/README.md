@@ -31,7 +31,7 @@ cd server && node --env-file-if-exists=.env scripts/serve-analytics.mjs   # :300
 
 ```bash
 # 2) this SPA — no env file, nothing to register
-cd ui && npm install && npm run dev                                       # :5174
+cd ui && npm install && npm run dev                                       # :9269
 ```
 
 Vite proxies `/api` → the server (stripping the prefix) and `/socket.io` with
@@ -53,7 +53,7 @@ publish if anything install-specific reaches `dist/`.
 
 **The dev server's port must match the server's `WB_APP_URL`.** The console's
 redirect_uri is `${location.origin}/callback` and OAuth matches it exactly, so
-`:5174` here means `WB_APP_URL=http://localhost:5174` there. `strictPort` is on
+`:9269` here means `WB_APP_URL=http://localhost:9269` there. `strictPort` is on
 so a busy port fails loudly instead of sliding to `:5175` and failing later at
 `/authorize`, a long way from the cause.
 

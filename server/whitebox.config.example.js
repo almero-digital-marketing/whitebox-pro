@@ -34,7 +34,7 @@ import { oauth } from 'whitebox-pro-server-plugin-oauth'
 import { jwt } from 'whitebox-pro-auth-auth0'   // generic OIDC verifier, reused
 const OAUTH_ISSUER = process.env.WB_OAUTH_ISSUER || 'http://localhost:3000/oauth'
 const OAUTH_AUDIENCE = 'https://whitebox/api'          // any fixed string identifying your API
-const OAUTH_APP_URL = process.env.WB_APP_URL || 'http://localhost:5173'   // where the UI lives — invite links point here
+const OAUTH_APP_URL = process.env.WB_APP_URL || 'http://localhost:9269'   // where the UI lives — invite links point here
 
 // Ad networks, mail providers, and SMS providers compose like plugins — one
 // self-contained, independently-released package each, living in their own repos

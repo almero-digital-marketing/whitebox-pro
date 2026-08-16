@@ -66,7 +66,7 @@ const AUDIENCE = 'https://whitebox/api'         // any fixed string identifying 
 plugins: [
   oauth({
     issuer: ISSUER, audience: AUDIENCE,
-    appUrl: 'http://localhost:5173',        // where the UI lives — invite emails link here
+    appUrl: 'http://localhost:9269',        // where the UI lives — invite emails link here
   }),
   // …
 ],
@@ -131,7 +131,7 @@ one-off CLI script:
 
 ```bash
 node scripts/create-client.mjs --name="WhiteBox UI" \
-  --redirect-uri="http://localhost:5173/callback"
+  --redirect-uri="http://localhost:9269/callback"
 ```
 
 All of the above read the same `WB_DB_*` env vars the main WhiteBox server
