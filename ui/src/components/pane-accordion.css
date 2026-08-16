@@ -42,6 +42,17 @@
 }
 .pane-accordion .p-accordionpanel:not(:first-child) > .p-accordionheader { border-top: 1px solid var(--border) !important; border-radius: 0 !important; }
 .pane-accordion .p-accordionpanel-active > .p-accordionheader { color: var(--text-strong); border-bottom: 1px solid var(--border) !important; }
+
+/* No chevron. These headers are a section-header TIER, not a widget: the pane is a
+   fixed set of two or three sections, one of which is always open, so the icon
+   never told you anything the pane's own state did not already say — the active
+   header takes --text-strong and draws the rule under itself, and the open panel
+   is right there under it.
+   Hidden rather than removed via a `:toggleicon` template override, because that
+   would mean an override in each module's Accordion — the five-way duplication
+   this file exists to undo. The header stays a <button> with aria-expanded, so
+   nothing is lost to a screen reader; only the redundant glyph goes. */
+.pane-accordion .p-accordionheader-toggle-icon { display: none; }
 .pane-accordion .p-accordioncontent-content { padding: 16px 18px; background: var(--panel); border: none; }
 
 /* ── the open panel ──────────────────────────────────────────────────────────
