@@ -235,13 +235,31 @@ export async function factBreakdown(key, scope, { limit = 12, grain } = {}) {
 
   // The current-value rule (latest observed_at per passport) is the same one the
   // fact predicate uses, so these counts agree with a fact-eq filter on any single
-  // value. `NULLS LAST, id DESC` only makes the pick deterministic when two rows
-  // share an observed_at; on the GPoint data the tied rows hold identical values,
-  // so it changes no count.
+  // value.
+  //
+  // `id DESC` decides a tie on observed_at. Two earlier claims about it were wrong
+  // and are corrected here, both by measurement against the GPoint data:
+  //
+  //  · it does NOT merely make an arbitrary pick reproducible. 4 passports hold two
+  //    booking_online rows at the SAME instant with DIFFERENT values, so the tiebreak
+  //    moves a bucket count. Reproducible is still the behaviour worth having — a
+  //    chart that changes when you reload is worse than one that picks a rule — but
+  //    it is a decision about the data, not a formality.
+  //
+  //  · `NULLS LAST` was never a no-op in cost, only in meaning. observed_at is NOT
+  //    NULL, so it can never change a result; but it does not match the covering
+  //    index whitebox_facts_key_passport_observed_idx (DESC, i.e. NULLS FIRST), and
+  //    an ORDER BY the index cannot serve turns an Index Only Scan into a Seq Scan
+  //    plus an external merge sort. Measured on 817,700 rows for one key: 2.9s with
+  //    the index, 9.2s without. Dropping it costs nothing and restores the plan.
+  //
+  // `id DESC` alone still needs an index that carries it (see migration 005) — with
+  // one, this is FASTER than the original non-deterministic form (1.8s vs 2.9s),
+  // because the index then answers the ordering outright.
   const current = `SELECT DISTINCT ON (passport_id) passport_id, value
                      FROM whitebox_facts
                     WHERE key = ? ${scopeSql}
-                    ORDER BY passport_id, observed_at DESC NULLS LAST, id DESC`
+                    ORDER BY passport_id, observed_at DESC, id DESC`
 
   // Ungrouped: buckets are the raw values, ranked by size (the high-cardinality
   // guardrail — top-N of many). Grained: buckets are truncated dates, and `limit`
