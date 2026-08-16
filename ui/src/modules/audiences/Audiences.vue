@@ -9,8 +9,7 @@ import { ref, computed, watch, nextTick, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
-import SidePaneToggle from '../../components/SidePaneToggle.vue'
-import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
+import SidePane from '../../components/SidePane.vue'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Accordion from 'primevue/accordion'
@@ -20,10 +19,6 @@ import AccordionContent from 'primevue/accordioncontent'
 import RailPane from '../../components/RailPane.vue'
 import { useAudiencesStore } from '../analytics/stores/audiences'
 import { notifyError } from '../../shell/toast'
-
-// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
-// remembered per module across reloads (see useSidePaneCollapsed).
-const paneCollapsed = useSidePaneCollapsed('audiences')
 
 
 const confirm = useConfirm()
@@ -415,8 +410,7 @@ async function toggleNetwork(n: any) {
     <!-- right: Segments (palette) / Activation — stacked accordion panels, Segments first
          and expanded by default. Activation's CAPI send is gated by an explicit confirm
          (preview of the deliverable cohort). -->
-    <aside class="aud-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
-      <SidePaneToggle v-model="paneCollapsed" />
+    <SidePane module="audiences" class="aud-side">
       <Accordion v-model:value="activePanel" class="aud-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="segments">
           <AccordionHeader><span class="acc-title">Segments <span class="count-pill sm">{{ working?.members?.length ?? 0 }}</span></span></AccordionHeader>
@@ -493,7 +487,7 @@ async function toggleNetwork(n: any) {
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
-    </aside>
+    </SidePane>
     <ConfirmDialog />
   </div>
 </template>
@@ -502,7 +496,9 @@ async function toggleNetwork(n: any) {
 .aud-console { display: flex; height: 100%; min-height: 0; }
 .aud-left { flex: none; width: 350px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .aud-right { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.aud-side { flex: none; width: 400px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
+/* Its own: this pane clips rather than letting a wide preview push the layout. */
+.aud-side { overflow: hidden; }
 /* same empty state as Analytics'/Campaigns'/Users' — shown until the first audience is
    opened or a new one is started */
 .placeholder { display: grid; place-items: center; height: 100%; text-align: center; }

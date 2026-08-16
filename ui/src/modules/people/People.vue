@@ -14,8 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 // calls confirm() any more — IdentitiesPanel does, for unlink — and
 // useConfirm() only queues; something mounted has to render it.
 import FilterMenu from '../../components/FilterMenu.vue'
-import SidePaneToggle from '../../components/SidePaneToggle.vue'
-import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
+import SidePane from '../../components/SidePane.vue'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import RailPane from '../../components/RailPane.vue'
@@ -32,10 +31,6 @@ import SegmentsPanel from './panels/SegmentsPanel.vue'
 import ActivityTimeline from './ActivityTimeline.vue'
 import EraseDialog from './EraseDialog.vue'
 import './panels/panel.css'
-
-// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
-// remembered per module across reloads (see useSidePaneCollapsed).
-const paneCollapsed = useSidePaneCollapsed('people')
 
 
 const route = useRoute()
@@ -398,8 +393,7 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 
     <!-- right: the things you can change about whatever the centre is showing —
          one person, or the whole selection -->
-    <aside class="ppl-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
-      <SidePaneToggle v-model="paneCollapsed" />
+    <SidePane module="people" class="ppl-side">
       <!-- The SAME panels, in the same order, with `bulk` swapping their target
            from one person to the whole selection. Not lookalikes: adding to a
            list and recording a fact are the same acts at either size, and two
@@ -446,7 +440,7 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
-    </aside>
+    </SidePane>
     <ConfirmDialog />
     <EraseDialog v-model:visible="eraseOpen" :person="current" :bulk="hasSelection" :disabled="!canErase" />
   </div>
@@ -456,7 +450,7 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 .ppl-console { display: flex; height: 100%; min-height: 0; }
 .ppl-left { flex: none; width: 350px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .ppl-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.ppl-side { flex: none; width: 400px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
 /* Center-pane chrome — copied from Campaigns.vue (.placeholder / .builder /
    .b-head / .b-name-static / .blk-head), so this module's detail view is the
    same object as every other module's rather than a lookalike. */

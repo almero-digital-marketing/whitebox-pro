@@ -1,22 +1,25 @@
-/* THE right pane's collapse behaviour, and the look of the control that drives it.
+/* THE right pane — the element SidePane.vue renders. Companion to pane-accordion.css,
+ * which styles what usually goes inside it.
  *
- * Companion to pane-accordion.css, and here for the same reason: five modules own a
- * right pane (.ppl-side · .aud-side · .jrn-details · .cmp-side · .lv-side) and four
- * of the five width rules are byte-identical already. Collapsing is one more thing
- * they would each have implemented slightly differently, so it is written once and
- * the modules opt in by adding `side-pane` beside their own class.
+ * Lives in a stylesheet rather than in SidePane.vue's own <style scoped> because it
+ * is inherited by each module's extras: a module still puts its own class on the pane
+ * (`.cmp-side`, `.ppl-side`) for module-specific rules, and those are written against
+ * an element this file, not a scoped block, is free to describe.
  *
- * USAGE
- *   <aside class="ppl-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
- *     <SidePaneToggle v-model="paneCollapsed" />
- *     …the pane's normal content…
- *   </aside>
+ * USAGE — the module passes content, not geometry:
+ *   <SidePane module="people" class="ppl-side">…</SidePane>
  *
- * NOT scoped, deliberately — it has to reach each module's own aside class, which a
- * scoped stylesheet cannot. Imported once, from main.ts.
+ * NOT scoped, deliberately. Imported once, from main.ts.
  */
 
-.side-pane { position: relative; transition: width .18s ease; }
+/* The geometry every right pane had its own copy of. Four of the seven module rules
+ * were byte-identical to this before it moved here; width is the only thing any of
+ * them genuinely disagreed about, so that is the one part left as a prop. */
+.side-pane {
+  flex: none; min-height: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--panel);
+  position: relative; transition: width .18s ease;
+}
 
 /* `!important` because the module's width rule is SCOPED, and a scoped rule compiles
  * to `.ppl-side[data-v-abc123]` — two compound selectors, exactly the specificity of

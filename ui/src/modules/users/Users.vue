@@ -25,12 +25,7 @@ import RailPane from '../../components/RailPane.vue'
 import { useUsersStore } from './stores/users'
 import { useAuthStore } from '../../shell/stores/auth'
 import { notifyError } from '../../shell/toast'
-import SidePaneToggle from '../../components/SidePaneToggle.vue'
-import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
-
-// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
-// remembered per module across reloads (see useSidePaneCollapsed).
-const paneCollapsed = useSidePaneCollapsed('users')
+import SidePane from '../../components/SidePane.vue'
 
 
 const LOGIN_PAGE_ROWS = 10   // matches analytics' WidgetCard table — rows per page, not an inner scrollbar
@@ -466,8 +461,7 @@ function fmtDateTime(iso?: string) {
     </section>
 
     <!-- right: this user's permissions — a separate concern from their identity above -->
-    <aside class="usr-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
-      <SidePaneToggle v-model="paneCollapsed" />
+    <SidePane module="users" class="usr-side">
       <div class="pane-head">Permissions</div>
       <div class="side-body">
         <p v-if="!working" class="tip">Pick a user on the left, or invite one with +, to manage their permissions.</p>
@@ -494,7 +488,7 @@ function fmtDateTime(iso?: string) {
           <Button label="Publish" size="small" :disabled="!permsDirty" :loading="savingPerms" @click="savePermissions" />
         </div>
       </div>
-    </aside>
+    </SidePane>
     <ConfirmDialog />
 
     <Dialog v-model:visible="showCurrentPasswordDialog" modal header="Confirm it's you" :style="{ width: '340px' }">
@@ -513,7 +507,7 @@ function fmtDateTime(iso?: string) {
 .usr-console { display: flex; height: 100%; min-height: 0; }
 .usr-left { flex: none; width: 350px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .usr-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.usr-side { flex: none; width: 400px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
 .side-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 18px; }
 .b-actions { display: flex; align-items: center; gap: 10px; }
 /* center pane (profile doc): fixed 52px bar pinned to the pane's bottom, same as

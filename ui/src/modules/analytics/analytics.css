@@ -18,8 +18,12 @@
 .left   { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 /* the reports list flexes to fill so the bottom rail search sits flush at the pane's bottom */
 .left .list { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.center { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
-.right  { background: var(--panel); display: flex; flex-direction: column; }
+/* No border-right here any more: the compose pane is a SidePane now and draws its own
+   border-left, the way every other module's right pane always has. Both would be a 2px
+   divider against the 1px one on the left of the board. */
+.center { background: var(--panel); display: flex; flex-direction: column; }
+/* `.right` keeps only what is ITS own — background, flex column and the border come
+   from .side-pane (side-pane.css). Kept as a hook for the rules below. */
 /* Hide native scrollbars across the whole console chrome. The board re-enables a slim
    styled scrollbar on its own edge. PrimeVue dropdowns are portaled to <body>, outside
    .console, so their scrollbars are untouched. */

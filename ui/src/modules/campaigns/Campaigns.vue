@@ -14,8 +14,7 @@ import { ref, computed, watch, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
-import SidePaneToggle from '../../components/SidePaneToggle.vue'
-import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
+import SidePane from '../../components/SidePane.vue'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Textarea from 'primevue/textarea'
@@ -50,10 +49,6 @@ import ResultsBlock from './ResultsBlock.vue'
 import { useCampaignsStore } from './stores/campaigns'
 import { useAudiencesStore } from '../analytics/stores/audiences'
 import { notifyError } from '../../shell/toast'
-
-// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
-// remembered per module across reloads (see useSidePaneCollapsed).
-const paneCollapsed = useSidePaneCollapsed('campaigns')
 
 
 const confirm = useConfirm()
@@ -555,8 +550,7 @@ function ago(iso?: string) {
     <!-- far-right: Audiences (palette) / Delivery / Objectives — stacked accordion panels,
          Audiences first (attach a target before writing delivery settings or objectives),
          same pattern as Audiences.vue's Segments/Activation accordion. -->
-    <aside class="cmp-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
-      <SidePaneToggle v-model="paneCollapsed" />
+    <SidePane module="campaigns" class="cmp-side">
       <Accordion v-model:value="activePanel" class="cmp-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="audiences">
           <AccordionHeader><span class="acc-title">Audiences <span class="count-pill sm">{{ working?.audiences?.length ?? 0 }}</span></span></AccordionHeader>
@@ -658,7 +652,7 @@ function ago(iso?: string) {
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
-    </aside>
+    </SidePane>
     <ConfirmDialog />
   </div>
 </template>
@@ -667,7 +661,7 @@ function ago(iso?: string) {
 .cmp-console { display: flex; height: 100%; min-height: 0; }
 .cmp-left { flex: none; width: 300px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .cmp-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.cmp-side { flex: none; width: 400px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
 /* same empty state as Analytics' Board.vue */
 .placeholder { display: grid; place-items: center; height: 100%; text-align: center; }
 .placeholder h2 { margin: 0 0 6px; color: var(--text); }

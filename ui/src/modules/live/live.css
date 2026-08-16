@@ -18,8 +18,8 @@
 
 /* No padding of its own: the Accordion's header and content bring their own, the
    same as People's `.ppl-side`. */
-.lv-side { flex: none; width: 340px; min-height: 0; display: flex; flex-direction: column;
-  border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
+/* 340, not the 400 the others take — passed as SidePane's `:width`. */
 
 /* The right pane is an Accordion in every module, and this one is JOURNEYS'
    (`.jrn-accordion` in Journeys.vue), declaration for declaration.

@@ -14,8 +14,7 @@ import { ref, computed, watch, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
-import SidePaneToggle from '../../components/SidePaneToggle.vue'
-import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
+import SidePane from '../../components/SidePane.vue'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
@@ -43,10 +42,6 @@ import { useCampaignsStore } from '../campaigns/stores/campaigns'
 import { api as analyticsApi } from '../analytics/api'
 import { useAuthStore } from '../../shell/stores/auth'
 import { notifyError } from '../../shell/toast'
-
-// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
-// remembered per module across reloads (see useSidePaneCollapsed).
-const paneCollapsed = useSidePaneCollapsed('journeys')
 
 
 const confirm = useConfirm()
@@ -475,8 +470,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
          open instead of the whole pane vanishing (same convention as
          Campaigns'/Audiences'/Users' side panes). Resets to the first panel
          every time a different journey loads (see loadIntoEditor). -->
-    <aside class="jrn-details side-pane" :class="{ 'is-collapsed': paneCollapsed }">
-      <SidePaneToggle v-model="paneCollapsed" />
+    <SidePane module="journeys" class="jrn-details">
       <Accordion v-model:value="activePanel" class="jrn-accordion pane-accordion">
         <AccordionPanel value="trigger">
           <AccordionHeader>Trigger</AccordionHeader>
@@ -510,7 +504,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
           </AccordionContent>
         </AccordionPanel>
       </Accordion>
-    </aside>
+    </SidePane>
 
     <ConfirmDialog />
   </div>
@@ -520,7 +514,7 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
 .jrn-console { display: flex; height: 100%; min-height: 0; }
 .jrn-left { flex: none; width: 350px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--panel); }
 .jrn-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-.jrn-details { flex: none; width: 400px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); }
+/* Geometry (width, border, flex column, background) is SidePane's — see side-pane.css. */
 .jrn-empty { margin: auto; color: var(--muted); font-size: 14px; }
 .side-body { flex: 1 1 auto; overflow: auto; padding: 18px; }
 
