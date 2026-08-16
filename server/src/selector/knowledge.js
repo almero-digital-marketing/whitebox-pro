@@ -52,9 +52,43 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
 // optionally restricted to a caller-provided scope (e.g. a cohort's ids), and
 // optionally capped to the top-N buckets by value via `group.limit` (the
 // high-cardinality guardrail). The one engine capability charts add.
+// Only these reach metric.group. Anything else a caller puts in `group` was
+// accepted-and-ignored, which is indistinguishable from an answer.
+const GROUP_KEYS = ['by', 'limit']
+
 export async function resolveGroup(selector, { group, scope, asOf } = {}) {
+  // Strict validation, because this function forwards a SUBSET of its input and
+  // everything it drops used to be dropped silently — the caller got a
+  // plausible number for a different question. Each check below converts one
+  // such silent drop into an error that names the working alternative.
+  const unknownGroup = Object.keys(group || {}).filter(k => !GROUP_KEYS.includes(k))
+  if (unknownGroup.length) {
+    throw new Error(
+      `selector.group: unknown key "${unknownGroup[0]}" (allowed: ${GROUP_KEYS.join('/')}). ` +
+      `Time-grain bucketing is chosen by \`by\` (hour/day/week/month), not a separate \`grain\`.`,
+    )
+  }
+
+  const selKeys = Object.keys(selector || {}).filter(k => k !== 'filter')
+  if (selKeys.length) {
+    throw new Error(`selector.group: \`${selKeys[0]}\` is not applied when grouping — only \`filter.metric\` is. Remove it, or scope the query instead.`)
+  }
+
   const m = selector?.filter?.metric
   if (!m) throw new Error('selector: `group` requires a single `metric` filter (the aggregate to bucket)')
+
+  // A sibling clause next to `metric` (e.g. `fact`) was silently discarded here,
+  // so a cohort-restricted breakdown returned global totals — off by ~550× on the
+  // GPoint dataset. `scope` is the placement that actually confines a grouped
+  // query to a cohort (it resolves to passport ids and reaches applyFilters).
+  const siblings = Object.keys(selector.filter).filter(k => k !== 'metric')
+  if (siblings.length) {
+    throw new Error(
+      `selector.group: \`filter.${siblings[0]}\` is not applied when grouping — only \`filter.metric\` is. ` +
+      `To restrict a breakdown to a cohort, put it in \`scope.filter\` instead.`,
+    )
+  }
+
   const at = asOf ? new Date(asOf) : null
   const scopeArr = scope == null ? null : [].concat(scope)
   return metric.group(rt.db, m, { by: group?.by, limit: group?.limit, at, scope: scopeArr })

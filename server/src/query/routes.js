@@ -14,12 +14,26 @@ import * as ask from './ask.js'
 
 // The selector grammar itself (recursive filter tree, fact/metric ops) is
 // validated by the engine, which throws precise `selector: …` errors; here we
-// only bound the envelope so a malformed request 400s cleanly.
+// only bound the envelope so a malformed request 400s cleanly. `selectorShape`
+// stays permissive on purpose — the engine is the authority on that grammar and
+// gives better errors than zod can.
+//
+// Everything else is `.strict()`, and that matters more than it looks. Zod
+// STRIPS unknown keys by default, so `group: { by: 'day', grain: 'day' }` reached
+// the engine as `{ by: 'day' }` — the caller's `grain` was discarded at the HTTP
+// boundary and the response was a confident answer to a different question. The
+// engine's own validation cannot see a key that never arrives, so the envelope
+// has to refuse it here.
 const selectorShape = z.object({
   about:  z.union([z.string(), z.object({}).passthrough()]).optional(),
   filter: z.any().optional(),
   judge:  z.object({}).passthrough().optional(),
 }).passthrough()
+
+const groupShape = z.object({
+  by:    z.string(),
+  limit: z.number().int().positive().max(1000).optional(),   // top-N guardrail for high-cardinality keys
+}).strict()   // §7 — a time grain is chosen by `by`; there is no separate `grain`
 
 const querySchema = z.object({
   selector:   selectorShape.default({}),
@@ -28,15 +42,15 @@ const querySchema = z.object({
   passport:   z.string().optional(),                                 // knowledge·passport
   asOf:       z.string().optional(),
   limit:      z.number().int().positive().max(1000).optional(),
-  group:      z.object({ by: z.string(), limit: z.number().int().positive().max(1000).optional() }).optional(), // §7 — time-series / breakdown (limit = top-N guardrail for high-card keys)
-})
+  group:      groupShape.optional(),                                 // §7 — time-series / breakdown
+}).strict()
 
 const previewSchema = z.object({
   selector:   selectorShape.default({}),
   projection: z.enum(['people']).optional(),   // preview is a people cost gate (§9)
   scope:      z.union([z.string(), z.array(z.string())]).optional(),
   asOf:       z.string().optional(),
-})
+}).strict()
 
 const askSchema = z.object({
   question: z.string().min(1),
@@ -45,7 +59,7 @@ const askSchema = z.object({
   passport: z.string().optional(),
   asOf:     z.string().optional(),
   limit:    z.number().int().positive().max(100).optional(),
-})
+}).strict()
 
 const funnelSchema = z.object({
   funnel: z.object({

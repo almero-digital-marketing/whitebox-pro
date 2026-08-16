@@ -45,15 +45,42 @@ function unionTimed(maps) {
   return out
 }
 
+// ── clause validation ───────────────────────────────────────────────────────
+// A clause node carries EXACTLY ONE of these. The dispatch below is an ordered
+// if-chain, so a node holding two of them would silently evaluate the first and
+// discard the rest — `{ fact, metric }` applied only `fact`, and the grouped path
+// (resolveGroup) applied only `metric`, i.e. the same input produced two
+// different half-answers depending on the projection. Neither erred.
+//
+// Rejecting rather than composing is deliberate: `{ fact, metric }` has no
+// unambiguous meaning to infer. AND is already spelled `{ all: [...] }`, and
+// guessing on the caller's behalf is how the silent behaviour arose.
+const CLAUSE_KEYS = ['all', 'any', 'not', 'fact', 'metric']
+
+function assertClause(node) {
+  const keys = Object.keys(node)
+  const unknown = keys.filter(k => !CLAUSE_KEYS.includes(k))
+  if (unknown.length) {
+    throw new Error(`selector.filter: unknown key "${unknown[0]}" (allowed: ${CLAUSE_KEYS.join('/')})`)
+  }
+  if (keys.length > 1) {
+    throw new Error(
+      `selector.filter: a clause takes exactly one of ${CLAUSE_KEYS.join('/')} — got ${keys.join(' + ')}. ` +
+      `Combine them explicitly: { all: [${keys.map(k => `{ ${k}: … }`).join(', ')}] }.`,
+    )
+  }
+  if (keys.length === 0) throw new Error(`selector.filter: empty clause ${JSON.stringify(node)}`)
+}
+
 // ── timed evaluation ────────────────────────────────────────────────────────
 async function evalTimed(node, ctx) {
   if (!node) return mapNull(await ctx.universe())                 // empty filter ⇒ everyone in scope
+  assertClause(node)
   if (node.all) return evalAllTimed(node.all, ctx)
   if (node.any) return unionTimed(await Promise.all(node.any.map(c => evalTimed(c, ctx))))
   if (node.not) return differenceTimed(mapNull(await ctx.universe()), await evalTimed(node.not, ctx))
   if (node.fact) return evalFact(node.fact, ctx)
-  if (node.metric) return metric.evaluateTimed(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope, anchors: ctx.anchors })
-  throw new Error(`selector.filter: unknown clause ${JSON.stringify(node)}`)
+  return metric.evaluateTimed(ctx.db, node.metric, { at: ctx.at, scope: ctx.scope, anchors: ctx.anchors })
 }
 
 // `all` with a positive anchor: intersect the positives (compositing the latest
