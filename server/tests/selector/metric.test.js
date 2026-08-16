@@ -83,6 +83,27 @@ describe('selector metric clauses', () => {
     expect(ids(await resolvePeople({ metric: { content: 'pricing', distinct_sessions: { gte: 2 } } }))).toEqual([a])
   })
 
+  it('distinct_sessions does not count sessionless exposures as a session', async () => {
+    // One real session plus exposures carrying NO session — which is most of
+    // them: anything recorded outside a browser session (a CRM push, an inbound
+    // call) has session_id null. `count(distinct session_id)` ignores nulls, so
+    // this passport has ONE session and must not clear a gte-2 gate.
+    //
+    // Worth pinning because the obvious way to compute a running distinct-session
+    // total gets it wrong in the opposite direction: a window partitioned by
+    // (passport_id, session_id) puts every sessionless row in ONE partition and
+    // counts it as a session, which silently admits everybody with a single real
+    // session and any sessionless traffic at all.
+    const a = await newPassport()
+    const [{ id: s1 }] = await db('whitebox_sessions').insert({ passport_id: a }).returning('id')
+    await exposure(a, { ts: daysAgo(3), content_id: 'pricing', session_id: s1 })
+    await exposure(a, { ts: daysAgo(2), content_id: 'pricing' })   // no session
+    await exposure(a, { ts: daysAgo(1), content_id: 'pricing' })   // no session
+
+    expect((await resolvePeople({ metric: { content: 'pricing', distinct_sessions: { gte: 2 } } })).count).toBe(0)
+    expect(ids(await resolvePeople({ metric: { content: 'pricing', distinct_sessions: { gte: 1 } } }))).toEqual([a])
+  })
+
   it('composes with a fact clause in the boolean tree', async () => {
     const a = await newPassport(), b = await newPassport()
     await facts.record({ passport_id: a, key: 'plan_tier', value: 'pro', observed_at: daysAgo(10) })

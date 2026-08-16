@@ -171,13 +171,31 @@ export async function evaluate(db, spec, { at, scope } = {}) {
 // qualifying activity predates its anchor therefore appears in `ids` with a
 // null time, and a windowed step drops it — the right answer, reached without
 // a second membership query.
+// One query, not two.
+//
+// This ran `evaluate()` for MEMBERSHIP and then a second anchored query for the
+// crossing TIME. The two ask different questions and both are needed — membership
+// ignores the anchor (an un-windowed funnel step keeps a passport that qualifies
+// but has no post-anchor crossing, carrying its prior anchor forward), while the
+// time counts only what came after it. That is why they were separate, and it is
+// also why they can be one: both are aggregates over the SAME filtered rows, so
+// the second pass re-read what the first had already touched.
+//
+// Two running sums over one scan do it: `running_all` over every row for the
+// membership test, `running_post` over anchored rows only for the crossing. The
+// three levels are forced, not stylistic — `inc` is itself a window expression
+// for distinct_sessions, and Postgres will not nest a window inside a window in
+// one SELECT, so inc, the running sums, and the aggregate each need their own.
 export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
-  const ids = await evaluate(db, spec, { at, scope })
-  if (!ids.length) return new Map()
-
   const { filters, agg, bounds } = split(spec, GATE_AGGS)
   const { field, gte } = bounds
-  if (agg === 'recency_days' || gte == null) return new Map(ids.map(id => [id, null]))
+
+  // No bound to cross, or a recency gate — there is no crossing time to compute,
+  // so membership is the whole answer and the single query buys nothing.
+  if (agg === 'recency_days' || gte == null) {
+    const ids = await evaluate(db, spec, { at, scope })
+    return new Map(ids.map(id => [id, null]))
+  }
 
   const now = at ? new Date(at) : new Date()
   // Per-row increment. distinct_sessions counts a session once, at its first
@@ -193,51 +211,79 @@ export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
   }[agg]
   if (agg === 'sum' && !field) throw new Error('selector.metric: `sum` needs a `field`')
 
-  // Anchored passports only, and only where the anchor is a real time. A
-  // funnel step whose predecessor produced no clean time hands us null; that
-  // passport gets no row here, so no crossing, so the windowed step drops it —
-  // which is what funnel.js would have done with the null anyway.
+  // Anchored passports only, and only where the anchor is a real time. A funnel
+  // step whose predecessor produced no clean time hands us null; that passport
+  // still counts for MEMBERSHIP (its rows are all un-anchored below, so
+  // running_post stays 0 and it gets no crossing) — which is what the windowed
+  // step would have done with the null anyway.
   const anchored = anchors
-    ? ids
-        .map(id => [id, anchors.get?.(id) ?? anchors[id]])
+    ? [...(anchors instanceof Map ? anchors : Object.entries(anchors))]
         .filter(([, at_]) => at_ != null)
         .map(([id, at_]) => [id, new Date(at_)])
     : []
 
-  let inner = applyFilters(db, base(db, needsSession(filters)), filters, { at, scope: ids, now })
+  let inner = applyFilters(db, base(db, needsSession(filters)), filters, { at, scope, now })
 
   if (anchors) {
+    // LEFT join, where the old two-pass code inner-joined. The anchor decides the
+    // crossing, never membership: an inner join here would drop the un-anchored
+    // from the result entirely, and an un-windowed step needs them kept.
+    //
     // unnest over two parallel arrays rather than a VALUES literal: a funnel's
     // surviving cohort runs to tens of thousands, and that is a query text of
     // tens of thousands of tuples versus two bind parameters.
-    inner = inner
-      .joinRaw(
-        'join (select * from unnest(?::uuid[], ?::timestamptz[]) as t(passport_id, anchor)) a on a.passport_id = e.passport_id',
-        [anchored.map(([id]) => id), anchored.map(([, at_]) => at_)],
-      )
-      // Strictly after. An exposure AT the anchor is the thing that produced
-      // it — counting it would let a step satisfy itself.
-      .whereRaw('e.ts > a.anchor')
+    inner = inner.joinRaw(
+      'left join (select * from unnest(?::uuid[], ?::timestamptz[]) as t(passport_id, anchor)) a on a.passport_id = e.passport_id',
+      [anchored.map(([id]) => id), anchored.map(([, at_]) => at_)],
+    )
   }
 
-  inner = inner.select('e.passport_id as passport_id', 'e.ts as ts', inc.wrap('', ' as inc'))
+  inner = inner.select(
+    'e.passport_id as passport_id',
+    'e.ts as ts',
+    'e.session_id as session_id',
+    inc.wrap('', ' as inc'),
+    // Strictly after. An exposure AT the anchor is the thing that produced it —
+    // counting it would let a step satisfy itself. Un-anchored ⇒ every row counts,
+    // which is exactly the no-funnel case.
+    anchors ? db.raw('(a.anchor is not null and e.ts > a.anchor) as post') : db.raw('true as post'),
+  )
 
+  const running = db.from(inner.as('i')).select(
+    'passport_id',
+    'ts',
+    'post',
+    'session_id',
+    'inc',
+    db.raw('sum(case when post then inc else 0 end) over (partition by passport_id order by ts rows between unbounded preceding and current row) as running_post'),
+  )
+
+  // MEMBERSHIP is `evaluate()`'s gate, expression for expression — not a running
+  // total. The two are not the same for distinct_sessions: `count(distinct
+  // session_id)` ignores NULLs, while `inc`'s row_number trick puts every
+  // NULL-session row in ONE partition and counts it as a session. Gating on the
+  // running total therefore admitted passports whose only "second session" was a
+  // group of rows carrying no session at all — 663 where the old code returns 371.
+  //
+  // For the other aggregates sum(inc) is the same expression as evaluate's
+  // (`inc` is 1, coalesce(dwell_ms,0), or the meta field), so they share one branch.
+  const memberExpr = agg === 'distinct_sessions'
+    ? db.raw('count(distinct session_id) >= ?', [gte])
+    : db.raw('sum(inc) >= ?', [gte])
+
+  // `having <evaluate's gate>` IS the old first pass, and `min(ts) filter (…)` IS
+  // the old second pass — the same two answers, off one scan. The crossing still
+  // uses the running total, unchanged, so a step's matched_at is what it always was.
   const rows = await db
-    .from(
-      db.from(inner.as('i'))
-        .select(
-          'passport_id',
-          'ts',
-          db.raw('sum(inc) over (partition by passport_id order by ts rows between unbounded preceding and current row) as running'),
-        )
-        .as('r'),
-    )
-    .where('running', '>=', gte)
+    .from(running.as('r'))
     .groupBy('passport_id')
-    .select('passport_id', db.raw('min(ts) as matched_at'))
+    .having(memberExpr)
+    .select(
+      'passport_id',
+      db.raw('min(ts) filter (where post and running_post >= ?) as matched_at', [gte]),
+    )
 
-  const times = new Map(rows.map(r => [r.passport_id, r.matched_at]))
-  return new Map(ids.map(id => [id, times.get(id) ?? null]))
+  return new Map(rows.map(r => [r.passport_id, r.matched_at ?? null]))
 }
 
 // ── the chart (group) — total aggregate bucketed by time grain or dimension ──
