@@ -10,9 +10,9 @@
 }
 /* Compose collapsed. This pane is a GRID TRACK, so its width is the template's to give
    — `width` on the pane itself (what side-pane.css sets for the other six, which are all
-   flex children) is not what decides it here. The track collapses to the same 58px those
-   panes do, so the control lands in the same place either way. */
-.console.is-right-collapsed { grid-template-columns: 350px minmax(0, 1fr) 58px; }
+   flex children) is not what decides it here. The track closes completely, as those panes
+   do; the control floats out of the empty track and stays where it was. */
+.console.is-right-collapsed { grid-template-columns: 350px minmax(0, 1fr) 0; }
 
 .console > * { overflow: auto; }
 .left   { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }

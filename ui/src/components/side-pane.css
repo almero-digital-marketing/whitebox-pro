@@ -28,20 +28,32 @@
  * win the tie. Raising specificity here would be a guess about how many attributes a
  * future compiler adds; `!important` states the intent instead.
  *
- * 58px is the 30px control plus the SAME 14px gutter it already has when the pane is
- * open — which is what keeps the button still. The pane is the rightmost thing on the
- * screen, so collapsing it moves its left edge and leaves its right edge exactly where
- * it was; a control anchored to that right edge therefore does not move at all, and the
- * width only has to be chosen so the gutter it lands in is the one it already had.
- * Deriving the width from the control (rather than picking a round number and nudging
- * the control to fit) is the whole trick: 44px looked tidier and cost a 7px jump.
+ * Collapsed is ZERO width — the pane goes, rather than leaving a rail behind. The
+ * control survives by floating: the pane is the rightmost thing on screen, so
+ * collapsing moves its LEFT edge and leaves its right edge where it was, and a control
+ * anchored `right: 14px` to that edge sits in the same place whatever the width is. It
+ * simply overflows an empty box and hovers over the content instead of being contained
+ * by a strip kept alive to hold it. This is why `right` is never restated for the
+ * collapsed state — see the note by the control.
+ *
+ * `border-left: none`, or a 0-width pane still draws a 1px line down the screen: a rail
+ * reduced to its own border, which is the thing being removed.
+ *
+ * `overflow: visible` because the control is now OUTSIDE its parent's box. Two panes
+ * would otherwise clip it away and strand the user with no way to reopen: `.aud-side`
+ * sets `overflow: hidden` for its preview, and analytics' `.console > *` sets
+ * `overflow: auto` on every track. Both are beaten here on purpose.
  *
  * Six of the seven panes are FLEX children, so their own width is what decides them and
  * this is the whole story. Analytics' compose pane is a GRID TRACK — there the width
  * belongs to the parent's `grid-template-columns`, and this rule is inert. That module
- * collapses its own track to the same 58px (see `.console.is-right-collapsed` in
+ * collapses its own track to 0 as well (see `.console.is-right-collapsed` in
  * analytics.css) and gets everything below — the content hiding, the control — from here. */
-.side-pane.is-collapsed { width: 58px !important; min-width: 58px; }
+.side-pane.is-collapsed {
+  width: 0 !important; min-width: 0;
+  border-left: none;
+  overflow: visible !important;
+}
 
 /* Hide the pane's content rather than unmounting it, so collapsing does not tear down
  * an open editor's component state and re-run its fetches on every expand — several of
@@ -74,7 +86,9 @@
 .side-pane-toggle:hover { border-color: var(--accent); color: var(--accent); }
 .side-pane-toggle .material-symbols-outlined { font-size: 16px; }
 
-/* Deliberately NO collapsed-state override of `right`. `top`/`right` are the same in
-   both states, so the button is the one fixed point the pane opens and shuts around —
-   you press it twice in the same spot. Anything that re-anchors it here reintroduces
-   the jump the 58px above exists to avoid. */
+/* Deliberately NO collapsed-state override of `top`/`right`. They are identical in both
+   states, which is what makes the button the fixed point the pane opens and shuts around
+   — you press it twice in the same spot, and it is the only thing on screen that does
+   not move. That is also what lets the collapsed pane be 0 wide instead of a strip:
+   nothing has to contain the control for it to stay put. Anything that re-anchors it
+   here breaks both properties at once. */
