@@ -1,0 +1,77 @@
+/* THE right pane's collapse behaviour, and the look of the control that drives it.
+ *
+ * Companion to pane-accordion.css, and here for the same reason: five modules own a
+ * right pane (.ppl-side · .aud-side · .jrn-details · .cmp-side · .lv-side) and four
+ * of the five width rules are byte-identical already. Collapsing is one more thing
+ * they would each have implemented slightly differently, so it is written once and
+ * the modules opt in by adding `side-pane` beside their own class.
+ *
+ * USAGE
+ *   <aside class="ppl-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+ *     <SidePaneToggle v-model="paneCollapsed" />
+ *     …the pane's normal content…
+ *   </aside>
+ *
+ * NOT scoped, deliberately — it has to reach each module's own aside class, which a
+ * scoped stylesheet cannot. Imported once, from main.ts.
+ */
+
+.side-pane { position: relative; transition: width .18s ease; }
+
+/* `!important` because the module's width rule is SCOPED, and a scoped rule compiles
+ * to `.ppl-side[data-v-abc123]` — two compound selectors, exactly the specificity of
+ * `.side-pane.is-collapsed`. On a tie the later stylesheet wins, and module styles are
+ * injected at runtime while this one is imported at boot, so the module would always
+ * win the tie. Raising specificity here would be a guess about how many attributes a
+ * future compiler adds; `!important` states the intent instead.
+ *
+ * 58px is the 30px control plus the SAME 14px gutter it already has when the pane is
+ * open — which is what keeps the button still. The pane is the rightmost thing on the
+ * screen, so collapsing it moves its left edge and leaves its right edge exactly where
+ * it was; a control anchored to that right edge therefore does not move at all, and the
+ * width only has to be chosen so the gutter it lands in is the one it already had.
+ * Deriving the width from the control (rather than picking a round number and nudging
+ * the control to fit) is the whole trick: 44px looked tidier and cost a 7px jump.
+ *
+ * Six of the seven panes are FLEX children, so their own width is what decides them and
+ * this is the whole story. Analytics' compose pane is a GRID TRACK — there the width
+ * belongs to the parent's `grid-template-columns`, and this rule is inert. That module
+ * collapses its own track to the same 58px (see `.console.is-right-collapsed` in
+ * analytics.css) and gets everything below — the content hiding, the control — from here. */
+.side-pane.is-collapsed { width: 58px !important; min-width: 58px; }
+
+/* Hide the pane's content rather than unmounting it, so collapsing does not tear down
+ * an open editor's component state and re-run its fetches on every expand — several of
+ * these panes hold a dirty draft. `> *` reaches only the pane's own children (the
+ * accordion, any save bar), and the toggle is exempted because it is the one thing that
+ * has to survive to bring the pane back. */
+.side-pane.is-collapsed > *:not(.side-pane-toggle) { display: none; }
+
+/* ── the control ─────────────────────────────────────────────────────────────
+   A 30px bordered square, sitting in the pane's top 52px band — the same box, at the
+   same height, as the module action at the top of the LEFT rail, so the two panes are
+   bookends rather than two different ideas about what a pane control looks like.
+   Absolutely positioned, and above the accordion header it overlaps (which is itself a
+   <button>): being a separate element with a higher stacking order is what stops a
+   click reaching the header and toggling a panel on the way past.
+
+   The declarations are deliberately the same values as `.rail-action` in RailPane.vue,
+   which is the twin. They are not yet ONE rule because that look is currently scoped
+   inside RailPane while the class is applied by five modules through a slot — unifying
+   it means touching all five call sites, which is a bigger change than this one. If a
+   third pane control ever appears, extract it then. */
+.side-pane-toggle {
+  position: absolute; top: 11px; right: 14px; z-index: 2;
+  flex: none; width: 30px; height: 30px; min-width: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); box-shadow: none; color: var(--muted);
+  cursor: pointer;
+}
+.side-pane-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.side-pane-toggle .material-symbols-outlined { font-size: 16px; }
+
+/* Deliberately NO collapsed-state override of `right`. `top`/`right` are the same in
+   both states, so the button is the one fixed point the pane opens and shuts around —
+   you press it twice in the same spot. Anything that re-anchors it here reintroduces
+   the jump the 58px above exists to avoid. */

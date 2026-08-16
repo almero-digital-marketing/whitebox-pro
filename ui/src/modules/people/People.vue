@@ -14,6 +14,8 @@ import { useRoute, useRouter } from 'vue-router'
 // calls confirm() any more — IdentitiesPanel does, for unlink — and
 // useConfirm() only queues; something mounted has to render it.
 import FilterMenu from '../../components/FilterMenu.vue'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import RailPane from '../../components/RailPane.vue'
@@ -30,6 +32,11 @@ import SegmentsPanel from './panels/SegmentsPanel.vue'
 import ActivityTimeline from './ActivityTimeline.vue'
 import EraseDialog from './EraseDialog.vue'
 import './panels/panel.css'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('people')
+
 
 const route = useRoute()
 const router = useRouter()
@@ -391,7 +398,8 @@ const factEntries = computed(() => Object.entries(current.value?.facts || {}))
 
     <!-- right: the things you can change about whatever the centre is showing —
          one person, or the whole selection -->
-    <aside class="ppl-side">
+    <aside class="ppl-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <!-- The SAME panels, in the same order, with `bulk` swapping their target
            from one person to the whole selection. Not lookalikes: adding to a
            list and recording a fact are the same acts at either size, and two

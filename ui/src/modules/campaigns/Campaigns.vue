@@ -14,6 +14,8 @@ import { ref, computed, watch, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Textarea from 'primevue/textarea'
@@ -48,6 +50,11 @@ import ResultsBlock from './ResultsBlock.vue'
 import { useCampaignsStore } from './stores/campaigns'
 import { useAudiencesStore } from '../analytics/stores/audiences'
 import { notifyError } from '../../shell/toast'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('campaigns')
+
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -548,7 +555,8 @@ function ago(iso?: string) {
     <!-- far-right: Audiences (palette) / Delivery / Objectives — stacked accordion panels,
          Audiences first (attach a target before writing delivery settings or objectives),
          same pattern as Audiences.vue's Segments/Activation accordion. -->
-    <aside class="cmp-side">
+    <aside class="cmp-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <Accordion v-model:value="activePanel" class="cmp-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="audiences">
           <AccordionHeader><span class="acc-title">Audiences <span class="count-pill sm">{{ working?.audiences?.length ?? 0 }}</span></span></AccordionHeader>

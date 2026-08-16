@@ -8,6 +8,12 @@
   height: 100%;
   overflow: hidden;
 }
+/* Compose collapsed. This pane is a GRID TRACK, so its width is the template's to give
+   — `width` on the pane itself (what side-pane.css sets for the other six, which are all
+   flex children) is not what decides it here. The track collapses to the same 58px those
+   panes do, so the control lands in the same place either way. */
+.console.is-right-collapsed { grid-template-columns: 350px minmax(0, 1fr) 58px; }
+
 .console > * { overflow: auto; }
 .left   { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 /* the reports list flexes to fill so the bottom rail search sits flush at the pane's bottom */

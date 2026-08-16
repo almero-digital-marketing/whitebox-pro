@@ -14,6 +14,9 @@ import './style.css'
 // Global rather than per-module: it styles PrimeVue's internals, which a scoped
 // stylesheet can only reach through :deep() — five copies of which is what it replaces.
 import './components/pane-accordion.css'
+// The same five right panes, collapsed. Global for the same reason: it reaches each
+// module's own aside class, which a scoped stylesheet cannot.
+import './components/side-pane.css'
 
 // "Noir" — the black/white primary used on primevue.org (Aura with the primary
 // ramp pointed at zinc, so the accent is near-black in light mode). Surfaces stay

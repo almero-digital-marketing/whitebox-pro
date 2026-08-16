@@ -9,6 +9,8 @@ import { ref, computed, watch, nextTick, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Accordion from 'primevue/accordion'
@@ -18,6 +20,11 @@ import AccordionContent from 'primevue/accordioncontent'
 import RailPane from '../../components/RailPane.vue'
 import { useAudiencesStore } from '../analytics/stores/audiences'
 import { notifyError } from '../../shell/toast'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('audiences')
+
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -408,7 +415,8 @@ async function toggleNetwork(n: any) {
     <!-- right: Segments (palette) / Activation — stacked accordion panels, Segments first
          and expanded by default. Activation's CAPI send is gated by an explicit confirm
          (preview of the deliverable cohort). -->
-    <aside class="aud-side">
+    <aside class="aud-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <Accordion v-model:value="activePanel" class="aud-accordion pane-accordion is-content-scroll">
         <AccordionPanel value="segments">
           <AccordionHeader><span class="acc-title">Segments <span class="count-pill sm">{{ working?.members?.length ?? 0 }}</span></span></AccordionHeader>

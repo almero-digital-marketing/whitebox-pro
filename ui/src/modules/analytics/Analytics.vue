@@ -11,6 +11,8 @@ import RailSearch from '../../components/RailSearch.vue'
 import ComposePane from './components/ComposePane.vue'
 import Board from './components/Board.vue'
 import './analytics.css'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -30,6 +32,9 @@ const filteredReports = computed(() => {
 
 const selectedWidget = ref<any>(null)             // the widget the Query editor is editing (derived from the route)
 const mode = ref<'agent' | 'query'>('agent')      // Agent | Query (v-model into ComposePane)
+// Compose pane collapsed. Unlike the other modules this pane is a GRID TRACK, so
+// the flag also goes on `.console` — see the grid note in side-pane.css.
+const paneCollapsed = useSidePaneCollapsed('analytics')
 
 // ── routing: the open report (reportId) and the edited widget (widgetId) live in the
 // URL. Clicks push routes; the watchers below turn the route back into store calls +
@@ -182,7 +187,7 @@ onActivated(() => { store.loadReports() })
 </script>
 
 <template>
-  <div class="console">
+  <div class="console" :class="{ 'is-right-collapsed': paneCollapsed }">
     <aside class="left">
       <ReportsList :reports="filteredReports" :current-id="current?.id"
         @open="goReport" @new="createReport" @remove="removeReport" />
@@ -192,7 +197,8 @@ onActivated(() => { store.loadReports() })
       <Board :report="current" :data="widgetData" :selected-id="selectedWidget?.id"
         @remove="removeWidget" @select="goWidget" @reorder="reorderWidgets" @deselect="deselectWidget" />
     </main>
-    <section class="right">
+    <section class="right side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <ComposePane v-model:mode="mode" :composing="composing" :report="current" :selected-widget="selectedWidget" :schema="schema"
         @compose="compose" @save="saveWidget" @cancel="cancelEdit" />
     </section>

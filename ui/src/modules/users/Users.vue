@@ -25,6 +25,13 @@ import RailPane from '../../components/RailPane.vue'
 import { useUsersStore } from './stores/users'
 import { useAuthStore } from '../../shell/stores/auth'
 import { notifyError } from '../../shell/toast'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('users')
+
 
 const LOGIN_PAGE_ROWS = 10   // matches analytics' WidgetCard table — rows per page, not an inner scrollbar
 
@@ -459,7 +466,8 @@ function fmtDateTime(iso?: string) {
     </section>
 
     <!-- right: this user's permissions — a separate concern from their identity above -->
-    <aside class="usr-side">
+    <aside class="usr-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <div class="pane-head">Permissions</div>
       <div class="side-body">
         <p v-if="!working" class="tip">Pick a user on the left, or invite one with +, to manage their permissions.</p>

@@ -14,6 +14,8 @@ import { ref, computed, watch, onActivated } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
@@ -41,6 +43,11 @@ import { useCampaignsStore } from '../campaigns/stores/campaigns'
 import { api as analyticsApi } from '../analytics/api'
 import { useAuthStore } from '../../shell/stores/auth'
 import { notifyError } from '../../shell/toast'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('journeys')
+
 
 const confirm = useConfirm()
 const route = useRoute()
@@ -468,7 +475,8 @@ function setEntryToSelected() { if (selectedNodeId.value) entryId.value = select
          open instead of the whole pane vanishing (same convention as
          Campaigns'/Audiences'/Users' side panes). Resets to the first panel
          every time a different journey loads (see loadIntoEditor). -->
-    <aside class="jrn-details">
+    <aside class="jrn-details side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
       <Accordion v-model:value="activePanel" class="jrn-accordion pane-accordion">
         <AccordionPanel value="trigger">
           <AccordionHeader>Trigger</AccordionHeader>

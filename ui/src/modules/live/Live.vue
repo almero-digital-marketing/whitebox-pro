@@ -12,6 +12,8 @@
 import { onActivated, onDeactivated, computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLiveStore } from './stores/live'
+import SidePaneToggle from '../../components/SidePaneToggle.vue'
+import { useSidePaneCollapsed } from '../../components/useSidePaneCollapsed'
 import { DIRECTION_GLYPH, DIRECTION_COLOR, type Direction, type WindowKey, type StatusMetric } from './live'
 import ToggleSwitch from 'primevue/toggleswitch'
 import Button from 'primevue/button'
@@ -22,6 +24,11 @@ import AccordionContent from 'primevue/accordioncontent'
 import TrafficStrip from './components/TrafficStrip.vue'
 import { useRouter } from 'vue-router'
 import './live.css'
+
+// Right pane collapsed — the module owns it (see SidePaneToggle), and it is
+// remembered per module across reloads (see useSidePaneCollapsed).
+const paneCollapsed = useSidePaneCollapsed('live')
+
 
 const store = useLiveStore()
 // For the "Person details" button — a labelled action, so it pushes rather than
@@ -512,7 +519,8 @@ const short = (id: string | null) => (id ? id.slice(0, 8) : '')
          of which apply board-wide — and "Status" holds the counters and picks which
          of them reach the header. Both are choices about what the board shows, which
          is why they sit beside it rather than in the header above it. -->
-    <aside class="lv-side">
+    <aside class="lv-side side-pane" :class="{ 'is-collapsed': paneCollapsed }">
+      <SidePaneToggle v-model="paneCollapsed" />
 
       <Accordion v-model:value="sidePanel" class="pane-accordion">
         <!-- ── Live: the board-wide controls ──────────────────────────────── -->
