@@ -342,15 +342,30 @@ export function compactForExplain(kind, data) {
   }
   if (kind === 'stat') return { count: data?.count ?? 0, ...(data?.target ? { target: data.target, pctOfTarget: Math.round((data.count / data.target) * 100) } : {}) }
   if (kind === 'table') return { count: data?.count ?? data?.passports?.length ?? 0 }
-  if (kind === 'funnel') return { steps: (data?.report || seriesOf(data)).map((s) => [s.name ?? s.bucket, s.count ?? s.value]) }
-  if (kind === 'dropoff') {   // a drop-off is about LOSS — give the explainer the people lost at each step (the re-engagement audiences)
+  // A funnel gets its drops COMPUTED, exactly as a dropoff does.
+  //
+  // It used to hand over the step counts alone, while the explain prompt asks for
+  // "the step with the biggest leak and how many people fell out there" — for a
+  // funnel as well as a dropoff. So the model was asked for a figure the data did
+  // not contain and had to subtract six-digit numbers itself. It got one wrong on
+  // the GPoint board: 115,491 visited and 6,318 booked was reported as "108,173
+  // visitors did not book", which is 1,000 short of 109,173.
+  //
+  // Arithmetic is not what a language model is for, and the failure is the worst
+  // kind — a wrong number in confident prose, sitting beside the correct chart that
+  // contradicts it. Everything the prompt asks the model to state is now something
+  // it can read rather than derive.
+  if (kind === 'funnel' || kind === 'dropoff') {
     const steps = (data?.report || seriesOf(data)).map((s) => [s.name ?? s.bucket, s.count ?? s.value])
     const drops = []
     for (let i = 0; i < steps.length - 1; i++) {
       const from = steps[i][1] || 0, lost = Math.max(0, from - (steps[i + 1][1] || 0))
       drops.push({ from: steps[i][0], to: steps[i + 1][0], lost, pct: from ? Math.round((lost / from) * 100) : 0 })
     }
-    return { drops }
+    // A dropoff is ABOUT the loss, so it stays loss-only. A funnel is about the
+    // passage and the loss both — it is drawn as the surviving cohorts — so it
+    // keeps its steps and gains the drops beside them.
+    return kind === 'dropoff' ? { drops } : { steps, drops }
   }
   if (kind === 'donut') {   // a donut is about SHARE — give the explainer each slice's percent, not just the count
     const s = seriesOf(data)
