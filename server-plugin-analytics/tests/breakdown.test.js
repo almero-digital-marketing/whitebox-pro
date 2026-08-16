@@ -36,10 +36,52 @@ describe('breakdownFact — discovered buckets', () => {
     const out = await runQuery({ selector }, { breakdownFact: { key: 'service' } })
 
     expect(store.factBreakdown).toHaveBeenCalledTimes(1)
-    expect(store.factBreakdown).toHaveBeenCalledWith('service', undefined)
+    expect(store.factBreakdown).toHaveBeenCalledWith('service', undefined, { grain: undefined })
     // the loop this replaced called resolve once per bucket
     expect(selector.resolve).not.toHaveBeenCalled()
     expect(out.series).toHaveLength(2)
+  })
+
+  // grain/limit used to be dropped on the way in: `group: { by: "fact:k", grain:
+  // "day", limit: 400 }` reached factBreakdown as (key, scope) and came back as
+  // twelve raw-timestamp buckets ranked by value.
+  it('forwards grain and limit from the group spelling', async () => {
+    store.factBreakdown.mockResolvedValue({ series: [], total: 0 })
+
+    await runQuery({ selector: makeSelector() }, { group: { by: 'fact:first_booked_at', grain: 'day', limit: 400 } })
+
+    expect(store.factBreakdown).toHaveBeenCalledWith('first_booked_at', undefined, { grain: 'day', limit: 400 })
+  })
+
+  it('forwards grain and limit from the breakdownFact spelling', async () => {
+    store.factBreakdown.mockResolvedValue({ series: [], total: 0 })
+
+    await runQuery({ selector: makeSelector() }, { breakdownFact: { key: 'first_booked_at', grain: 'week', limit: 60 } })
+
+    expect(store.factBreakdown).toHaveBeenCalledWith('first_booked_at', undefined, { grain: 'week', limit: 60 })
+  })
+
+  it('passes the store result through, including the declared aggregate', async () => {
+    store.factBreakdown.mockResolvedValue({
+      series: [{ bucket: '2026-08-13', value: 83 }], total: 1703, aggregate: 'distinct_passports', grain: 'day',
+    })
+
+    const out = await runQuery({ selector: makeSelector() }, { group: { by: 'fact:first_booked_at', grain: 'day' } })
+
+    // `value` is PEOPLE, not events — the caller must be able to tell which.
+    expect(out.aggregate).toBe('distinct_passports')
+    expect(out.grain).toBe('day')
+    expect(out.series[0]).toEqual({ bucket: '2026-08-13', value: 83 })
+  })
+
+  it('rejects group.key, pointing at the spelling that works', async () => {
+    await expect(runQuery({ selector: makeSelector() }, { group: { by: 'day', key: 'first_booked_at' } }))
+      .rejects.toThrow(/unknown key "key".*fact:<key>/s)
+  })
+
+  it('rejects an unknown top-level query key', async () => {
+    await expect(runQuery({ selector: makeSelector() }, { selector: {}, since: '2026-08-07' }))
+      .rejects.toThrow(/unknown key "since"/)
   })
 
   it('reports the true bucket count so a truncated chart can say so', async () => {

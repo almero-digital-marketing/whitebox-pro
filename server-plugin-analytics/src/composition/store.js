@@ -203,34 +203,87 @@ export async function factDistinctValues(key, scope, limit = 12) {
 // Ordered by count then value: the tie-break keeps output stable across calls,
 // which a chart that re-resolves on every view needs more than it needs the
 // last byte of speed.
-export async function factBreakdown(key, scope, limit = 12) {
+// Bucket labels match the selector engine's time grains exactly (see
+// selector/metric.js TIME_FMT), so a fact-bucketed series and an event-bucketed
+// one can be plotted on the same axis. Keys are an allowlist — the format string
+// is interpolated, the date_trunc unit is bound.
+const GRAIN_FMT = { hour: 'YYYY-MM-DD"T"HH24:00', day: 'YYYY-MM-DD', week: 'IYYY"-W"IW', month: 'YYYY-MM' }
+
+export async function factBreakdown(key, scope, { limit = 12, grain } = {}) {
+  if (grain != null && !GRAIN_FMT[grain]) {
+    const e = new Error(`group.grain: unknown grain "${grain}" (allowed: ${Object.keys(GRAIN_FMT).join('/')})`)
+    e.status = 400
+    throw e
+  }
+
+  // A grain only means something for a date-typed fact. Checked explicitly rather
+  // than by casting-and-hoping: a failed cast would surface as a Postgres error
+  // about syntax, and silently skipping the rows that don't parse would be the
+  // exact silent-drop this work exists to remove.
+  if (grain) {
+    const types = await db('whitebox_facts').distinct('type').where({ key }).limit(5)
+    const list = types.map((t) => t.type).filter(Boolean)
+    if (list.length && !list.includes('date')) {
+      const e = new Error(`group.grain: fact "${key}" is ${list.join('/')}-typed, not a date — a grain cannot bucket it`)
+      e.status = 400
+      throw e
+    }
+  }
+
   const scoped = Array.isArray(scope)
-  const params = scoped ? [key, scope, limit] : [key, limit]
   const scopeSql = scoped ? 'AND passport_id = ANY(?)' : ''
 
+  // The current-value rule (latest observed_at per passport) is the same one the
+  // fact predicate uses, so these counts agree with a fact-eq filter on any single
+  // value. `NULLS LAST, id DESC` only makes the pick deterministic when two rows
+  // share an observed_at; on the GPoint data the tied rows hold identical values,
+  // so it changes no count.
+  const current = `SELECT DISTINCT ON (passport_id) passport_id, value
+                     FROM whitebox_facts
+                    WHERE key = ? ${scopeSql}
+                    ORDER BY passport_id, observed_at DESC NULLS LAST, id DESC`
+
+  // Ungrouped: buckets are the raw values, ranked by size (the high-cardinality
+  // guardrail — top-N of many). Grained: buckets are truncated dates, and `limit`
+  // caps the MOST RECENT N returned in chronological order. Ranking a time series
+  // by value would hand back a scatter of disconnected days.
+  const bucketExpr = grain
+    ? `to_char(date_trunc(?, (value #>> '{}')::timestamptz), '${GRAIN_FMT[grain]}')`
+    : `value #>> '{}'`
+  const innerOrder = grain ? 'bucket DESC' : 'people DESC, bucket ASC'
+
+  const params = [
+    ...(scoped ? [key, scope] : [key]),
+    ...(grain ? [grain] : []),
+    limit,
+  ]
+
   const { rows } = await db.raw(
-    `WITH current AS (
-       SELECT DISTINCT ON (passport_id) passport_id, value
-         FROM whitebox_facts
-        WHERE key = ? ${scopeSql}
-        ORDER BY passport_id, observed_at DESC
+    `WITH current AS (${current}
      ), buckets AS (
-       SELECT value #>> '{}' AS bucket, count(*)::int AS people
+       SELECT ${bucketExpr} AS bucket, count(*)::int AS people
          FROM current
         WHERE value IS NOT NULL
         GROUP BY 1
+     ), capped AS (
+       SELECT bucket, people, (SELECT count(*)::int FROM buckets) AS total
+         FROM buckets
+        WHERE bucket IS NOT NULL AND bucket <> ''
+        ORDER BY ${innerOrder}
+        LIMIT ?
      )
-     SELECT bucket, people, (SELECT count(*)::int FROM buckets) AS total
-       FROM buckets
-      WHERE bucket IS NOT NULL AND bucket <> ''
-      ORDER BY people DESC, bucket ASC
-      LIMIT ?`,
+     SELECT * FROM capped ORDER BY ${grain ? 'bucket ASC' : innerOrder}`,
     params,
   )
 
   return {
     series: rows.map((r) => ({ bucket: r.bucket, value: r.people })),
     total: rows.length ? rows[0].total : 0,
+    // State the measure. `value` here is PEOPLE, not events — the two differ by
+    // ~100x on real data, and a caller reading a bare number cannot tell which
+    // they were given.
+    aggregate: 'distinct_passports',
+    ...(grain ? { grain } : {}),
   }
 }
 

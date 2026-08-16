@@ -101,6 +101,70 @@ async function resolveSeries(deps, subs) {
 // An explicit `projection` in the query still wins — this only fills the gap.
 const PROJECTION_FOR = { stat: 'count', table: 'people' }
 
+// Every key a query def may carry. A key outside this set was accepted and
+// ignored, and an ignored key is worse than a rejected one: the caller gets a
+// confident answer to a question they did not ask, with nothing in the payload
+// to say so. An LLM driving these tools cannot detect that without issuing a
+// second query to cross-check, and a human reading a Reports widget cannot
+// detect it at all.
+//
+// The set is the whole DEF, not the subset runQuery reads. A widget's query def
+// outlives this call — the chart renderer reads `stack` off it (analytics_chart)
+// and the console reads `target` (WidgetCard's goal line). Neither reaches
+// resolution, and an allowlist built from what runQuery touches would 400 both.
+const QUERY_KEYS = new Set([
+  'selector', 'scope', 'group', 'projection', 'passport', 'limit', 'asOf',
+  'breakdownFact', 'distribution', 'scatter', 'cohort', 'funnel', 'named',
+  'series', 'splitBy', 'question', 'last', 'from',
+  'stack', 'target',                                 // presentation — read downstream, not here
+])
+
+// Near-misses worth naming explicitly — each is a real shape a caller (or the
+// compose model) reaches for, where the generic "unknown key" message would not
+// say where the clause belongs.
+const QUERY_HINTS = {
+  filter: 'put it in `selector.filter` (or `scope.filter` to confine a grouped query to a cohort)',
+  metric: 'put it in `selector.filter.metric`',
+  fact: 'put it in `selector.filter.fact`, or `scope.filter.fact` when grouping',
+  about: 'put it in `selector.about`',
+  grain: '`group.by` chooses the time grain (hour/day/week/month)',
+  window: 'not implemented — use `asOf` for a point in time',
+  since: 'not implemented — use `asOf` for a point in time',
+  by: 'put it in `group.by`',
+  key: 'put it in `breakdownFact.key` (or `distribution.key`)',
+}
+
+// `grain` is accepted here but NOT on the core selector `group` (server's
+// /query envelope rejects it): a grain only applies to a `fact:<key>` bucket,
+// which is resolved in this layer, and the engine's own time grains are chosen
+// by `by` instead.
+const GROUP_KEYS = new Set(['by', 'limit', 'grain'])
+
+const GROUP_HINTS = {
+  // `group: { by: "day", key: "first_booked_at" }` read as "people by the day of
+  // first_booked_at" but resolved as "event rows per calendar day" — off by ~100x.
+  key: 'to bucket people by a date fact, use `group: { by: "fact:<key>", grain: "day" }`',
+}
+
+function assertQueryKeys(q) {
+  for (const k of Object.keys(q)) {
+    if (QUERY_KEYS.has(k)) continue
+    const hint = QUERY_HINTS[k]
+    const e = new Error(`query: unknown key "${k}"${hint ? ` — ${hint}` : ` (allowed: ${[...QUERY_KEYS].sort().join(', ')})`}`)
+    e.status = 400
+    throw e
+  }
+  if (q.group && typeof q.group === 'object') {
+    for (const k of Object.keys(q.group)) {
+      if (GROUP_KEYS.has(k)) continue
+      const hint = GROUP_HINTS[k]
+      const e = new Error(`group: unknown key "${k}"${hint ? ` — ${hint}` : ` (allowed: ${[...GROUP_KEYS].sort().join(', ')})`}`)
+      e.status = 400
+      throw e
+    }
+  }
+}
+
 // Resolve one query def. Branches by shape so a widget can be a cohort count, a
 // time-series, a fact-value breakdown, a funnel, a grounded answer, or a multi-
 // series comparison (series[] / splitBy). Exported so mcp.js can run the exact
@@ -117,6 +181,7 @@ export async function runQuery(deps, query = {}, kind) {
   const q = typeof query === 'string'
     ? (() => { try { return JSON.parse(query) } catch { return {} } })()
     : (query || {})
+  assertQueryKeys(q)
   const { selector, awareness } = deps
   // `scope` confines a query to a cohort: an explicit passport-id array, OR a people
   // sub-selector (a cohort filter) resolved to ids here — so an aggregate (group/
@@ -194,8 +259,17 @@ export async function runQuery(deps, query = {}, kind) {
     //
     // `total` rides along so a caller can say "top 12 of 56" instead of
     // implying twelve is all there is.
-    const { series, total } = await store.factBreakdown(key, scope)
-    return { series, total }
+    //
+    // `grain`/`limit` are honoured from EITHER spelling — `group: { by: "fact:k",
+    // grain, limit }` or `breakdownFact: { key, grain, limit }`. Both land here,
+    // and both used to reach factBreakdown with neither, so a `limit: 400` came
+    // back as twelve raw-timestamp buckets ranked by value. A date-typed fact with
+    // a grain now gives day/week/month buckets in chronological order, counting
+    // DISTINCT PEOPLE.
+    const grain = q.group?.grain ?? q.breakdownFact?.grain
+    const factLimit = q.group?.limit ?? q.breakdownFact?.limit
+    const out = await store.factBreakdown(key, scope, { grain, ...(factLimit != null ? { limit: factLimit } : {}) })
+    return out
   }
   if (q.distribution) {
     // Histogram of a numeric fact's value per person, or of how many of an event
