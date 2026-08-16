@@ -208,7 +208,7 @@ export async function sampleContent({ limit = 40, scope, last, from } = {}) {
   const since = sinceFrom({ last, from })
   const binds = []
   let confine = ''
-  if (scope?.length) { confine += ` AND passport_id IN (${scope.map(() => '?').join(', ')})`; binds.push(...scope) }
+  if (scope?.length) { confine += ' AND passport_id = any(?::uuid[])'; binds.push(scope) }
   if (since) { confine += ' AND ts >= ?'; binds.push(since) }
   binds.push(limit)
 
@@ -245,12 +245,19 @@ export async function populationChunks({ embedding, similarity = 0.75, limit = 1
   const v = toVectorLiteral(embedding)
   const since = sinceFrom({ last, from })
 
-  // Optional cohort/window confinement (docs/scoped-recall.md), both bound. Added
-  // to the exposure JOIN — `IN (?)` (knex expands the array) rather than ANY(?),
-  // which knex would mis-expand. `?` order matches the appended bindings.
+  // Optional cohort/window confinement (docs/scoped-recall.md), both bound, added to
+  // the exposure JOIN. `?` order matches the appended bindings.
+  //
+  // `= any(?::uuid[])` — ONE bind parameter for the whole cohort, the same form
+  // db.js's whereScope uses (and populationStats through it). This was `IN (?, ?, …)`,
+  // one placeholder per id, on the belief that knex mis-expands ANY(?); it does not,
+  // given the explicit cast. The per-id form put a hard ceiling on cohort size —
+  // Postgres takes 65535 bind parameters per statement, so a cohort bigger than that
+  // failed outright rather than slowly, and this is the retrieval path a 100k-passport
+  // base would confine most.
   const binds = [v, v, similarity, v, limit, minEngagement, minEngagement]
   let confine = ''
-  if (scope?.length) { confine += ` AND e.passport_id IN (${scope.map(() => '?').join(', ')})`; binds.push(...scope) }
+  if (scope?.length) { confine += ' AND e.passport_id = any(?::uuid[])'; binds.push(scope) }
   if (since) { confine += ' AND e.ts >= ?'; binds.push(since) }
 
   const result = await db.raw(

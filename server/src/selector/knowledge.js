@@ -30,8 +30,42 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
   }
 
   if (query) {
-    const pop = await rt.awareness.population({ query, similarity: rt.defaults.knowledgeSimilarity, limit: rt.defaults.candidateLimit })
+    // A filter that matches nobody has no evidence, and that has to be said HERE.
+    // `scope` is applied downstream as `if (scope?.length)`, so an empty array is
+    // indistinguishable from "unscoped" and would widen the query back to the whole
+    // base — turning "nobody matches" into "here is everyone", which is the worst
+    // possible answer to give confidently.
+    if (cohort && cohort.size === 0) {
+      return { projection: 'knowledge', scope: 'base', count: 0, evidence: [] }
+    }
+
+    // The cohort confines the CANDIDATE POOL, not just the result.
+    //
+    // This used to fetch base-wide and narrow in JS below. The narrowing was
+    // correct and the pool was not: `population` returns the top `candidateLimit`
+    // chunks by similarity ACROSS THE BASE, so a cohort competed with everyone for
+    // those slots. A cohort whose content ranked below the cut got partial evidence
+    // — or none, which /ask renders as "I don't have any relevant content to answer
+    // that." An answerable question about fifty people came back as a confident
+    // denial, and nothing in the response distinguished that from a real miss.
+    //
+    // Pushing it down (docs/scoped-recall.md — this is the contract that doc
+    // describes, which the analytics answer widget already honours) means the pool
+    // is the cohort's own top-N. It is also the cheaper shape: the exposure JOIN
+    // stops fanning out across the whole base only to discard it in Node.
+    const scopeIds = cohort ? [...cohort] : undefined
+    const pop = await rt.awareness.population({
+      query,
+      similarity: rt.defaults.knowledgeSimilarity,
+      limit: rt.defaults.candidateLimit,
+      ...(scopeIds ? { scope: scopeIds } : {}),
+    })
+
     let hits = (pop?.passports || []).flatMap(p => (p.hits || []).map(h => ({ passport_id: p.passport_id, ...h })))
+    // Kept even though `scope` now does this in SQL. `rt.awareness` is injected, so
+    // an implementation that ignores `scope` would otherwise leak other people's
+    // content into a cohort's answer — a correctness property should not rest on a
+    // provider honouring a hint. Over a bounded pool it costs nothing.
     if (cohort) hits = hits.filter(h => cohort.has(h.passport_id))
     hits.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
     return { projection: 'knowledge', scope: 'base', count: hits.length, evidence: asEvidence(hits).slice(0, lim) }

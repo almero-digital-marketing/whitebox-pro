@@ -14,13 +14,35 @@ const texts = res => res.evidence.map(e => e.content)
 // awareness stub — the three reads the knowledge projection uses. recall is keyed
 // by passport; population returns passports-with-hits per query; sampleContent is
 // the base-wide fallback.
+//
+// `population` MODELS `scope` and `limit`, and that is the point rather than a
+// detail. It used to return `popMap[query]` whole, ignoring both — so every test
+// handed the projection a candidate pool already containing exactly the passports
+// it expected to see, and no test could express the defect that mattered: the pool
+// being chosen base-wide, before the cohort was known. Confining here (and taking
+// the top-`limit` by similarity, as the real one does) is what lets a test say
+// "the cohort's content was below the cut".
 let recallMap = {}
 let popMap = {}
 let sampleRows = []
 let lastPopArgs = null
 const awareness = {
   recall: async ({ passport_id }) => recallMap[passport_id] || [],
-  population: async (args) => { lastPopArgs = args; return { passports: popMap[args.query] || [] } },
+  population: async (args) => {
+    lastPopArgs = args
+    let passports = popMap[args.query] || []
+    if (args.scope?.length) {
+      const allowed = new Set(args.scope)
+      passports = passports.filter(p => allowed.has(p.passport_id))
+    }
+    if (args.limit != null) {
+      // the real one ranks CHUNKS by similarity and cuts; one hit per passport here
+      passports = [...passports]
+        .sort((a, b) => (b.hits?.[0]?.similarity ?? 0) - (a.hits?.[0]?.similarity ?? 0))
+        .slice(0, args.limit)
+    }
+    return { count: passports.length, passports }
+  },
   sampleContent: async () => sampleRows,
 }
 
@@ -80,6 +102,56 @@ describe('selector knowledge (ranked evidence)', () => {
       { projection: 'knowledge' })
     expect(texts(res)).toEqual(['from pro'])   // b (free) filtered out despite higher similarity
     expect(res.count).toBe(1)
+  })
+
+  it('confines the CANDIDATE POOL to the cohort, not just the result', async () => {
+    const { a } = await proFree()
+    popMap['x'] = [{ passport_id: a, hits: [{ chunk_text: 'from pro', similarity: 0.8 }] }]
+
+    await selector.resolve(
+      { about: 'x', filter: { fact: { plan_tier: { eq: 'pro' } } } },
+      { projection: 'knowledge' })
+
+    // The retrieval must be TOLD the cohort. Narrowing afterwards is not the same
+    // thing and is what this guards: the pool is capped at `candidateLimit` by
+    // similarity, so a pool picked base-wide can be full before the cohort is
+    // reached — see the next test for what that costs.
+    expect(lastPopArgs.scope).toEqual([a])
+  })
+
+  it('finds a cohort whose content ranks below the base-wide cut', async () => {
+    const { a, b } = await proFree()
+    // One pro customer, and a crowd of higher-similarity content from everyone
+    // else. With candidateLimit 1 a base-wide pool holds only the crowd's chunk,
+    // so the pro's evidence never reaches the cohort filter — the question comes
+    // back "no relevant content" despite the evidence existing.
+    selector.init({ db, passports, logger, awareness, ai: {}, config: { selector: { knowledgeLimit: 5, candidateLimit: 1 } } })
+    popMap['x'] = [
+      { passport_id: b, hits: [{ chunk_text: 'louder, from free', similarity: 0.99 }] },
+      { passport_id: a, hits: [{ chunk_text: 'quieter, from pro', similarity: 0.4 }] },
+    ]
+
+    const res = await selector.resolve(
+      { about: 'x', filter: { fact: { plan_tier: { eq: 'pro' } } } },
+      { projection: 'knowledge' })
+
+    expect(texts(res)).toEqual(['quieter, from pro'])
+    selector.init({ db, passports, logger, awareness, ai: {}, config: { selector: { knowledgeLimit: 5 } } })
+  })
+
+  it('a cohort matching nobody returns nothing, not the whole base', async () => {
+    await proFree()
+    popMap['x'] = [{ passport_id: 'someone-else', hits: [{ chunk_text: 'base-wide', similarity: 0.9 }] }]
+
+    const res = await selector.resolve(
+      { about: 'x', filter: { fact: { plan_tier: { eq: 'nobody-has-this' } } } },
+      { projection: 'knowledge' })
+
+    // An empty scope reads as "unscoped" downstream (`if (scope?.length)`), so
+    // without the short-circuit this widens back to the entire base — the worst
+    // possible answer to "who matches nothing".
+    expect(res.evidence).toEqual([])
+    expect(res.count).toBe(0)
   })
 
   it('base with no about returns a representative content sample', async () => {
