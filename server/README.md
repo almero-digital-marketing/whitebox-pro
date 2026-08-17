@@ -197,6 +197,10 @@ export default {
   awareness: {
     enabled: true,
     pii: { redact: true },
+    // content_url is stored without its query string. `keep` names the
+    // parameters worth retaining — ad-click ids live nowhere else, while utm_*
+    // are already columns on the session.
+    url: { keep: ['gclid', 'fbclid'] },
     embedding: { model: 'text-embedding-3-small' },
     chunk: { size: 200 },
     webhooks: { recorded: { /* subscribe to awareness.recorded */ } },

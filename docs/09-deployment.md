@@ -106,6 +106,13 @@ not a reference.
 
 - **PII redaction** is on by default before text is embedded (configurable under
   `awareness.pii`).
+- **Query strings are stripped** from `content_url` at ingest. A query string is
+  whatever the site put in the address bar, and storing the URL whole stores it too
+  — one deployment kept Stripe `payment_intent_client_secret` values in 2,397
+  analytics rows that way. Name any parameter worth keeping under
+  `awareness.url.keep` (`['gclid', 'fbclid']`): ad-click ids are the only record of
+  which click led to a visit, whereas `utm_*` is already stored as columns on the
+  session and needs no exception.
 - **Opt-out** is enforced at the channel: mail suppressions, SMS STOP/START,
   audiences consent gating + suppression list. Suppressed recipients are blocked at
   send time.

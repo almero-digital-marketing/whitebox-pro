@@ -31,7 +31,7 @@ the factory form is preferred.
 | `logger` | no | `{ level, transport }` — level is `trace…fatal`; `transport: null` disables pretty-print in prod |
 | `webhooks` | no | outbound webhook worker: `{ concurrency, retries, timeout }` |
 | `passports` | no | `{ lifespans: { fingerprint, phone, email } }` in **days** (merge freshness) |
-| `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, concurrency) |
+| `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, `url.keep` query-string allowlist, concurrency) |
 | `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
 | `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
 | `connect` | mounted under a path prefix a proxy preserves | `{ path }` — where socket.io's engine listens — see below |

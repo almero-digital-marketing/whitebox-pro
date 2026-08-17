@@ -7,7 +7,7 @@ import * as memory from './memory.js'
 import * as query from './query.js'
 import * as askCore from './ask.js'
 import createNotify from '../notify.js'
-import { redact } from './pii.js'
+import { redact, canonicalUrl } from './pii.js'
 
 // Excerpt length for the `preview` on awareness.recorded. Long enough for a
 // monitoring feed to show a real sentence, short enough that the event stays
@@ -35,6 +35,7 @@ let db
 let logger
 let enabled
 let redactPii
+let urlKeep
 let notify
 let passports
 
@@ -45,6 +46,11 @@ export function init(deps) {
   const cfg = deps.config.awareness || {}
   enabled = cfg.enabled !== false
   redactPii = cfg.pii?.redact !== false
+  // Query strings are dropped from content_url before storage — they carry
+  // credentials often enough (Stripe return-URL secrets, reset tokens, session
+  // ids) that keeping them whole is a liability, and they answer no question a
+  // path does not. `keep` names the exceptions; see canonicalUrl in pii.js.
+  urlKeep = Array.isArray(cfg.url?.keep) ? cfg.url.keep : []
 
   ;({ notify } = createNotify({ webhooksConfig: cfg.webhooks, events: deps.events, webhooks: deps.webhooks, eventRegistry: deps.eventRegistry }))
 
@@ -85,7 +91,9 @@ export async function record(event) {
     // which subsystem actually collected the row.
     plugin: event.plugin || null,
     content_id: event.content_id || null,
-    content_url: event.content_url || null,
+    // Stripped HERE, at the single write, so nothing downstream has to remember
+    // to — and so a row that reaches the table is already safe to show.
+    content_url: canonicalUrl(event.content_url || null, { keep: urlKeep }),
     text,
     content_hash,
     dwell_ms: event.dwell_ms || null,

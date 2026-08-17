@@ -8,7 +8,7 @@ function createAwareness(deps) {
   return awareness
 }
 
-function makeDeps({ enabled, redactPii, webhooksConfig, insertedExposure } = {}) {
+function makeDeps({ enabled, redactPii, webhooksConfig, insertedExposure, urlKeep } = {}) {
   const exposures = []
   let nextId = 1
 
@@ -54,6 +54,7 @@ function makeDeps({ enabled, redactPii, webhooksConfig, insertedExposure } = {})
     awareness: {
       enabled,
       pii: { redact: redactPii },
+      url: urlKeep ? { keep: urlKeep } : undefined,
       webhooks: webhooksConfig,
     },
   }
@@ -62,6 +63,37 @@ function makeDeps({ enabled, redactPii, webhooksConfig, insertedExposure } = {})
 }
 
 describe('awareness factory', () => {
+
+  // The query string is stripped at the WRITE, so a row cannot reach the table
+  // carrying a credential — a live deployment had Stripe
+  // `payment_intent_client_secret` values in 2,397 analytics rows purely because
+  // the URL was stored whole.
+  it('stores content_url without its query string', async () => {
+    const deps = makeDeps()
+    const aw = createAwareness(deps)
+    await aw.record({
+      passport_id: 'p1', ts: new Date(), channel: 'web', direction: 'exposure', text: 'x',
+      content_url: 'https://gpoint.bg/checkout?payment_intent_client_secret=pi_3Rx_secret&utm_source=google',
+    })
+    expect(deps.exposures[0].content_url).toBe('https://gpoint.bg/checkout')
+  })
+
+  it('keeps the parameters a deployment names, and only those', async () => {
+    const deps = makeDeps({ urlKeep: ['gclid'] })
+    const aw = createAwareness(deps)
+    await aw.record({
+      passport_id: 'p1', ts: new Date(), channel: 'web', direction: 'exposure', text: 'x',
+      content_url: 'https://gpoint.bg/booking?gclid=EAIaIQob&payment_intent_client_secret=pi_secret',
+    })
+    expect(deps.exposures[0].content_url).toBe('https://gpoint.bg/booking?gclid=EAIaIQob')
+  })
+
+  it('leaves a URL-less exposure null rather than inventing a value', async () => {
+    const deps = makeDeps()
+    const aw = createAwareness(deps)
+    await aw.record({ passport_id: 'p1', ts: new Date(), channel: 'mail', direction: 'exposure', text: 'x' })
+    expect(deps.exposures[0].content_url).toBe(null)
+  })
 
   it('record inserts exposure and enqueues embedding', async () => {
     const deps = makeDeps()
