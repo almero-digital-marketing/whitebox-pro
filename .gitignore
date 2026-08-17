@@ -33,3 +33,7 @@ coverage/
 # Multi-root workspace is personal dev config — it may list private
 # integration roots (under the gitignored integrations/), so keep it local.
 *.code-workspace
+
+# scratch vitest configs used to bypass the Neon global setup
+.vitest.tmp.config.js
+**/.vitest.tmp.config.js
