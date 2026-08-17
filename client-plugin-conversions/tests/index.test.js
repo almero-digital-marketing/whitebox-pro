@@ -1,19 +1,26 @@
 import { describe, it, expect, vi } from 'vitest'
 import conversionsPlugin from '../src/index.js'
+import { google } from 'whitebox-pro-adnetworks-google/client'
 
 // Build a fake client core and install the plugin; return the attached API plus
 // the captured /conversions/events requests.
-function setup({ consented = true, requireConsent } = {}) {
+function setup({ consented = true, requireConsent, networks, passportId = 'p-123', failRequests = false } = {}) {
   const requests = []
   const core = {
-    http: { request: vi.fn(async (path, opts) => { requests.push({ path, opts }); return {} }) },
+    http: { request: vi.fn(async (path, opts) => {
+      requests.push({ path, opts })
+      if (failRequests) throw new Error('network down')
+      return {}
+    }) },
     queue: (fn) => fn(),                          // run inline
     consent: { has: vi.fn(() => consented) },
     logger: { debug: vi.fn(), warn: vi.fn() },
-    getPassportId: () => 'p-123',
+    getPassportId: () => passportId,
     attach: vi.fn(),
   }
-  conversionsPlugin(requireConsent === undefined ? {} : { requireConsent }).install(core)
+  const opts = requireConsent === undefined ? {} : { requireConsent }
+  if (networks) opts.networks = networks
+  conversionsPlugin(opts).install(core)
   const api = core.attach.mock.calls[0][1]
   return { api, requests, core }
 }
@@ -225,5 +232,64 @@ describe('conversions plugin — server unreachable', () => {
     const { api } = offlineSetup()
     const res = await api.pageView({ url: '/x' })
     expect(res).toHaveProperty('pixels')
+  })
+})
+
+// A click id is in the URL only on the landing page, so it has to be captured on
+// arrival — not at conversion time, when it is long gone. Stored as a WEAK
+// `clickid` identity, which never drives a passport merge; click ids look unique
+// but measurably are not (2,237 gclid values on live traffic had been seen by more
+// than one passport).
+describe('conversions plugin — click ids linked at install', () => {
+  const store = {}
+  const arrive = (search) => {
+    for (const k of Object.keys(store)) delete store[k]
+    window.localStorage = {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v) },
+      removeItem: k => { delete store[k] },
+    }
+    window.location = { search, href: 'https://x.bg/land' + search }
+    window.gtag = vi.fn()
+  }
+  const linkCalls = (requests) => requests.filter(r => r.path === '/passports/link')
+
+  it('links the click ids the visit arrived with', async () => {
+    arrive('?gclid=G1&wbraid=W1')
+    const { requests } = setup({ networks: [google()] })
+    await vi.waitFor(() => expect(linkCalls(requests)).toHaveLength(1))
+    const body = linkCalls(requests)[0].opts.body
+    expect(body.passport_id).toBe('p-123')
+    expect(body.claims).toEqual([
+      { type: 'clickid', name: 'gclid', value: 'G1' },
+      { type: 'clickid', name: 'wbraid', value: 'W1' },
+    ])
+  })
+
+  it('posts nothing when the visit carried no click id', async () => {
+    arrive('')
+    const { requests } = setup({ networks: [google()] })
+    await new Promise(r => setTimeout(r, 5))
+    expect(linkCalls(requests)).toHaveLength(0)
+  })
+
+  it('does not link without marketing consent', async () => {
+    arrive('?gclid=G1')
+    const { requests } = setup({ networks: [google()], consented: false })
+    await new Promise(r => setTimeout(r, 5))
+    expect(linkCalls(requests)).toHaveLength(0)
+  })
+
+  it('does not link before there is a passport to link to', async () => {
+    arrive('?gclid=G1')
+    const { requests } = setup({ networks: [google()], passportId: null })
+    await new Promise(r => setTimeout(r, 5))
+    expect(linkCalls(requests)).toHaveLength(0)
+  })
+
+  it('survives the link failing — attribution is worth less than the page', async () => {
+    arrive('?gclid=G1')
+    const { core } = setup({ networks: [google()], failRequests: true })
+    await vi.waitFor(() => expect(core.logger.warn).toHaveBeenCalled())
   })
 })

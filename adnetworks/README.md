@@ -34,9 +34,38 @@ A composed network descriptor:
 ## What this kernel provides
 
 - **`./schemas`** — zod payload schemas (`validateEvent`, `validateCustom`, `CONVERSION_EVENTS`). Client-safe.
-- **`./browser`** — pure client helpers (`cookie`, `param`, `removeUndefined`, `toItems`) the pixels use.
+- **`./browser`** — pure client helpers (`cookie`, `param`, `stickyParam`, `clickIdClaims`, `removeUndefined`, `toItems`) the pixels use.
 - **`.`** — the above plus `CANONICAL_EVENTS` and identity helpers (`hashEmail`, `hashPhone`, `composeManifest`, `pick`). Server-side (uses `node:crypto`).
 
 `composeManifest(networks)` unions the eligible networks' `signals` into the
 declarative client-collection manifest. Adding a network = a new package; no
 edits to a central registry.
+
+### Click ids
+
+A signal spec may add `clickId: true` (URL signals only):
+
+```js
+{ key: 'gclid', from: 'url', name: 'gclid', clickId: true }
+```
+
+Two things follow from that flag, and nothing in core needs to know what the
+parameter means:
+
+- **`stickyParam(name)`** reads the URL, remembers the value for 90 days, and keeps
+  returning it once the URL no longer has it. Click ids arrive once, on the landing
+  page, and a conversion almost never happens there — read late with plain
+  `param()` the id is simply absent, so the hit reaches the network with nothing to
+  attribute the sale to. A fresh click always beats a remembered one, so a second
+  campaign is never credited to the first.
+- **`clickIdClaims(networks)`** turns whatever the composed networks declare into
+  `{ type: 'clickid', name, value }` identity claims, which
+  `client-plugin-conversions` POSTs to `/passports/link` on arrival.
+
+`clickid` is deliberately a **weak** identity type. Weak identities attach to one
+passport and never drive a merge — which matters, because click ids look unique and
+are not: on ten days of one deployment's live traffic 2,237 distinct `gclid` values
+had been seen by more than one passport (one by nine of them), and `gbraid` by 48%,
+since it names a campaign rather than a click when consent limits tracking. As a
+strong (merge-key) type those would have permanently fused thousands of unrelated
+people.

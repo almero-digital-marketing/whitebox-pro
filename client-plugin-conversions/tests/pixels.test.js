@@ -125,10 +125,13 @@ describe('composed pixels — identify (Advanced Matching)', () => {
   ]
 
   it('hands claims to every network that implements identify() (meta, tiktok — not google)', async () => {
-    const { api } = setup()
+    const { api } = setup({ networks: [meta({ pixelId: '100' }), google(), tiktok()] })
     const identified = api.identify(claims)
     expect(identified.sort()).toEqual(['meta', 'tiktok'])
-    expect(window.fbq).toHaveBeenCalledWith('set', 'userData', { em: 'a@x.com', ph: '+15551234567' })
+    // `init`, not `set`: advanced matching applied via set only ever worked on
+    // Shopify's own bootstrap (see whitebox-pro-adnetworks-meta adc03dc), so the
+    // user data has to ride the pixel's init.
+    expect(window.fbq).toHaveBeenCalledWith('init', '100', { em: 'a@x.com', ph: '+15551234567' })
     expect(window.ttq.identify).toHaveBeenCalledWith({ email: 'a@x.com', phone_number: '+15551234567' })
   })
 
@@ -144,9 +147,32 @@ describe('composed pixels — identify (Advanced Matching)', () => {
     expect(api.identify(claims)).toEqual(['meta'])
   })
 
-  it('sends nothing to a network when claims have no matching type', () => {
-    const { api } = setup({ networks: [meta()] })
+  it('maps a city claim to Meta’s `ct`', () => {
+    const { api } = setup({ networks: [meta({ pixelId: '100' })] })
     api.identify([{ type: 'city', name: 'city', value: 'Sofia' }])
-    expect(window.fbq).toHaveBeenCalledWith('set', 'userData', { ct: 'Sofia' })
+    expect(window.fbq).toHaveBeenCalledWith('init', '100', { ct: 'Sofia' })
+  })
+
+  it('sends nothing to a network when NO claim maps to one of its fields', () => {
+    const { api } = setup({ networks: [meta({ pixelId: '100' })] })
+    api.identify([{ type: 'user', name: 'gpoint', value: 'u-1' }])   // meta maps em/ph/ct only
+    expect(window.fbq).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the pixel ids fbq already has when none is configured', () => {
+    // The id lives in the host page's fbq('init', …) and this adapter deliberately
+    // does not own it.
+    window.fbq.getState = () => ({ pixels: [{ id: '777' }] })
+    const { api } = setup({ networks: [meta()] })
+    api.identify(claims)
+    expect(window.fbq).toHaveBeenCalledWith('init', '777', { em: 'a@x.com', ph: '+15551234567' })
+  })
+
+  it('is silent — not a throw — when no pixel id can be found at all', () => {
+    // getState() is undocumented, so it may simply not be there. Losing advanced
+    // matching is acceptable; taking the page down with it is not.
+    const { api } = setup({ networks: [meta()] })
+    expect(() => api.identify(claims)).not.toThrow()
+    expect(window.fbq).not.toHaveBeenCalled()
   })
 })

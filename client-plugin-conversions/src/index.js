@@ -24,6 +24,7 @@
 import { CONVERSION_EVENTS, validateEvent, validateCustom } from 'whitebox-pro-adnetworks/schemas'
 import { createPixels } from './pixels/index.js'
 import { collectSignals } from './signals.js'
+import { clickIdClaims } from 'whitebox-pro-adnetworks/browser'
 
 const toCamel = s => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 
@@ -48,6 +49,40 @@ export default function conversionsPlugin(options = {}) {
       const pixels = createPixels({ networks: networkSelect, logger })
       // See the catch in emit(): one warning per outage, not one per event.
       let sendFailed = false
+
+      // Persist the click ids this visit arrived with, ONCE, at load — not at
+      // conversion time.
+      //
+      // A click id is only in the URL on the landing page, and a conversion
+      // almost never happens there. Read late it is simply absent, so the hit
+      // goes to the network without it and the sale cannot be tied to the click
+      // that produced it. Stored as a WEAK `clickid` identity, so it survives the
+      // rest of the visit and is queryable afterwards.
+      //
+      // Weak matters: click ids look unique but are not — on live traffic 2,237
+      // gclid values had been seen by more than one passport (one by nine), and
+      // gbraid by 48%, since it names a campaign rather than a click when consent
+      // limits tracking. A strong (merge-key) type would have fused thousands of
+      // unrelated people permanently.
+      //
+      // Which parameters exist is each NETWORK's business, declared in its own
+      // spec — this only forwards whatever they name.
+      async function linkClickIds() {
+        if (!consented()) return
+        const claims = clickIdClaims(networkSelect)
+        if (!claims.length) return
+        const passport_id = getPassportId?.()
+        if (!passport_id) return
+        try {
+          // Weak identities never merge, so there is no passport to adopt back —
+          // unlike core's identify(), which exists to absorb that case.
+          await http.request('/passports/link', { method: 'POST', body: { passport_id, claims } })
+          logger?.debug?.('conversions: linked %d click id(s)', claims.length)
+        } catch (err) {
+          // Attribution is worth less than the page working.
+          logger?.warn?.('conversions: linking click ids failed', err)
+        }
+      }
 
       function consented() {
         if (!requireConsent) return true
@@ -175,6 +210,9 @@ export default function conversionsPlugin(options = {}) {
       }
 
       core.attach('conversions', api)
+      // Not awaited: a landing page must not wait on an attribution write, and a
+      // failure here is logged rather than raised (see linkClickIds).
+      linkClickIds()
       logger?.debug?.(`conversions: ${CONVERSION_EVENTS.length} standard-event methods ready`)
     },
   }
