@@ -48,6 +48,92 @@ const purchases = { filter: { metric: { content: 'purchase', count: {} } } }
 // spread — grouped by anything.
 // "Which content do people consume" was not expressible: content_url was not a
 // bucket, so asking for one returned an empty series in silence.
+// Aggregating a FACT is per PERSON, which is why it cannot be one GROUP BY over the
+// exposure stream: exposures are many-per-passport, so averaging the joined fact
+// weights each customer by how many events they have.
+describe('selector group: aggregates over a fact', () => {
+  const purchase = (agg) => ({ filter: { metric: { content: 'purchase', ...agg } } })
+
+  it('counts each passport ONCE per bucket, however many events they have', async () => {
+    const heavy = await newPassport(), light = await newPassport()
+    // heavy has 4 purchases, light has 1. Their values are 100 and 200.
+    for (const ts of ['2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04']) await expose(heavy, { ts })
+    await expose(light, { ts: '2026-05-05' })
+    await facts.record({ passport_id: heavy, key: 'ltv', value: 100, source: 't' })
+    await facts.record({ passport_id: light, key: 'ltv', value: 200, source: 't' })
+
+    const r = await selector.resolve(purchase({ avg: { fact: 'ltv' } }), { group: { by: 'month' } })
+    // Deduped: (100 + 200) / 2 = 150. Event-weighted would be
+    // (100*4 + 200) / 5 = 120 — a per-VISIT mean wearing a per-customer label.
+    expect(r[0].value).toBe(150)
+  })
+
+  it('puts a passport in every bucket it was active in, once each', async () => {
+    const p = await newPassport()
+    await expose(p, { ts: '2026-05-01' })
+    await expose(p, { ts: '2026-05-02' })      // same month, twice
+    await expose(p, { ts: '2026-06-01' })
+    await facts.record({ passport_id: p, key: 'ltv', value: 50, source: 't' })
+    const r = await selector.resolve(purchase({ avg: { fact: 'ltv' } }), { group: { by: 'month' } })
+    expect(asMap(r)).toEqual({ '2026-05': 50, '2026-06': 50 })
+  })
+
+  it('sums per person, not per event', async () => {
+    const a = await newPassport(), b = await newPassport()
+    await expose(a, { ts: '2026-05-01' }); await expose(a, { ts: '2026-05-02' })
+    await expose(b, { ts: '2026-05-03' })
+    await facts.record({ passport_id: a, key: 'ltv', value: 10, source: 't' })
+    await facts.record({ passport_id: b, key: 'ltv', value: 5, source: 't' })
+    const r = await selector.resolve(purchase({ sum: { fact: 'ltv' } }), { group: { by: 'month' } })
+    expect(r[0].value).toBe(15)                // not 25
+  })
+
+  it('takes min/max/median over the deduped values', async () => {
+    const a = await newPassport(), b = await newPassport(), c = await newPassport()
+    for (const [p, v] of [[a, 10], [b, 20], [c, 60]]) {
+      await expose(p, { ts: '2026-05-01' })
+      await facts.record({ passport_id: p, key: 'ltv', value: v, source: 't' })
+    }
+    const at = (agg) => selector.resolve(purchase(agg), { group: { by: 'month' } })
+    expect((await at({ min: { fact: 'ltv' } }))[0].value).toBe(10)
+    expect((await at({ max: { fact: 'ltv' } }))[0].value).toBe(60)
+    expect((await at({ median: { fact: 'ltv' } }))[0].value).toBe(20)
+  })
+
+  it('ignores a passport without the fact, and a non-numeric value', async () => {
+    const a = await newPassport(), b = await newPassport(), c = await newPassport()
+    for (const p of [a, b, c]) await expose(p, { ts: '2026-05-01' })
+    await facts.record({ passport_id: a, key: 'ltv', value: 100, source: 't' })
+    await facts.record({ passport_id: b, key: 'ltv', value: 'n/a', source: 't' })
+    // c has no ltv at all
+    const r = await selector.resolve(purchase({ avg: { fact: 'ltv' } }), { group: { by: 'month' } })
+    expect(r[0].value).toBe(100)               // neither contributes a zero
+  })
+
+  it('combines a fact aggregate with a fact BUCKET', async () => {
+    const a = await newPassport(), b = await newPassport()
+    for (const [p, tier, v] of [[a, 'pro', 100], [b, 'free', 20]]) {
+      await expose(p, { ts: '2026-05-01' })
+      await facts.record({ passport_id: p, key: 'tier', value: tier, source: 't' })
+      await facts.record({ passport_id: p, key: 'ltv', value: v, source: 't' })
+    }
+    const r = await selector.resolve(purchase({ avg: { fact: 'ltv' } }), { group: { by: 'fact:tier' } })
+    expect(asMap(r)).toEqual({ pro: 100, free: 20 })
+  })
+
+  it('refuses earliest/latest over a fact — it has one current value', async () => {
+    await fixture()
+    await expect(selector.resolve(purchase({ earliest: { fact: 'ltv' } }), { group: { by: 'month' } }))
+      .rejects.toThrow(/orders by event time/)
+  })
+
+  it('refuses two sources at once', async () => {
+    await fixture()
+    await expect(selector.resolve(purchase({ avg: { fact: 'ltv', field: 'value' } }), { group: { by: 'month' } }))
+      .rejects.toThrow(/one of `field`\/`column`\/`fact`/)
+  })
+})
+
 describe('selector group: content buckets', () => {
   const withUrl = async (passport_id, { ts, url }) => {
     await db('whitebox_awareness_exposures').insert({
@@ -176,7 +262,7 @@ describe('selector group: aggregates over a value', () => {
     await fixture()
     await expect(selector.resolve(all({ avg: {} }), { group: { by: 'day' } })).rejects.toThrow(/needs a `field`/)
     await expect(selector.resolve(all({ avg: { column: 'ts' } }), { group: { by: 'day' } })).rejects.toThrow(/must be one of dwell_ms/)
-    await expect(selector.resolve(all({ avg: { field: 'value', column: 'dwell_ms' } }), { group: { by: 'day' } })).rejects.toThrow(/not both/)
+    await expect(selector.resolve(all({ avg: { field: 'value', column: 'dwell_ms' } }), { group: { by: 'day' } })).rejects.toThrow(/not field \+ column/)
     await expect(selector.resolve(all({ percentile: { field: 'value' } }), { group: { by: 'day' } })).rejects.toThrow(/between 0 and 1/)
   })
 })
