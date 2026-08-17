@@ -71,6 +71,16 @@ export function describedKeys() {
   return [...labels.entries()].map(([key, humanLabel]) => ({ key, label: humanLabel }))
 }
 
+// Is the current-value projection consistent with the append-only log? Exposed so a
+// deployment can assert it on a schedule — the projection is trigger-maintained and
+// therefore hard to desynchronise, but "hard" is not "impossible" and the failure
+// mode is a confidently wrong number rather than an error.
+export const verifyCurrent = (opts) => store.verifyCurrent(opts)
+
+// Rebuild it from the log. One statement; the escape hatch that makes the projection
+// safe to depend on.
+export const rebuildCurrent = () => store.rebuildCurrent()
+
 export async function migrate() {
   await db.migrate.latest({
     directory: path.join(__dirname, 'migrations'),

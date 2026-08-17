@@ -93,6 +93,63 @@ export async function currentForPairs(pairs) {
     .select('*')
 }
 
+// ── the current-value projection (whitebox_facts_current) ─────────────────────
+//
+// Maintained by triggers on whitebox_facts (migration 006), so it cannot be bypassed
+// by merge(), erase(), a migration, or a psql session. These two exist because a
+// cache nobody can check is a cache nobody should trust.
+const CURRENT = 'whitebox_facts_current'
+
+/**
+ * Does the projection agree with the log? Returns the disagreements, empty when it
+ * is exact.
+ *
+ * Compares on (passport_id, key, fact_id): the winning ROW, not just the value, so a
+ * projection that happens to hold the right value for the wrong reason still reports
+ * as wrong. Cheap enough to run on a schedule — one pass over each side, no per-row
+ * queries — and the output is small by construction, since anything but empty is a
+ * bug.
+ */
+export async function verifyCurrent({ limit = 50 } = {}) {
+  const { rows } = await db.raw(`
+    with truth as (
+      select distinct on (passport_id, key) passport_id, key, id as fact_id
+        from ${TABLE}
+       order by passport_id, key, observed_at desc, id desc
+    )
+    select coalesce(t.passport_id, c.passport_id) as passport_id,
+           coalesce(t.key, c.key)                as key,
+           t.fact_id as should_be,
+           c.fact_id as projection_has,
+           case when t.passport_id is null then 'extra in projection'
+                when c.passport_id is null then 'missing from projection'
+                else 'wrong row' end             as problem
+      from truth t
+      full outer join ${CURRENT} c
+        on c.passport_id = t.passport_id and c.key = t.key
+     where t.fact_id is distinct from c.fact_id
+     limit ?`, [limit])
+  return rows
+}
+
+/**
+ * Rebuild the projection from the log. One statement, so recovery from any drift is
+ * a single call rather than a migration — which is the property that makes the
+ * projection safe to depend on at all.
+ */
+export async function rebuildCurrent() {
+  return db.transaction(async trx => {
+    await trx.raw(`DELETE FROM ${CURRENT}`)
+    const r = await trx.raw(`
+      INSERT INTO ${CURRENT} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+      SELECT DISTINCT ON (passport_id, key)
+             passport_id, key, id, value, type, source, external_id, observed_at
+        FROM ${TABLE}
+       ORDER BY passport_id, key, observed_at DESC, id DESC`)
+    return r.rowCount
+  })
+}
+
 // Every fact key this deployment has ever recorded. There is no fixed
 // vocabulary, so this IS the vocabulary — it's what lets a key field suggest
 // `client_status` instead of letting you invent `clientStatus` beside it.
