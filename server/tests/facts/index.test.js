@@ -430,3 +430,61 @@ describe('facts external_id + resolve', () => {
     expect(all.filter(r => r.key === 'visits_total')).toHaveLength(2)
   })
 })
+
+// WHICH ROW IS CURRENT when two share an instant. Not hypothetical: on live data
+// 1,914 (passport, key) pairs have two or more rows at their newest observed_at, and
+// 38 of those hold DIFFERENT values there. 8 of the 38 are merge survivors, because
+// merging unions two passports' rows under one id — which is exactly how one
+// passport comes to hold two different values at the same instant.
+//
+// `observed_at` alone leaves it to Postgres, which may resolve `distinct on`
+// differently between plans. The rule is `order by observed_at, id` in the same
+// direction, applied in every query that picks a winner or orders a history.
+describe('facts: same-instant tiebreak', () => {
+  const T = '2026-05-10T12:00:00Z'
+
+  it('the row written LAST wins, in every read path', async () => {
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'tier', value: 'first', source: 't', observed_at: d(T) })
+    await facts.record({ passport_id: p, key: 'tier', value: 'second', source: 't', observed_at: d(T) })
+
+    // current(): the per-passport read
+    expect((await facts.current(p)).tier).toBe('second')
+    // asOf(): the same instant, time-travelled
+    expect((await facts.asOf(p, d(T))).tier).toBe('second')
+    // test(): the predicate on one passport
+    expect(await facts.test(p, 'tier', { eq: 'second' })).toBeTruthy()
+    expect(await facts.test(p, 'tier', { eq: 'first' })).toBeFalsy()
+    // matches(): the POPULATION path, which used to order by observed_at alone and
+    // could therefore disagree with everything above about this passport
+    expect(await facts.matches('tier', { eq: 'second' })).toEqual([p])
+    expect(await facts.matches('tier', { eq: 'first' })).toEqual([])
+  })
+
+  it('holds after a merge unions two passports at the same instant', async () => {
+    // merge() RE-POINTS rows rather than re-inserting them, so `id` keeps its
+    // original value and "written last" still means what it says across a merge.
+    const survivor = await newPassport(), absorbed = await newPassport()
+    await facts.record({ passport_id: absorbed, key: 'tier', value: 'from-absorbed', source: 't', observed_at: d(T) })
+    await facts.record({ passport_id: survivor, key: 'tier', value: 'from-survivor', source: 't', observed_at: d(T) })
+
+    await db('whitebox_facts').where({ passport_id: absorbed }).update({ passport_id: survivor })
+    mergeMap[absorbed] = survivor
+
+    // The survivor's own row was written later, so it wins — deterministically, and
+    // the population path agrees with the per-passport one.
+    expect((await facts.current(survivor)).tier).toBe('from-survivor')
+    expect(await facts.matches('tier', { eq: 'from-survivor' })).toEqual([survivor])
+    expect(await facts.matches('tier', { eq: 'from-absorbed' })).toEqual([])
+  })
+
+  it('orders a HISTORY the same way, so a tie is not read as a change', async () => {
+    // increased/decreased compare CONSECUTIVE rows, so an unstable order among
+    // same-instant rows could invent a movement that never happened.
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'spend', value: 100, source: 't', observed_at: d(T) })
+    await facts.record({ passport_id: p, key: 'spend', value: 50, source: 't', observed_at: d(T) })
+    const hist = await facts.history(p, 'spend')
+    expect(hist.map(r => r.value)).toEqual([100, 50])       // insertion order, always
+  })
+})

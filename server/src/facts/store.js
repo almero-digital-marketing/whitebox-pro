@@ -3,6 +3,28 @@
 // is the latest row per key; "as-of D" is the latest row with observed_at <= D.
 import { whereScope } from '../db.js'
 
+
+// WHICH ROW IS CURRENT — one rule, stated once, because it is applied in seven
+// queries here and two more in selector/metric.js.
+//
+//   order by observed_at, id — both in the SAME direction.
+//
+// `observed_at` alone does not decide it. Two rows legitimately share an instant: a
+// CRM sync writing a corrected value in the same batch, a backfill stamping a whole
+// import with one timestamp. On live data 1,914 (passport, key) pairs have two or
+// more rows at their newest instant, and for 38 of them those rows hold DIFFERENT
+// values — so `distinct on` with an incomplete ORDER BY picks arbitrarily, and
+// Postgres is free to pick differently between plans.
+//
+// It was incomplete here and complete in metric.js, which meant the fact PREDICATE
+// and the fact BUCKET could disagree about the same customer's current value —
+// exactly what the comment above joinFact promises they never do. currentForPairs
+// feeds no-op suppression, so the same divergence could also suppress a write that
+// was not a no-op, or keep one that was.
+//
+// `id` is monotonic per insert, so among rows sharing an instant the one written
+// last wins. That is the only reading with a defensible meaning: later-known.
+
 const TABLE = 'whitebox_facts'
 
 let db
@@ -67,7 +89,7 @@ export async function currentForPairs(pairs) {
     .distinctOn(['passport_id', 'key'])
     .whereIn('passport_id', passportIds)
     .whereIn('key', keys)
-    .orderBy([{ column: 'passport_id' }, { column: 'key' }, { column: 'observed_at', order: 'desc' }])
+    .orderBy([{ column: 'passport_id' }, { column: 'key' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
     .select('*')
 }
 
@@ -85,7 +107,7 @@ export async function currentRows(passportId, keys) {
   let q = db(TABLE).distinctOn('key').where({ passport_id: passportId })
   if (keys?.length) q = q.whereIn('key', keys)
   return q
-    .orderBy([{ column: 'key' }, { column: 'observed_at', order: 'desc' }])
+    .orderBy([{ column: 'key' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
     .select('key', 'value', 'type', 'observed_at')
 }
 
@@ -97,7 +119,7 @@ export async function asOfRows(passportId, at, keys) {
     .where('observed_at', '<=', at)
   if (keys?.length) q = q.whereIn('key', keys)
   return q
-    .orderBy([{ column: 'key' }, { column: 'observed_at', order: 'desc' }])
+    .orderBy([{ column: 'key' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
     .select('key', 'value', 'type', 'observed_at')
 }
 
@@ -105,7 +127,7 @@ export async function asOfRows(passportId, at, keys) {
 export async function historyRows(passportId, key) {
   return db(TABLE)
     .where({ passport_id: passportId, key })
-    .orderBy('observed_at', 'asc')
+    .orderBy([{ column: 'observed_at', order: 'asc' }, { column: 'id', order: 'asc' }])
     .select('value', 'type', 'observed_at', 'source')
 }
 
@@ -121,7 +143,7 @@ export async function currentByKey(key, { at, scope, derive } = {}) {
   let q = db(TABLE).distinctOn('passport_id').where({ key })
   if (at) q = q.where('observed_at', '<=', at)
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
-  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
+  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
   return derive
     ? q.select('passport_id', db.raw(`${derive.sql} as value`, derive.binds), 'observed_at')
     : q.select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
@@ -148,7 +170,7 @@ export async function absentByKey(key, { at, scope, derive } = {}) {
   let cur = db(TABLE).distinctOn('passport_id').where({ key })
   if (at) cur = cur.where('observed_at', '<=', at)
   cur = cur
-    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
+    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
     .select('passport_id', db.raw(`${valueSql} as value`, binds))
 
   let q = db('whitebox_passports as p')
@@ -165,7 +187,7 @@ export async function keyRows(key, { at, scope, derive } = {}) {
   let q = db(TABLE).where({ key })
   if (at) q = q.where('observed_at', '<=', at)
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
-  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }])
+  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }, { column: 'id', order: 'asc' }])
   return derive
     ? q.select('passport_id', db.raw(`${derive.sql} as value`, derive.binds), 'observed_at')
     : q.select('passport_id', 'value', 'observed_at')
