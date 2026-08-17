@@ -127,6 +127,38 @@ export async function currentByKey(key, { at, scope, derive } = {}) {
     : q.select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
 }
 
+/**
+ * Passports whose CURRENT value for `key` is absent — no row at all, or a row
+ * whose value is JSON null. The answer to `{ exists: false }`.
+ *
+ * It needs its own query because every other read here starts FROM whitebox_facts,
+ * so it can only ever enumerate passports that HAVE a row for the key. Filtering
+ * those rows for absence therefore returned the passports with a recorded-empty
+ * value and nobody else — on live data, `{ present: false }` answered 0 where the
+ * truth was 494. Zero looks like a real answer, which is what made it worth
+ * finding: the caller had already worked around it with a sentinel date.
+ *
+ * Anchored on whitebox_passports instead, with an anti-join, so "never had it" is
+ * expressible at all. An empty string is NOT absence — matchValue treats '' as a
+ * value — so only JSON null counts here, and the two agree.
+ */
+export async function absentByKey(key, { at, scope, derive } = {}) {
+  const valueSql = derive ? derive.sql : 'value'
+  const binds = derive ? derive.binds : []
+  let cur = db(TABLE).distinctOn('passport_id').where({ key })
+  if (at) cur = cur.where('observed_at', '<=', at)
+  cur = cur
+    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
+    .select('passport_id', db.raw(`${valueSql} as value`, binds))
+
+  let q = db('whitebox_passports as p')
+    .leftJoin(cur.as('cur'), 'cur.passport_id', 'p.id')
+    .whereRaw('(cur.passport_id is null or cur.value is null)')
+    .select('p.id as passport_id')
+  if (scope?.length) q = whereScope(q, 'p.id', scope)
+  return (await q).map(r => r.passport_id)
+}
+
 // Every row for `key` (optionally up to `at`, restricted to `scope`), ordered so
 // the caller can group into per-passport histories for temporal operators.
 export async function keyRows(key, { at, scope, derive } = {}) {

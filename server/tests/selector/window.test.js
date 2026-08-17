@@ -163,7 +163,7 @@ describe('selector: fact-anchored window', () => {
     const all = await totalOf({ source: 'video', count: {} })
     const before = await totalOf({ source: 'video', window: BEFORE, count: {} })
     const after = await totalOf({ source: 'video', window: AFTER, count: {} })
-    const none = await totalOf({ source: 'video', window: { ...BEFORE, missing: 'only' }, count: {} })
+    const none = await totalOf({ source: 'video', window: { ...BEFORE, missingAnchor: 'only' }, count: {} })
     expect(all).toBe(7)
     expect([before, after, none]).toEqual([3, 2, 2])
     expect(before + after + none).toBe(all)
@@ -201,11 +201,11 @@ describe('selector: fact-anchored window', () => {
     // baseline that makes "watched before booking" mean anything.
     await fixture()
     const r = await selector.resolve(
-      { filter: { metric: { source: 'video', window: { ...BEFORE, missing: 'only' }, distinct_passports: {} } } },
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'only' }, distinct_passports: {} } } },
       { group: { by: 'source' } })
     expect(r[0].value).toBe(1)                            // browser
     const byContent = await selector.resolve(
-      { filter: { metric: { source: 'video', window: { ...BEFORE, missing: 'only' }, count: {} } } },
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'only' }, count: {} } } },
       { group: { by: 'content_url' } })
     expect(asMap(byContent)).toEqual({ [A]: 1, [C]: 1 })
   })
@@ -213,7 +213,7 @@ describe('selector: fact-anchored window', () => {
   it('missing:include treats no anchor as no boundary', async () => {
     await fixture()
     // booker's 3 pre-booking + browser's 2 (unbounded, never booked)
-    expect(await totalOf({ source: 'video', window: { ...BEFORE, missing: 'include' }, count: {} })).toBe(5)
+    expect(await totalOf({ source: 'video', window: { ...BEFORE, missingAnchor: 'include' }, count: {} })).toBe(5)
   })
 
   it('within bounds the far side — "the week before"', async () => {
@@ -237,6 +237,41 @@ describe('selector: fact-anchored window', () => {
     await watch(p, { ts: '2026-05-08', url: A })
     expect(await totalOf({ source: 'video', window: BEFORE, count: {} })).toBe(1)
     expect(await totalOf({ source: 'video', window: { ...BEFORE, offset: '-7d' }, count: {} })).toBe(0)
+  })
+
+  it('missingAnchor:bucket returns BOTH cohorts from one call, labelled', async () => {
+    // The comparison group is usually the bigger half — on live data 494 of 911
+    // video watchers have never booked — so "what do converters watch that
+    // non-converters don't" needs both sides, and needed three calls to get them.
+    await fixture()
+    const r = await selector.resolve(
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, count: {} } } },
+      { group: { by: 'content_url' } })
+    const m = asMap(r)
+    expect(m.__no_anchor__).toBe(2)          // browser's two views, kept and labelled
+    expect(m[A]).toBe(2)                     // booker's pre-booking views of A
+    expect(m[B]).toBe(1)
+    // and the labelled bucket is DISTINCT from a null bucket, which means something
+    // else entirely: "no value for the group dimension", not "never reached the milestone"
+    expect(Object.keys(m)).not.toContain('null')
+  })
+
+  it('bucket keeps the same rows as include — only the labelling differs', async () => {
+    await fixture()
+    const totalOfMode = async (mode) => {
+      const r = await selector.resolve(
+        { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: mode }, count: {} } } },
+        { group: { by: 'source' } })
+      return r.reduce((n, x) => n + Number(x.value), 0)
+    }
+    expect(await totalOfMode('bucket')).toBe(await totalOfMode('include'))
+  })
+
+  it('names missingAnchor and what each mode does', async () => {
+    await fixture()
+    await expect(selector.resolve(
+      video({ window: { ...BEFORE, missing: 'only' }, count: {} }), { group: { by: 'source' } }))
+      .rejects.toThrow(/window has no "missing"/)
   })
 
   it('between two anchors', async () => {
@@ -313,7 +348,7 @@ describe('selector: the whole question, end to end', () => {
     const bad = async (w) => selector.resolve(video({ window: w, count: {} }), { group: { by: 'source' } })
     await expect(bad({ before: { fact: 'x' }, after: { fact: 'y' } })).rejects.toThrow(/exactly one of before\/after\/between/)
     await expect(bad({ before: 'first_booked_at' })).rejects.toThrow(/must be \{ fact/)
-    await expect(bad({ before: { fact: 'x' }, missing: 'maybe' })).rejects.toThrow(/exclude\/include\/only/)
+    await expect(bad({ before: { fact: 'x' }, missingAnchor: 'maybe' })).rejects.toThrow(/exclude\/include\/only\/bucket/)
     await expect(bad({ before: { fact: 'x' }, offset: '7 days' })).rejects.toThrow(/bad `offset`/)
     await expect(bad({ before: { fact: 'x' }, use: 'min' })).rejects.toThrow(/window has no "use"/)
     await expect(bad({ nope: 1 })).rejects.toThrow(/window has no "nope"/)

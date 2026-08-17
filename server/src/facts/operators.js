@@ -29,6 +29,11 @@ function asNumber(v) {
   return null
 }
 
+// A value as text, lowercased, for the string operators. Numbers and booleans are
+// stringified rather than rejected: `startsWith: '359'` on a phone stored as a
+// number is a reasonable thing to ask.
+const asText = (v) => (v == null ? '' : String(typeof v === 'object' ? JSON.stringify(v) : v).toLowerCase())
+
 // Equality for eq/ne/in: exact match, OR numerically equal when BOTH sides are
 // purely numeric — so a fact stored as the string "123" matches { eq: 123 }, and
 // "08" matches { eq: 8 }. Non-numeric strings ("08-A", "active") only ever match
@@ -126,6 +131,14 @@ export function matchValue(value, predicate, now = new Date()) {
       case 'eq':  ok = numEq(value, bound); break
       case 'ne':  ok = !numEq(value, bound); break
       case 'in':  ok = Array.isArray(bound) && bound.some(b => numEq(value, b)); break
+      // Substring / prefix / suffix on the TEXT of a value, case-insensitively.
+      // Their absence is what forced a 44-value `in` clause to say
+      // "booking_location starts with София" — and that clause is what produced a
+      // wrong count. Compared as text: a fact stored as a number still answers
+      // `startsWith: '359'`, which is what a caller means by it.
+      case 'contains':   ok = asText(value).includes(asText(bound)); break
+      case 'startsWith': ok = asText(value).startsWith(asText(bound)); break
+      case 'endsWith':   ok = asText(value).endsWith(asText(bound)); break
       case 'gt':  ok = gtBy(value, bound); break
       case 'gte': ok = gteBy(value, bound); break
       case 'lt':  ok = ltBy(value, bound); break
@@ -135,7 +148,23 @@ export function matchValue(value, predicate, now = new Date()) {
       case 'next':   ok = t != null && t >= nowMs && t <= nowMs + ms(bound); break    // upcoming, e.g. renews in the next 30d
       case 'last':   ok = t != null && t >= nowMs - ms(bound) && t <= nowMs; break     // recent, e.g. ordered in the last 30d
       case 'before': ok = t != null && t < nowMs - ms(bound); break                    // older than, e.g. last order > 60d ago
-      default: throw new Error(`facts: unknown value operator "${op}"`)
+      // ONE name per operator. `present` rather than `exists` because that is what
+      // it is called everywhere else in this query language — session filters,
+      // attrs filters, and the `source` filter all take `{ present: true|false }`
+      // — and two spellings of one concept would split stored queries across two
+      // vocabularies. The near-misses are named individually instead, because the
+      // guess is the whole problem: `exists` returned "unknown value operator",
+      // which reads as "there is no existence test" and sent a caller off to
+      // invent one out of a sentinel date.
+      default: {
+        const ALSO_KNOWN = { exists: 'present', isNull: 'present: false', isset: 'present', has: 'present', like: 'contains', matches: 'contains' }
+        const hint = ALSO_KNOWN[op] ? ` Here it is spelled \`${ALSO_KNOWN[op]}\`.` : ''
+        throw new Error(
+          `facts: \`${op}\` is not a value operator.${hint} Use present (is it set at all), ` +
+          `eq/ne/in (which value), gte/gt/lte/lt (a range), ` +
+          `contains/startsWith/endsWith (text), or next/last/before (a date window). ` +
+          `For change over time use ${TEMPORAL_OPS.join('/')}.`)
+      }
     }
     if (!ok) return false
   }

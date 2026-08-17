@@ -211,8 +211,18 @@ const canonUrl = (u) => String(u).split('?')[0].split('#')[0]
 //     For an "…_at" milestone that got corrected, 'min' is the earliest date ever
 //     claimed and 'last' is the one the CRM currently stands behind.
 const ANCHOR_USE = ['last', 'first', 'min', 'max']
-const MISSING = ['exclude', 'include', 'only']
-const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missing']
+// What to do with passports whose anchor fact is not set. `exclude` drops them
+// (SQL's own answer to comparing against null); `only` returns just them; `include`
+// treats "no anchor" as "no boundary"; `bucket` keeps them AND labels them, so one
+// grouped call returns both cohorts.
+//
+// This matters more than a default usually does. "What do converters watch that
+// non-converters don't" needs both sides, and the no-anchor side is usually the
+// bigger one — on live data 494 of 911 video watchers have never booked. Dropping
+// them silently answers a narrower question than the one asked.
+const MISSING = ['exclude', 'include', 'only', 'bucket']
+const NO_ANCHOR_BUCKET = '__no_anchor__'
+const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missingAnchor']
 
 function anchorSql(db, spec, alias) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
@@ -252,8 +262,16 @@ function applyWindow(db, q, win, now) {
   const unknown = Object.keys(win).filter(k => !WINDOW_KEYS.includes(k))
   if (unknown.length) throw new Error(`selector.metric: window has no "${unknown[0]}" (use ${WINDOW_KEYS.join('/')})`)
 
-  const { before, after, between, offset, within, missing = 'exclude' } = win
-  if (!MISSING.includes(missing)) throw new Error(`selector.metric: window \`missing\` must be one of ${MISSING.join('/')} — got "${missing}"`)
+  const { before, after, between, offset, within, missingAnchor = 'exclude' } = win
+  const missing = missingAnchor
+  if (!MISSING.includes(missing)) {
+    throw new Error(
+      `selector.metric: window \`missingAnchor\` must be one of ${MISSING.join('/')} — got "${missing}". ` +
+      `"exclude" drops passports whose anchor fact is not set, "only" returns just them ` +
+      `(the never-reached-the-milestone comparison group), "include" treats no anchor as no ` +
+      `boundary, and "bucket" keeps them in their own "${NO_ANCHOR_BUCKET}" bucket so one ` +
+      `grouped call returns both cohorts.`)
+  }
   const given = ['before', 'after', 'between'].filter(k => win[k] != null)
   if (given.length !== 1) {
     throw new Error(`selector.metric: window takes exactly one of before/after/between — got ${given.length ? given.join(' + ') : 'none'}`)
@@ -316,9 +334,11 @@ function applyWindow(db, q, win, now) {
     ? [cmp('<', 'aw', off), ...(span == null ? [] : [cmp('>=', 'aw', off - span)])]
     : [cmp('>=', 'aw', off), ...(span == null ? [] : [cmp('<', 'aw', off + span)])])
 
-  if (missing === 'include') {
-    // No anchor ⇒ no boundary to be on the wrong side of, so everything they did
-    // qualifies. Useful for "…and people who never got there", in one series.
+  if (missing === 'include' || missing === 'bucket') {
+    // Same rows either way — no anchor means no boundary to be on the wrong side
+    // of, so everything they did qualifies. The two differ only in LABELLING, which
+    // group() applies to the bucket expression (see noAnchorBucket below): `include`
+    // merges them into the ordinary buckets, `bucket` keeps them separable.
     const w = orNull('aw.anchor is null', pred)
     return q.whereRaw(w.sql, w.binds)
   }
@@ -746,8 +766,24 @@ export async function group(db, spec, { by, at, scope, limit, band } = {}) {
   if (band != null && factKey == null) {
     throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
   }
-  const bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
+  let bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
   const value = aggSql(agg, bounds)
+
+  // `missingAnchor: 'bucket'` — wrap the bucket so the no-anchor cohort is labelled
+  // rather than merged. It has to happen HERE and not in applyWindow, because the
+  // window decides which ROWS survive and this decides what they are CALLED.
+  //
+  // A distinct label rather than null: null is already the bucket for "this row has
+  // no value for the group dimension", and the two are different statements. One
+  // says we don't know what they watched, the other says they never booked.
+  const wantsNoAnchorBucket = filters.window && filters.window.missingAnchor === 'bucket'
+  if (wantsNoAnchorBucket) {
+    const anchorAlias = filters.window.between ? 'awa' : 'aw'
+    bucket = {
+      sql: `case when ${anchorAlias}.anchor is null then ? else ${bucket.sql} end`,
+      binds: [NO_ANCHOR_BUCKET, ...bucket.binds],
+    }
+  }
 
   // ── aggregating a FACT: two levels, because a fact is PER PERSON ──────────────
   //

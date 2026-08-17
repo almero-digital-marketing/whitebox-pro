@@ -5,6 +5,14 @@ import * as store from './store.js'
 import * as computed from './computed.js'
 import { matchValue, matchTemporal, temporalMatchedAt, isTemporal } from './operators.js'
 
+// Does this predicate ask ONLY for absence? `{ present: false }` and nothing else,
+// because "absent AND greater than 5" is a contradiction matchValue already answers
+// with no.
+function absenceOnly(predicate) {
+  const p = predicate || {}
+  return Object.keys(p).length === 1 && p.present === false
+}
+
 // Facts — the core structured memory: an append-only, typed, value-queryable
 // per-passport fact timeline (the structured twin of awareness). Channel-
 // agnostic: any source writes facts via ctx.facts.record(); the term "crm"
@@ -389,6 +397,20 @@ export async function matchesTimed(key, predicate, { at, scope } = {}) {
       if (matchedAt != null) out.push({ id: pid, matched_at: matchedAt })
     }
     return out
+  }
+
+  // ABSENCE asks a different question of the database. Every read below starts from
+  // whitebox_facts, so it can only enumerate passports that HAVE a row for the key —
+  // and "who has never had this fact" is not in that set. Filtering enumerated rows
+  // for absence answered 0 on live data where the truth was 494, which is why the
+  // caller reached for a sentinel date (`{ gte: '2000-01-01' }`) instead: a magic
+  // constant that has no equivalent for a string or a bool, and that silently files
+  // a mistyped 1900 birth year under "absent".
+  if (absenceOnly(predicate)) {
+    const ids = await store.absentByKey(src.key, { at: at && now, scope: scopeArr, derive: src.derive })
+    // matched_at is null on purpose: there is no event where someone failed to
+    // acquire a fact, so a funnel step cannot anchor on this.
+    return ids.map(id => ({ id, matched_at: null }))
   }
 
   const rows = await store.currentByKey(src.key, { at: at && now, scope: scopeArr, derive: src.derive })

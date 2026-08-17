@@ -165,11 +165,18 @@ not when it was recorded:
 | `between` | `[{fact}, {fact}]` — two anchors |
 | `within` | bounds the far side: `before` + `within: "7d"` is *the week before* |
 | `offset` | shifts the boundary (`"7d"`, `"-7d"`) |
-| `missing` | passports with no anchor: `exclude` (default), `include`, `only` |
+| `missingAnchor` | passports with no anchor: `exclude` (default), `include`, `only`, `bucket` |
 | `<anchor>.use` | which historical value: `last` (default), `first`, `min`, `max` |
 
-`before` + `after` + `missing: "only"` is an **exact partition** — every event
-lands in exactly one and the three sum to the unwindowed total. `missing: "only"`
+`bucket` keeps the no-anchor cohort AND labels it `__no_anchor__`, so one grouped
+call returns both cohorts — the comparison group is usually the bigger half (494 of
+911 video watchers on one deployment have never booked), so dropping it silently
+answers a narrower question than the one asked. It is a distinct label rather than
+`null`, because a null bucket already means "no value for the group dimension" — a
+different statement from "never reached the milestone".
+
+`before` + `after` + `missingAnchor: "only"` is an **exact partition** — every event
+lands in exactly one and the three sum to the unwindowed total. `missingAnchor: "only"`
 is how you address the never-reached-the-milestone group, which is usually the
 comparison baseline rather than something to drop. Comparison is UTC; a date-only
 value is midnight UTC. An anchor must be a stored date fact — a computed fact

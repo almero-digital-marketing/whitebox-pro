@@ -113,6 +113,30 @@ describe('matchValue — value operators', () => {
     expect(mv(false, { eq: false })).toBe(true)
   })
 
+  it('string operators, case-insensitively', () => {
+    // Their absence forced a 44-value `in` clause to say "location starts with
+    // София", and that clause is what produced a wrong count. One operator removes
+    // the whole class of workaround.
+    expect(mv('София - Лозенец', { startsWith: 'софия' })).toBe(true)
+    expect(mv('Пловдив', { startsWith: 'софия' })).toBe(false)
+    expect(mv('София - Лозенец', { contains: 'лозенец' })).toBe(true)
+    expect(mv('a@b.bg', { endsWith: '.bg' })).toBe(true)
+    expect(mv(359881234567, { startsWith: '359' })).toBe(true)   // a number is text here
+    expect(mv(undefined, { startsWith: 'x' })).toBe(false)       // absent matches nothing
+    expect(mv('София', { present: true, startsWith: 'соф' })).toBe(true)   // AND-ed
+  })
+
+  it('names the operator you probably meant', () => {
+    // `exists` returning "unknown value operator" read as "there is no existence
+    // test", and sent a caller off to build one from a sentinel date.
+    const msg = (p) => { try { mv('x', p) } catch (e) { return e.message } }
+    expect(msg({ exists: true })).toMatch(/spelled `present`/)
+    expect(msg({ isNull: true })).toMatch(/spelled `present: false`/)
+    expect(msg({ like: 'x' })).toMatch(/spelled `contains`/)
+    // and every operator is named, so a wrong guess never needs a second query
+    expect(msg({ nope: 1 })).toMatch(/present.*eq\/ne\/in.*gte.*contains\/startsWith\/endsWith/)
+  })
+
   it('date ops: next (upcoming) / last (recent) / before (older)', () => {
     expect(mv('2026-07-01', { next: '30d' })).toBe(true)    // 11 days ahead
     expect(mv('2026-07-01', { next: '7d' })).toBe(false)
