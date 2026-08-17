@@ -46,6 +46,60 @@ const purchases = { filter: { metric: { content: 'purchase', count: {} } } }
 // Every projection used to end in a COUNT of passports, sessions or events. There
 // was no way to ask what the numbers themselves were — the sum, the middle, the
 // spread — grouped by anything.
+// "Which content do people consume" was not expressible: content_url was not a
+// bucket, so asking for one returned an empty series in silence.
+describe('selector group: content buckets', () => {
+  const withUrl = async (passport_id, { ts, url }) => {
+    await db('whitebox_awareness_exposures').insert({
+      passport_id, ts: d(ts), channel: 'web', direction: 'expression',
+      text: 'x', content_id: 'purchase', content_url: url,
+    })
+  }
+  const purchasesBy = (by) => selector.resolve(
+    { filter: { metric: { content: 'purchase', count: {} } } }, { group: { by } })
+
+  it('strips the query string, so one page is ONE bucket', async () => {
+    const p = await newPassport()
+    // Click IDs are unique per click by design — gclid alone had 76,836 distinct
+    // values on the GPoint data, so raw bucketing gives one row per click.
+    await withUrl(p, { ts: '2026-05-01', url: 'https://x.test/pricing?gclid=aaa' })
+    await withUrl(p, { ts: '2026-05-02', url: 'https://x.test/pricing?gclid=bbb&utm_source=ads' })
+    await withUrl(p, { ts: '2026-05-03', url: 'https://x.test/pricing' })
+    expect(asMap(await purchasesBy('content_url'))).toEqual({ 'https://x.test/pricing': 3 })
+  })
+
+  it('keeps different paths apart', async () => {
+    const p = await newPassport()
+    await withUrl(p, { ts: '2026-05-01', url: 'https://x.test/a?utm_source=1' })
+    await withUrl(p, { ts: '2026-05-02', url: 'https://x.test/b?utm_source=2' })
+    expect(asMap(await purchasesBy('content_url'))).toEqual({ 'https://x.test/a': 1, 'https://x.test/b': 1 })
+  })
+
+  it('does not carry a secret into a bucket label', async () => {
+    const p = await newPassport()
+    // These URLs really did hold payment_intent_client_secret across 2,386 rows. A
+    // bucket label is logged, cached, charted and shipped to an LLM to summarise.
+    await withUrl(p, { ts: '2026-05-01', url: 'https://x.test/pay?payment_intent_client_secret=pi_secret_xyz' })
+    const r = await purchasesBy('content_url')
+    expect(r[0].bucket).toBe('https://x.test/pay')
+    expect(JSON.stringify(r)).not.toContain('pi_secret_xyz')
+  })
+
+  it('buckets by content_hash too, unmodified — it is already opaque', async () => {
+    const p = await newPassport()
+    await db('whitebox_awareness_exposures').insert({
+      passport_id: p, ts: d('2026-05-01'), channel: 'web', direction: 'expression',
+      text: 'x', content_id: 'purchase', content_hash: 'abc123',
+    })
+    expect(asMap(await purchasesBy('content_hash'))).toEqual({ abc123: 1 })
+  })
+
+  it('names content_url in the unknown-bucket error', async () => {
+    await fixture()
+    await expect(purchasesBy('content_urls')).rejects.toThrow(/content_url/)
+  })
+})
+
 describe('selector group: aggregates over a value', () => {
   // fixture(): p1 has purchases of 100 and 50 on 05-01 (web); p2 has 200 on 05-02
   // (email) plus a non-purchase web event carrying no value at all.

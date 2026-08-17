@@ -351,6 +351,38 @@ export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
 const TIME_FMT = { hour: 'YYYY-MM-DD"T"HH24:00', day: 'YYYY-MM-DD', week: 'IYYY"-W"IW', month: 'YYYY-MM' }
 const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.source', content: 'e.content_id' }
 
+// "Which content do people consume" is a first-class question for pages, video,
+// email and SMS, and it was not expressible: `content_url` was not a bucket at all,
+// so asking for one returned an empty series in silence.
+//
+// It cannot be bucketed raw. On the GPoint data 134,678 distinct content_url values
+// collapse to 449 once the query string goes — a 300x fragmentation, and 35% of rows
+// carry one. The cause is click IDs, which are unique per click BY DESIGN: gclid has
+// 76,836 distinct values, fbclid 38,685, wbraid 11,008. Every click invents its own
+// bucket, so the top of a content chart is 134k rows of one.
+//
+// The query string is dropped entirely rather than filtered against a deny-list of
+// tracking params: wbraid and gbraid are recent Google inventions, so any list of
+// "the tracking ones" is a list that goes stale. Nothing analytical is lost — the
+// utm_* values are already typed columns on whitebox_sessions, where
+// `session:utm_campaign` buckets them properly, and they are merely duplicated in
+// the URL.
+//
+// It is also the safer default for a reason that has nothing to do with charts:
+// these URLs were carrying `payment_intent_client_secret` across 2,386 rows. A
+// bucket key is a value that gets logged, cached, put in a chart label and shipped
+// to an LLM for summarising; a Stripe secret should be in none of those places.
+//
+// The cost, stated: `city` (21,592 rows, 60 values) is a genuine page dimension and
+// becomes unreachable this way. If it is wanted back, the shape is an allowlist of
+// params to KEEP, sorted, appended to the path — not a deny-list.
+// The '?' separator is BOUND, not inline. knex scans raw SQL for `?` to count
+// placeholders and cannot tell a quoted literal from a placeholder, so
+// `split_part(e.content_url, '?', 1)` reads as one extra bind and either dies or
+// silently splits on the wrong thing. This exact trap has now appeared three times
+// in this file: a regex quantifier, the clock in `months`, and here.
+const CONTENT_URL_CANON = { sql: 'split_part(e.content_url, ?, 1)', binds: ['?'] }
+
 // A bucket → { sql, binds }. Time grains (to_char of ts) and exposure/session
 // columns carry no binds (allowlisted names); `attr:<key>` binds the key.
 //   "day" | "channel" | "session:utm_campaign" | "attr:event"
@@ -359,6 +391,10 @@ function bucketSql(by, band, factIsComputed = false) {
   if (DIM_COL[by]) return { sql: DIM_COL[by], binds: [] }            // `content` here is DEPRECATED (opaque id)
   if (typeof by === 'string' && by.startsWith('session:')) return { sql: `s.${sessionCol(by.slice(8))}`, binds: [] }
   if (typeof by === 'string' && by.startsWith('attr:')) return { sql: 'e.meta ->> ?', binds: [by.slice(5)] }
+  // content_url is canonicalised (query stripped); content_hash and content_id are
+  // opaque identifiers already and pass through as they are.
+  if (by === 'content_url') return { ...CONTENT_URL_CANON }
+  if (by === 'content_hash') return { sql: 'e.content_hash', binds: [] }
   if (factKeyOf(by) != null) {
     // BANDED, for a numeric fact: `{ by: 'fact:age', band: 5 }` gives 20-24, 25-29…
     // A per-year age breakdown is ninety buckets and answers nothing; the bands are
@@ -390,7 +426,7 @@ function bucketSql(by, band, factIsComputed = false) {
     }
     return { sql: factIsComputed ? 'f.value::text' : `f.value #>> '{}'`, binds: [] }
   }
-  throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}; session:<utm…>; attr:<key>; fact:<key>)`)
+  throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}/content_url/content_hash; session:<utm…>; attr:<key>; fact:<key>)`)
 }
 
 // Where an aggregate reads its number from: a meta attribute (`field`) or an
