@@ -239,32 +239,85 @@ describe('selector: fact-anchored window', () => {
     expect(await totalOf({ source: 'video', window: { ...BEFORE, offset: '-7d' }, count: {} })).toBe(0)
   })
 
-  it('missingAnchor:bucket returns BOTH cohorts from one call, labelled', async () => {
-    // The comparison group is usually the bigger half — on live data 494 of 911
-    // video watchers have never booked — so "what do converters watch that
-    // non-converters don't" needs both sides, and needed three calls to get them.
+  it('missingAnchor:bucket CROSS-TABULATES — one series per cohort, same buckets', async () => {
+    // The question is "what do the people who reached the milestone watch that the
+    // people who never did don't", and it is only answerable with both sides at the
+    // same granularity. It used to take three calls plus manual normalisation.
     await fixture()
     const r = await selector.resolve(
       { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, count: {} } } },
       { group: { by: 'content_url' } })
-    const m = asMap(r)
-    expect(m.__no_anchor__).toBe(2)          // browser's two views, kept and labelled
-    expect(m[A]).toBe(2)                     // booker's pre-booking views of A
-    expect(m[B]).toBe(1)
-    // and the labelled bucket is DISTINCT from a null bucket, which means something
-    // else entirely: "no value for the group dimension", not "never reached the milestone"
-    expect(Object.keys(m)).not.toContain('null')
+    expect(r.multi).toBe(true)
+    expect(r.aggregate).toBe('count')
+    const byName = Object.fromEntries(r.series.map(x => [x.name, asMap(x.points)]))
+    expect(byName.__anchored__).toEqual({ [A]: 2, [B]: 1 })   // booker, before booking
+    expect(byName.__no_anchor__).toEqual({ [A]: 1, [C]: 1 })  // browser, never booked
+    // the anchored cohort comes first — it is the one being explained
+    expect(r.series.map(x => x.name)).toEqual(['__anchored__', '__no_anchor__'])
   })
 
-  it('bucket keeps the same rows as include — only the labelling differs', async () => {
+  it('carries each cohort\u2019s size, so a reach % needs no further call', async () => {
+    // Comparing two cohorts by raw counts compares their SIZES more than their
+    // behaviour, so the denominators have to come back with the numbers.
     await fixture()
-    const totalOfMode = async (mode) => {
-      const r = await selector.resolve(
-        { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: mode }, count: {} } } },
-        { group: { by: 'source' } })
-      return r.reduce((n, x) => n + Number(x.value), 0)
-    }
-    expect(await totalOfMode('bucket')).toBe(await totalOfMode('include'))
+    const r = await selector.resolve(
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, distinct_passports: {} } } },
+      { group: { by: 'content_url' } })
+    expect(r.sizes).toEqual([
+      { cohort: '__anchored__', size: 1 },      // booker
+      { cohort: '__no_anchor__', size: 1 },     // browser
+    ])
+  })
+
+  it('applies `limit` to the BUCKET dimension, so the table is not ragged', async () => {
+    // Top-N ROWS would give three buckets for one cohort and one for the other, and
+    // a chart drawn from that silently omits the comparison it exists to make.
+    const booker = await newPassport(), browser = await newPassport()
+    await booked(booker, '2026-05-10T00:00:00Z')
+    await watch(booker, { ts: '2026-05-01', url: A })
+    await watch(booker, { ts: '2026-05-02', url: A })
+    await watch(booker, { ts: '2026-05-03', url: B })
+    for (const u of [A, A, A, C]) await watch(browser, { ts: '2026-05-04', url: u })
+    const r = await selector.resolve(
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, count: {} } } },
+      { group: { by: 'content_url', limit: 1 } })
+    // A wins across both cohorts combined; BOTH series report it, and only it
+    for (const sx of r.series) expect(sx.points.map(p => p.bucket)).toEqual([A])
+    expect(r.series).toHaveLength(2)
+  })
+
+  it('cross-tabulates a value aggregate too, not just a count', async () => {
+    // earliest/latest use array_agg(… order by ts), which works under any GROUP BY —
+    // so there is no reason to special-case them out of the split.
+    await fixture()
+    const r = await selector.resolve(
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, avg: { field: 'completion_pct' } } } },
+      { group: { by: 'content_url' } })
+    const byName = Object.fromEntries(r.series.map(x => [x.name, asMap(x.points)]))
+    expect(byName.__anchored__[A]).toBe(95)      // booker's 90 and 100, before booking
+    expect(byName.__no_anchor__[A]).toBe(20)     // browser's single view
+  })
+
+  it('cross-tabulates a FACT aggregate, keeping the per-passport dedup', async () => {
+    // The fact path is two-level — dedup per passport, THEN aggregate — or every
+    // customer is weighted by how many events they have. The cohort rides along in
+    // the DISTINCT, where it changes nothing: it is a function of the anchor, so it
+    // is constant per passport.
+    const booker = await newPassport(), browser = await newPassport()
+    await booked(booker, '2026-05-10T00:00:00Z')
+    await facts.record({ passport_id: booker, key: 'ltv', value: 300, source: 't' })
+    // browser never booked and has no ltv
+    for (const ts of ['2026-05-01', '2026-05-02', '2026-05-03']) await watch(booker, { ts, url: A })
+    await watch(browser, { ts: '2026-05-04', url: A })
+
+    const r = await selector.resolve(
+      { filter: { metric: { source: 'video', window: { ...BEFORE, missingAnchor: 'bucket' }, avg: { fact: 'ltv' } } } },
+      { group: { by: 'content_url' } })
+    const byName = Object.fromEntries(r.series.map(x => [x.name, asMap(x.points)]))
+    // 300 once, not 300 three times over three exposures
+    expect(byName.__anchored__[A]).toBe(300)
+    // and no ltv stays NULL rather than plotting as a real zero
+    expect(byName.__no_anchor__[A]).toBe(null)
   })
 
   it('names missingAnchor and what each mode does', async () => {

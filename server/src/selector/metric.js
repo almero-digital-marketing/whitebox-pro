@@ -769,20 +769,19 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
   let bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
   const value = aggSql(agg, bounds)
 
-  // `missingAnchor: 'bucket'` — wrap the bucket so the no-anchor cohort is labelled
-  // rather than merged. It has to happen HERE and not in applyWindow, because the
-  // window decides which ROWS survive and this decides what they are CALLED.
+  // `missingAnchor: 'bucket'` CROSS-TABULATES: one series per cohort, each broken
+  // down by `by`. That is the shape the question has — "what do the people who
+  // reached the milestone watch, that the people who never did don't" — and it needs
+  // both sides at the same granularity to be answerable.
   //
-  // A distinct label rather than null: null is already the bucket for "this row has
-  // no value for the group dimension", and the two are different statements. One
-  // says we don't know what they watched, the other says they never booked.
-  const wantsNoAnchorBucket = filters.window && filters.window.missingAnchor === 'bucket'
-  if (wantsNoAnchorBucket) {
-    const anchorAlias = filters.window.between ? 'awa' : 'aw'
-    bucket = {
-      sql: `case when ${anchorAlias}.anchor is null then ? else ${bucket.sql} end`,
-      binds: [NO_ANCHOR_BUCKET, ...bucket.binds],
-    }
+  // It deliberately does NOT put the no-anchor total into the ordinary series. That
+  // was the first shape here, and it is dimensionally mixed: it plots "people who
+  // watched X" beside "people who never booked", which are not comparable
+  // categories, so the bar that matters most is the one bar you cannot read against
+  // the others.
+  const crossTab = !!(filters.window && filters.window.missingAnchor === 'bucket')
+  if (crossTab) {
+    return crossTabByAnchor(db, { spec, filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey })
   }
 
   // ── aggregating a FACT: two levels, because a fact is PER PERSON ──────────────
@@ -833,6 +832,110 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
   // same class of confident-wrong-number this engine keeps being bitten by.
   const series = (await q).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
   return cohortSize ? withCohortSize(db, series, agg, filters, { at, scope, now }) : series
+}
+
+/**
+ * One series per cohort — anchored vs never-anchored — each bucketed by `by`.
+ *
+ * Emitted in the same shape the cohort projection already uses (and the chart layer
+ * already renders): `{ multi: true, series: [{ name, points }], sizes: [{ cohort,
+ * size }] }`. `sizes` is the per-cohort denominator, so a reach percentage inside
+ * each series needs nothing further — which is the whole point, since comparing two
+ * cohorts by raw counts compares their sizes more than their behaviour.
+ *
+ * `limit` is applied to the BUCKET dimension, not to the rows: the top-N buckets by
+ * combined value across both cohorts, then every cohort's number for those buckets.
+ * Taking the top N rows instead would return a ragged table — three buckets for one
+ * cohort and one for the other — and a chart drawn from it would silently omit the
+ * comparison it exists to make. It costs a second query to resolve which buckets win
+ * before fetching them, which is cheaper than transferring every bucket to sort in
+ * memory and is what makes the guardrail still a guardrail.
+ */
+const ANCHORED_BUCKET = '__anchored__'
+
+async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey }) {
+  const alias = filters.window.between ? 'awa' : 'aw'
+  const cohort = { sql: `case when ${alias}.anchor is null then ? else ? end`, binds: [NO_ANCHOR_BUCKET, ANCHORED_BUCKET] }
+  const build = () => {
+    let q = base(db, needsSession(filters, by))
+    if (factKey != null) q = joinFact(db, q, factKey, now)
+    return applyFilters(db, q, filters, { at, scope, now })
+  }
+
+  // Aggregating a FACT stays two-level here too — the per-passport dedup has to happen
+  // before the aggregate or every customer is weighted by how many events they have,
+  // which is the whole reason that path exists. The cohort simply rides along: it is a
+  // function of the anchor, so it is constant per passport and adding it to the DISTINCT
+  // changes nothing about which rows survive.
+  const grouped = (cols) => {
+    if (!bounds.fact) {
+      // GROUP BY the KEY columns only, by output position — position N would be the
+      // aggregate itself, which Postgres rejects outright ("aggregate functions are
+      // not allowed in GROUP BY"). Positions rather than repeating the expressions,
+      // because a bucket expression carries binds and repeating it would double them.
+      const keys = cols.filter(c => c.as !== 'value')
+      return build().select(...cols.map(c => db.raw(`${c.sql} as ${c.as}`, c.binds)))
+        .groupByRaw(keys.map((_, i) => i + 1).join(', '))
+    }
+    let inner = base(db, needsSession(filters, by))
+    if (factKey != null) inner = joinFact(db, inner, factKey, now)
+    inner = joinFact(db, inner, bounds.fact, now, 'af')
+    const afCol = computed.isComputed(bounds.fact) ? 'af.value::text' : `af.value #>> '{}'`
+    inner = applyFilters(db, inner, filters, { at, scope, now }).distinct(
+      'e.passport_id',
+      ...cols.filter(c => c.as !== 'value').map(c => db.raw(`${c.sql} as ${c.as}`, c.binds)),
+      db.raw(`case when (${afCol}) ~ ? then (${afCol})::numeric end as v`, [NUMERIC_TEXT]),
+    )
+    const keys = cols.filter(c => c.as !== 'value').map(c => c.as)
+    return db.from(inner.as('d'))
+      .select(...keys, db.raw(`${value.sql} as value`, value.bindings))
+      .groupBy(...keys)
+  }
+
+  const COHORT = { sql: cohort.sql, binds: cohort.binds, as: 'cohort' }
+  const BUCKET = { sql: bucket.sql, binds: bucket.binds, as: 'bucket' }
+  const VALUE = { sql: value.sql, binds: value.bindings, as: 'value' }
+
+  // Which buckets survive the guardrail — decided across both cohorts together.
+  let keep = null
+  if (limit != null) {
+    const top = await grouped([BUCKET, VALUE]).orderByRaw('2 desc nulls last').limit(limit)
+    keep = top.map(r => r.bucket)
+    if (!keep.length) return { multi: true, series: [], sizes: [], aggregate: agg }
+  }
+
+  let q = grouped([COHORT, BUCKET, VALUE]).orderByRaw('1, 2')
+  if (keep) {
+    // A null bucket is a REAL bucket here — "no value for the group dimension" — and
+    // `= any()` never matches null, so it needs its own arm or the guardrail would
+    // silently drop the one bucket that says "we don't know".
+    // `bucket` is the raw expression on the single-level query and a plain column on
+    // the two-level one, so the filter has to name whichever this is.
+    const col = bounds.fact ? { sql: 'bucket', binds: [] } : bucket
+    const named = keep.filter(k => k != null)
+    const parts = [], binds = []
+    if (named.length) { parts.push(`${col.sql} = any(?)`); binds.push(...col.binds, named) }
+    if (keep.some(k => k == null)) { parts.push(`${col.sql} is null`); binds.push(...col.binds) }
+    q = q.whereRaw(`(${parts.join(' or ')})`, binds)
+  }
+
+  const byCohort = new Map()
+  for (const r of await q) {
+    if (!byCohort.has(r.cohort)) byCohort.set(r.cohort, [])
+    byCohort.get(r.cohort).push({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) })
+  }
+
+  // Sizes come from the same filtered set, per cohort, so the denominators and the
+  // series cannot disagree about who is in which half.
+  const sizeRows = await build()
+    .select(db.raw(`${cohort.sql} as cohort`, cohort.binds), db.raw('count(distinct e.passport_id)::int as n'))
+    .groupByRaw('1')
+  const sizes = sizeRows.map(r => ({ cohort: r.cohort, size: r.n }))
+
+  // Stable order: the anchored cohort first, because it is the one being explained.
+  const order = [ANCHORED_BUCKET, NO_ANCHOR_BUCKET]
+  const series = order.filter(n => byCohort.has(n)).map(name => ({ name, points: byCohort.get(name) }))
+  return { multi: true, series, sizes, aggregate: agg }
 }
 
 /**

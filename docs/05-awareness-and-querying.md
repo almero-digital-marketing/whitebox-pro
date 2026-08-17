@@ -184,8 +184,13 @@ not when it was recorded:
 | `missingAnchor` | passports with no anchor: `exclude` (default), `include`, `only`, `bucket` |
 | `<anchor>.use` | which historical value: `last` (default), `first`, `min`, `max` |
 
-`bucket` keeps the no-anchor cohort AND labels it `__no_anchor__`, so one grouped
-call returns both cohorts — the comparison group is usually the bigger half (494 of
+`bucket` CROSS-TABULATES: one series per cohort, each bucketed by `by`, returned as
+`{ multi: true, series: [{ name, points }], sizes: [{ cohort, size }], aggregate }` —
+the same shape the cohort projection uses, so the chart layer already renders it.
+`sizes` carries each cohort's denominator, because comparing two cohorts by raw
+counts compares their sizes more than their behaviour. `limit` applies to the BUCKET
+dimension (top-N across both cohorts combined), so the table is never ragged.
+Cohorts are named `__anchored__` and `__no_anchor__`, the anchored one first — the comparison group is usually the bigger half (494 of
 911 video watchers on one deployment have never booked), so dropping it silently
 answers a narrower question than the one asked. It is a distinct label rather than
 `null`, because a null bucket already means "no value for the group dimension" — a
