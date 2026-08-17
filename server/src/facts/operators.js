@@ -39,13 +39,29 @@ function numEq(a, b) {
   return na != null && nb != null && na === nb
 }
 
+// Ordering. Returns null for INCOMPARABLE — which is what an absent value on
+// either side is. Without that guard the lexical fallback compared the STRING
+// 'null': `{ gte: null }` matched every value sorting after it ("zebra" yes,
+// "active" no), and a value going null read as a real `decreased` because
+// '100' < 'null'. Neither is an ordering question that has an answer.
 function cmp(a, b) {
+  if (a == null || b == null) return null
   const na = asNumber(a), nb = asNumber(b)
   if (na != null && nb != null) return na - nb          // both purely numeric → numeric order
   const ta = toTime(a), tb = toTime(b)                  // else date-ish?
   if (ta != null && tb != null) return ta - tb
   return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0   // else lexical
 }
+
+// Ordering PREDICATES. Every caller goes through these rather than testing
+// cmp()'s result inline, because `null >= 0` and `null <= 0` are both TRUE in JS
+// — so the obvious `cmp(a, b) >= 0` would turn "incomparable" back into a match
+// for exactly the two operators this is guarding. Incomparable is always no.
+const ordered = (op) => (a, b) => { const c = cmp(a, b); return c != null && op(c) }
+const gtBy = ordered(c => c > 0)
+const gteBy = ordered(c => c >= 0)
+const ltBy = ordered(c => c < 0)
+const lteBy = ordered(c => c <= 0)
 
 // `held` and `distinct` join these because they read the HISTORY, not the current
 // value — which is the whole point of them.
@@ -68,17 +84,39 @@ export function isTemporal(predicate) {
 }
 
 // Evaluate a value predicate against `value` (which may be undefined when the
-// key is absent). Multiple operators in one predicate are AND-ed (e.g. a range
-// `{ gte: 200, lte: 400 }`).
+// key is absent, or null when it was recorded empty). Multiple operators in one
+// predicate are AND-ed (e.g. a range `{ gte: 200, lte: 400 }`).
 export function matchValue(value, predicate, now = new Date()) {
   const nowMs = now.getTime()
   const p = predicate || {}
 
+  // NO USABLE VALUE — two spellings of the same thing, so they take one path.
+  // `undefined` is a key with no row; `null` is a row whose value is JSON null,
+  // or a computed fact whose source date was absent or unparseable.
+  //
+  // Only `undefined` used to short-circuit here, which made null the most
+  // dangerous value in the system: it reached cmp(), where asNumber() and
+  // toTime() both give up and the comparison falls through to LEXICAL order.
+  // String(null) is 'null', and 'null' > '1', so EVERY `{ gte: <number> }`
+  // matched EVERY null-valued row. "Customers who spent 300+" quietly included
+  // everyone whose spend was never recorded — a false positive that grows with
+  // how much data you are missing, and reads as a bigger, healthier cohort.
+  //
+  // `distinct` already skipped nulls when counting values; this is the same rule
+  // applied where it was missing rather than a new one.
+  const empty = value === undefined || value === null
+
   if ('present' in p) {
-    if (p.present ? value === undefined : value !== undefined) return false
+    // `present` asks whether there is a VALUE, and null is not one. So a
+    // recorded-but-empty birthdate answers `{ present: true }` with no — the
+    // same answer `{ gte: 30 }` now gives, instead of contradicting it.
+    if (p.present ? empty : !empty) return false
     if (Object.keys(p).length === 1) return true
   }
-  if (value === undefined) return false
+  // Nothing compares to an absent value, including `ne`: a key with no row has
+  // never matched `{ ne: 'x' }` either, and null follows it rather than becoming
+  // a second, looser kind of absent.
+  if (empty) return false
   const t = toTime(value)
 
   for (const [op, bound] of Object.entries(p)) {
@@ -88,10 +126,10 @@ export function matchValue(value, predicate, now = new Date()) {
       case 'eq':  ok = numEq(value, bound); break
       case 'ne':  ok = !numEq(value, bound); break
       case 'in':  ok = Array.isArray(bound) && bound.some(b => numEq(value, b)); break
-      case 'gt':  ok = cmp(value, bound) > 0; break
-      case 'gte': ok = cmp(value, bound) >= 0; break
-      case 'lt':  ok = cmp(value, bound) < 0; break
-      case 'lte': ok = cmp(value, bound) <= 0; break
+      case 'gt':  ok = gtBy(value, bound); break
+      case 'gte': ok = gteBy(value, bound); break
+      case 'lt':  ok = ltBy(value, bound); break
+      case 'lte': ok = lteBy(value, bound); break
       // Directional date windows — each states which way time points, so the
       // window is unambiguous without knowing the value.
       case 'next':   ok = t != null && t >= nowMs && t <= nowMs + ms(bound); break    // upcoming, e.g. renews in the next 30d
@@ -130,10 +168,10 @@ export function matchTemporal(history, predicate, now = new Date()) {
         })
         break
       case 'decreased':
-        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && cmp(r.value, history[i - 1].value) < 0)
+        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && ltBy(r.value, history[i - 1].value))
         break
       case 'increased':
-        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && cmp(r.value, history[i - 1].value) > 0)
+        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && gtBy(r.value, history[i - 1].value))
         break
       default: throw new Error(`facts: unknown temporal operator "${op}"`)
     }
@@ -196,10 +234,10 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
           break
         }
         case 'decreased':
-          ok = i > 0 && inWin(r, spec.last) && cmp(r.value, history[i - 1].value) < 0
+          ok = i > 0 && inWin(r, spec.last) && ltBy(r.value, history[i - 1].value)
           break
         case 'increased':
-          ok = i > 0 && inWin(r, spec.last) && cmp(r.value, history[i - 1].value) > 0
+          ok = i > 0 && inWin(r, spec.last) && gtBy(r.value, history[i - 1].value)
           break
         case 'held': {
           // The value comparators, applied to a historical row instead of the

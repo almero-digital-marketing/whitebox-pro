@@ -66,6 +66,53 @@ describe('matchValue — value operators', () => {
     expect(mv(undefined, { eq: 'x' })).toBe(false)       // any op on an absent key fails
   })
 
+  // A null value is the dangerous one: it is a real row, so it survives every
+  // "does this key exist" check, and it used to reach the LEXICAL branch of cmp()
+  // where 'null' > '1' — so every numeric lower bound matched it.
+  it('a NULL value matches no operator — it is absence, not a comparable value', () => {
+    for (const p of [{ gte: 1 }, { gt: 0 }, { gte: 300 }, { lte: 10 }, { lt: 5 }]) {
+      expect(mv(null, p)).toBe(false)
+    }
+    expect(mv(null, { eq: 'x' })).toBe(false)
+    expect(mv(null, { in: ['a', 'b'] })).toBe(false)
+    // `ne` too: a key with no row has never matched `{ ne: … }`, and null follows
+    // it rather than being a second, looser kind of absent.
+    expect(mv(null, { ne: 'x' })).toBe(false)
+    expect(mv(null, { next: '30d' })).toBe(false)
+    expect(mv(null, { last: '30d' })).toBe(false)
+  })
+
+  it('null answers `present` the same way every other operator does', () => {
+    expect(mv(null, { present: true })).toBe(false)
+    expect(mv(null, { present: false })).toBe(true)
+    // The contradiction this removes: a value that is "present" but fails every
+    // comparison, so it inflates a cohort count that no breakdown can account for.
+    expect(mv(null, { present: true, gte: 1 })).toBe(false)
+  })
+
+  it('a null BOUND is incomparable too, whichever way the value sorts', () => {
+    // The mirror case, and the reason the guard lives in cmp() rather than only at
+    // the top of matchValue. Lexically 'zebra' > 'null' and 'active' < 'null', so a
+    // null bound matched a seemingly arbitrary half of the base — the kind of
+    // result that looks like a real segment.
+    expect(mv('zebra', { gte: null })).toBe(false)
+    expect(mv('active', { gte: null })).toBe(false)
+    expect(mv(5, { gte: null })).toBe(false)
+    expect(mv(5, { lte: null })).toBe(false)     // `null <= 0` is true in JS — the trap
+    expect(mv(5, { gt: null })).toBe(false)
+    expect(mv(5, { lt: null })).toBe(false)
+  })
+
+  it('0 and the empty string are VALUES, and still compare', () => {
+    // The fix must key on null/undefined, not falsiness: a spend of 0 is a fact.
+    expect(mv(0, { lte: 10 })).toBe(true)
+    expect(mv(0, { gte: 0 })).toBe(true)
+    expect(mv(0, { present: true })).toBe(true)
+    expect(mv('', { present: true })).toBe(true)
+    expect(mv(false, { present: true })).toBe(true)
+    expect(mv(false, { eq: false })).toBe(true)
+  })
+
   it('date ops: next (upcoming) / last (recent) / before (older)', () => {
     expect(mv('2026-07-01', { next: '30d' })).toBe(true)    // 11 days ahead
     expect(mv('2026-07-01', { next: '7d' })).toBe(false)
@@ -90,6 +137,18 @@ describe('matchTemporal — change / transition operators', () => {
   it('changed', () => {
     expect(mt(status, { changed: { last: '30d' } })).toBe(true)
     expect(mt(status, { changed: { last: '3d' } })).toBe(false)
+  })
+
+  it('a value going NULL is not a decrease, and coming back is not an increase', () => {
+    // increased/decreased compare consecutive history rows through the same cmp,
+    // so before the guard '100' < 'null' made losing a value look like a drop —
+    // a "spend decreased" cohort built mostly from records that stopped syncing.
+    const lost = [row('100', '2026-06-01'), row(null, '2026-06-10')]
+    expect(mt(lost, { decreased: { last: '30d' } })).toBe(false)
+    const regained = [row(null, '2026-06-01'), row('100', '2026-06-10')]
+    expect(mt(regained, { increased: { last: '30d' } })).toBe(false)
+    // and a real move is still detected either side of the gap
+    expect(mt([row('100', '2026-06-01'), row('50', '2026-06-10')], { decreased: { last: '30d' } })).toBe(true)
   })
 
   it('increased / decreased', () => {

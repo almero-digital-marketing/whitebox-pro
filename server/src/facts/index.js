@@ -392,14 +392,11 @@ export async function matchesTimed(key, predicate, { at, scope } = {}) {
   }
 
   const rows = await store.currentByKey(src.key, { at: at && now, scope: scopeArr, derive: src.derive })
-  // A derived value of NULL means the source was absent or unparseable — there is no
-  // age to compare, so the passport does not match. Dropped explicitly rather than
-  // left to the comparator: matchValue only short-circuits on `undefined`, so a null
-  // reaches cmp(), where asNumber and toTime both give up and it falls through to a
-  // LEXICAL compare — 'null' > '1' — and every `{ gte: n }` matches. One row with an
-  // empty birthdate would join every age cohort.
-  const usable = src.derive ? rows.filter(r => r.value != null) : rows
-  return usable
+  // Null values (a derived key whose source was absent or unparseable, or a stored
+  // one recorded empty) are rejected by matchValue itself — it treats null and
+  // undefined as the same absence. This used to filter them here, for derived keys
+  // only, which left the identical hole open for stored ones.
+  return rows
     .filter(r => matchValue(r.value, predicate, now))
     .map(r => ({ id: r.passport_id, matched_at: r.observed_at ? new Date(r.observed_at) : null }))
 }
