@@ -187,12 +187,46 @@ export async function runQuery(deps, query = {}, kind) {
   // sub-selector (a cohort filter) resolved to ids here — so an aggregate (group/
   // timeseries), a people query, OR a grounded answer can be scoped to "active
   // customers", "VIPs", … without the caller enumerating them.
+  // THE EFFECTIVE COHORT: `scope` AND `selector.filter`, intersected.
+  //
+  // This read `q.scope` alone, and every kind that resolves through it —
+  // breakdownFact, distribution, scatter, cohort — therefore discarded
+  // `selector.filter` in silence. A breakdown by studio with a
+  // `booking = noshow` filter returned the same numbers as `booking = attended`,
+  // because neither was applied and both were the unfiltered base. On the GPoint
+  // data that reads as 283,087 customers against a base of 284,176 — a plausible
+  // enough figure to publish, and the reason this went unnoticed.
+  //
+  // The `selector` path below never had the bug (it passes q.selector to the
+  // engine), so the two halves of the same query object disagreed about whether
+  // filters count, depending on which widget kind you asked for.
+  //
+  // Resolved to ids rather than composed into each branch's own filter because the
+  // branches take a scope ARRAY (store.factBreakdown, factValues, factPairs,
+  // cohortRows) — an id list is the shape they all already accept.
   const cohortScope = async () => {
-    if (!q.scope) return undefined
-    if (Array.isArray(q.scope)) return q.scope
-    const c = await selector.resolve(q.scope, { projection: 'people', asOf: q.asOf })
-    return c.passports.map((p) => p.id)
+    const parts = []
+    if (q.scope) {
+      parts.push(Array.isArray(q.scope)
+        ? q.scope
+        : (await selector.resolve(q.scope, { projection: 'people', asOf: q.asOf })).passports.map((p) => p.id))
+    }
+    if (q.selector?.filter) {
+      parts.push((await selector.resolve({ filter: q.selector.filter }, { projection: 'people', asOf: q.asOf })).passports.map((p) => p.id))
+    }
+    if (!parts.length) return undefined                    // genuinely unscoped
+    if (parts.length === 1) return parts[0]
+
+    const [a, b] = parts
+    const keep = new Set(b)
+    return a.filter((id) => keep.has(id))
   }
+
+  // A cohort that matched NOBODY is not the same as no cohort, and every consumer
+  // of a scope array treats an empty one as "unscoped" (`if (scope?.length)`) — so
+  // an empty result would silently widen back to the whole base, which is the
+  // exact failure this whole change exists to remove. Callers check this.
+  const emptyCohort = (scope) => Array.isArray(scope) && scope.length === 0
 
   // ── multi-series (compare A vs B) ─────────────────────────────────────────────
   // `series`: explicit named sub-queries — compare anything vs anything.
@@ -229,6 +263,7 @@ export async function runQuery(deps, query = {}, kind) {
         : by   // a bare token that isn't a core bucket → treat it as a fact key
   if (q.breakdownFact || factGroup) {
     const scope = await cohortScope()
+    if (emptyCohort(scope)) return { series: [], total: 0 }
     const key = q.breakdownFact?.key || factGroup
     // never break a chart down by a contact identifier — its bucket labels would be raw PII
     if (CONTACT_KEYS.has(key)) { const e = new Error(`cannot group by the identity field "${key}"`); e.status = 400; throw e }
@@ -278,6 +313,7 @@ export async function runQuery(deps, query = {}, kind) {
     const { source = 'fact', key, bins, maxBins } = q.distribution
     if (!key) throw new Error('distribution requires a key')
     const scope = await cohortScope()
+    if (emptyCohort(scope)) return buildHistogram([], { bins, maxBins })
     const values = source === 'event'
       ? await store.eventCounts(key, scope)
       : await store.factValues(key, scope)
@@ -288,14 +324,17 @@ export async function runQuery(deps, query = {}, kind) {
     // Two numeric facts read raw + cast (never via the fact predicate).
     const { x, y, colorBy, limit } = q.scatter
     if (!x || !y) throw new Error('scatter requires x and y fact keys')
-    const points = await store.factPairs(x, y, { scope: await cohortScope(), colorBy, limit })
+    const sScope = await cohortScope()
+    if (emptyCohort(sScope)) return { points: [], x, y, ...(colorBy ? { colorBy } : {}) }
+    const points = await store.factPairs(x, y, { scope: sScope, colorBy, limit })
     return { points, x, y, ...(colorBy ? { colorBy } : {}) }
   }
   if (q.cohort) {
     // Retention grid: cohort = each person's FIRST active period; cell = % of that
     // cohort still active k periods later. Rendered as a matrix (rows × M0..Mn).
     const { event, grain = 'month', periods = 6 } = q.cohort
-    const rows = await store.cohortRows(event, grain, await cohortScope())
+    const cScope = await cohortScope()
+    const rows = emptyCohort(cScope) ? [] : await store.cohortRows(event, grain, cScope)
     const idxOf = (d) => grain === 'week'
       ? Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / (7 * 864e5))
       : d.getUTCFullYear() * 12 + d.getUTCMonth()
