@@ -15,6 +15,7 @@
 
 import { whereScope } from '../db.js'
 import * as computed from '../facts/computed.js'
+import { useFor as declaredUseFor } from '../facts/index.js'
 
 const EXPOSURES = 'whitebox_awareness_exposures'
 const SESSIONS = 'whitebox_sessions'
@@ -231,7 +232,11 @@ function anchorSql(db, spec, alias) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
     throw new Error(`selector.metric: window anchor must be { fact: '<key>' } — got ${JSON.stringify(spec)}`)
   }
-  const { fact, use = 'last', ...rest } = spec
+  // Same precedence as a fact clause: the anchor's own `use` beats the key's
+  // declaration, which beats 'last'. Without this a declared `first_booked_at: min`
+  // would be honoured by every filter and silently ignored by the window that anchors
+  // on it — the two disagreeing about the same key is the failure this exists to stop.
+  const { fact, use = (declaredUseFor(spec?.fact) ?? 'last'), ...rest } = spec
   if (!fact || typeof fact !== 'string') throw new Error('selector.metric: window anchor needs `fact` (the key whose VALUE is the boundary)')
   if (Object.keys(rest).length) throw new Error(`selector.metric: window anchor has no "${Object.keys(rest)[0]}" (use fact/use)`)
   if (!ANCHOR_USE.includes(use)) throw new Error(`selector.metric: window anchor \`use\` must be one of ${ANCHOR_USE.join('/')} — got "${use}"`)

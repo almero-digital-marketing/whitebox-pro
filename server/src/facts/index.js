@@ -9,8 +9,21 @@ import { matchValue, matchTemporal, temporalMatchedAt, isTemporal } from './oper
 // because "absent AND greater than 5" is a contradiction matchValue already answers
 // with no.
 function absenceOnly(predicate) {
-  const p = predicate || {}
+  const p = operatorsOf(predicate)
   return Object.keys(p).length === 1 && p.present === false
+}
+
+// `use` selects WHICH of a passport's values the operators are applied to. It is a
+// control key, not an operator, so it is split off before matchValue ever sees it —
+// otherwise it would be rejected as "not a value operator", which is exactly the
+// right error for a typo and exactly the wrong one for this.
+const CONTROL_KEYS = ['use']
+function operatorsOf(predicate) {
+  const p = predicate || {}
+  if (!CONTROL_KEYS.some(k => k in p)) return p
+  const out = { ...p }
+  for (const k of CONTROL_KEYS) delete out[k]
+  return out
 }
 
 // Facts — the core structured memory: an append-only, typed, value-queryable
@@ -26,6 +39,7 @@ let db
 let logger
 let passports
 let labels
+let declaredUse
 
 export function init(deps) {
   db = deps.db
@@ -39,6 +53,18 @@ export function init(deps) {
   // user's custom CRM field (whitebox-pro-server-plugin-crm writes arbitrary
   // external field names as fact keys — there's no fixed vocabulary to default).
   labels = new Map(Object.entries(deps.config?.facts?.labels || {}))
+  // WHICH of a passport's values a key MEANS, when it holds several. Seeded from
+  // config FIRST for the same reason labels are: the operator has the final word, and
+  // config is the only place keys nobody could anticipate can be declared — the crm
+  // plugin writes arbitrary external field names as fact keys, so no plugin author can
+  // pre-declare `status_2`.
+  declaredUse = new Map(Object.entries(deps.config?.facts?.use || {}))
+  for (const [key, u] of declaredUse) {
+    if (!store.USE_VALUES.includes(u)) {
+      throw new Error(`facts.use.${key}: unknown value "${u}" (one of ${store.USE_VALUES.join('/')}). ` +
+        `last/first pick by observed_at (most recent / earliest write); max/min pick by VALUE.`)
+    }
+  }
   // Computed keys (age from birthdate, tenure from first_booked_at, …) — declared
   // once in config and then usable anywhere a stored key is. Validated here so a
   // bad unit is a boot error, not an empty chart weeks later.
@@ -56,9 +82,45 @@ function resolveKey(key, at) {
 // Register a human-readable label for a fact key — e.g. a plugin calling
 // describe('geo_city', 'City') for a key it owns. First write wins, so a
 // config-seeded label (see init() above) is never clobbered by a plugin default.
-export function describe(key, humanLabel) {
-  if (!labels.has(key)) labels.set(key, humanLabel)
+/**
+ * What a plugin declares about a key it OWNS. First write wins, so a config-seeded
+ * value is never clobbered by a plugin default.
+ *
+ *   describe('geo_city', 'City')                          the original form, still valid
+ *   describe('first_booked_at', { label: 'First booked', use: 'min' })
+ *
+ * `use` says which of a passport's values the key MEANS when it holds several. It
+ * belongs here, with the writer, because the writer is the only party that knows:
+ * gpoint's CRM plugin computes the minimum booking date precisely BECAUSE it
+ * understands that a first booking cannot move forward. Core cannot infer that, and a
+ * caller passing `use: 'min'` by hand on every acquisition question is one forgotten
+ * argument away from a quietly wrong answer.
+ */
+export function describe(key, declaration) {
+  const { label, use } = typeof declaration === 'string' ? { label: declaration } : (declaration || {})
+  if (label != null && !labels.has(key)) labels.set(key, label)
+  if (use != null && !declaredUse.has(key)) {
+    if (!store.USE_VALUES.includes(use)) {
+      throw new Error(`facts.describe("${key}"): unknown \`use\` "${use}" (one of ${store.USE_VALUES.join('/')})`)
+    }
+    declaredUse.set(key, use)
+  }
 }
+
+/**
+ * The rule for `key`, or null when nobody has declared one.
+ *
+ * Null is not the same as 'last'. It means UNDECLARED, which is what
+ * undeclaredAmbiguous() reports on — a key that holds several values and has never
+ * been told which one it means is the one case worth a human's attention.
+ */
+// Optional-chained: selector.init() and facts.init() have no guaranteed order, and a
+// read before init should fall back to the default rather than throw.
+export const useFor = (key) => declaredUse?.get(key) ?? null
+
+// Every declaration, for discovery surfaces and for the report below.
+export const declaredKeys = () =>
+  [...(declaredUse?.entries() ?? [])].map(([key, use]) => ({ key, use, label: labels.get(key) || key }))
 
 // The human label for `key`, or the raw key when nothing is registered.
 export function label(key) {
@@ -70,6 +132,23 @@ export function label(key) {
 export function describedKeys() {
   return [...labels.entries()].map(([key, humanLabel]) => ({ key, label: humanLabel }))
 }
+
+/**
+ * Ambiguous keys nobody has declared a rule for — the report that turns "somebody
+ * should think about this" into a named list with the responsible writer attached.
+ *
+ * Not a per-query warning. Ambiguity is the NORMAL state for a key that legitimately
+ * changes (geo_city) or that is really a per-event stream stored as a fact
+ * (booking_cost, at 7.4 rows per passport). A warning on every query touching those
+ * would fire on most queries forever and teach people to ignore it. A warning about an
+ * UNDECLARED key is a config gap: actionable once, then silent.
+ */
+export const undeclaredAmbiguous = () =>
+  store.ambiguousKeys({ undeclaredOnly: true, declared: new Set(declaredUse?.keys() ?? []) })
+
+// Every ambiguous key, declared or not — for a data-health view that wants the whole
+// picture rather than only the outstanding decisions.
+export const allAmbiguous = () => store.ambiguousKeys({ undeclaredOnly: false })
 
 // Is the current-value projection consistent with the append-only log? Exposed so a
 // deployment can assert it on a schedule — the projection is trigger-maintained and
@@ -380,7 +459,7 @@ export async function test(passport_id, key, predicate, { at } = {}) {
     return matchTemporal(hist, predicate, now)
   }
   const rows = at ? await store.asOfRows(pid, now, [key]) : await store.currentRows(pid, [key])
-  return matchValue(rows.length ? rows[0].value : undefined, predicate, now)
+  return matchValue(rows.length ? rows[0].value : undefined, operatorsOf(predicate), now)
 }
 
 // Population WITH the qualifying-event time: `[{ id, matched_at }]` for every
@@ -423,13 +502,20 @@ export async function matchesTimed(key, predicate, { at, scope } = {}) {
     return ids.map(id => ({ id, matched_at: null }))
   }
 
-  const rows = await store.currentByKey(src.key, { at: at && now, scope: scopeArr, derive: src.derive })
+  // Precedence: the query's own `use` beats the key's declaration, which beats 'last'.
+  // A declared key is therefore correct everywhere without the caller doing anything —
+  // which is the whole point, since the alternative is remembering it every time.
+  const rows = await store.currentByKey(src.key, {
+    at: at && now, scope: scopeArr, derive: src.derive,
+    use: predicate?.use ?? useFor(key) ?? undefined,
+  })
   // Null values (a derived key whose source was absent or unparseable, or a stored
   // one recorded empty) are rejected by matchValue itself — it treats null and
   // undefined as the same absence. This used to filter them here, for derived keys
   // only, which left the identical hole open for stored ones.
+  const ops = operatorsOf(predicate)
   return rows
-    .filter(r => matchValue(r.value, predicate, now))
+    .filter(r => matchValue(r.value, ops, now))
     .map(r => ({ id: r.passport_id, matched_at: r.observed_at ? new Date(r.observed_at) : null }))
 }
 

@@ -107,6 +107,46 @@ export async function currentForPairs(pairs) {
 const CURRENT = 'whitebox_facts_current'
 
 /**
+ * Keys that hold more than one value for at least one passport — with, for each, how
+ * many passports and which sources wrote them.
+ *
+ * The point of naming the SOURCE is accountability. "Some fact somewhere is
+ * multi-valued" is not actionable; "`booking_cost`, written by `gpoint`, holds
+ * conflicting values for 78,285 passports and nobody has declared what it means" names
+ * the key, the scale, and who owns the decision.
+ *
+ * Reads value_count off the projection (migration 007), so it is a partial-index scan
+ * rather than the GROUP BY over the 7.4M-row log this would otherwise require.
+ *
+ * `undeclaredOnly` is the default because a declared key is not a problem: it holds
+ * several values and the deployment has said which one it means. What wants attention
+ * is the key nobody has decided about.
+ */
+export async function ambiguousKeys({ undeclaredOnly = true, declared = new Set() } = {}) {
+  const { rows } = await db.raw(`
+    select c.key,
+           count(*)                                    as ambiguous_passports,
+           max(c.value_count)                          as max_values_for_one_passport,
+           (select count(*) from ${CURRENT} t where t.key = c.key) as passports_with_key,
+           array_agg(distinct c.source)                as sources
+      from ${CURRENT} c
+     where c.value_count > 1
+     group by c.key
+     order by count(*) desc`)
+
+  return rows
+    .filter(r => !undeclaredOnly || !declared.has(r.key))
+    .map(r => ({
+      key: r.key,
+      ambiguous_passports: Number(r.ambiguous_passports),
+      passports_with_key: Number(r.passports_with_key),
+      pct: Math.round((Number(r.ambiguous_passports) / Number(r.passports_with_key)) * 1000) / 10,
+      max_values_for_one_passport: Number(r.max_values_for_one_passport),
+      sources: r.sources,
+    }))
+}
+
+/**
  * Does the projection agree with the log? Returns the disagreements, empty when it
  * is exact.
  *
@@ -200,12 +240,40 @@ export async function historyRows(passportId, key) {
 // value instead of the stored one. The query still reads the SOURCE key's rows; the
 // caller substitutes that key. Derived in SQL rather than in JS after the fetch so
 // the predicate path and the grouped path share one definition of "age".
-export async function currentByKey(key, { at, scope, derive } = {}) {
-  // `at` is TIME TRAVEL — "what was this on 3 March" — which the projection cannot
-  // answer: it holds one row, the current one. Only the un-anchored read switches.
-  let q = at
-    ? db(TABLE).distinctOn('passport_id').where({ key }).where('observed_at', '<=', at)
-        .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
+// WHICH of a passport's values, when it holds several. Two distinct pairs:
+//
+//   last / first   by observed_at — the value as of the most recent / earliest write
+//   max / min      by VALUE       — the largest / smallest value ever recorded
+//
+// They are not synonyms. They coincide only when a fact drifts in one direction, which
+// is why `first_booked_at` currently has min ≡ first and max ≡ last across all 3,326
+// of its multi-valued passports — a fact corrected in both directions (a refunded
+// ltv_paid) separates them.
+//
+// Ordered rather than aggregated, so each returns a real ROW: the caller needs the
+// matching observed_at as the funnel anchor, and min(value) alone cannot say which
+// write it came from. jsonb compares numerically within numbers and by collation
+// within strings, so `min(value)` is right for a numeric fact and for an ISO date
+// stored as text without a per-type cast.
+const USE_ORDER = {
+  last:  [{ column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }],
+  first: [{ column: 'observed_at', order: 'asc' },  { column: 'id', order: 'asc' }],
+  max:   [{ column: 'value', order: 'desc' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }],
+  min:   [{ column: 'value', order: 'asc' },  { column: 'observed_at', order: 'asc' },  { column: 'id', order: 'asc' }],
+}
+export const USE_VALUES = Object.keys(USE_ORDER)
+
+export async function currentByKey(key, { at, scope, derive, use = 'last' } = {}) {
+  if (!USE_ORDER[use]) {
+    throw new Error(`facts: \`use\` must be one of ${USE_VALUES.join('/')} — got "${use}". ` +
+      `last/first pick by observed_at (most recent / earliest write); max/min pick by VALUE.`)
+  }
+  // The projection holds ONE row per pair — the `last` one — so it can only answer
+  // that. `at` is time travel, which it cannot answer either.
+  let q = (at || use !== 'last')
+    ? db(TABLE).distinctOn('passport_id').where({ key })
+        .modify(qb => { if (at) qb.where('observed_at', '<=', at) })
+        .orderBy([{ column: 'passport_id' }, ...USE_ORDER[use]])
     : db(CURRENT).where({ key })
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
   return derive
