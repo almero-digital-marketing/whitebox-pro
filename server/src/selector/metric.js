@@ -21,7 +21,16 @@ const SESSIONS = 'whitebox_sessions'
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
 const FILTER_KEYS = ['content', 'channel', 'direction', 'last', 'since', 'until', 'session', 'attrs']
 const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
-const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum']
+const GROUP_AGGS = [
+  'count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum',
+  'avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest',
+]
+
+// The numeric column an aggregate may read directly. An allowlist because the name
+// is interpolated: `dwell_ms` is the only numeric measure on an exposure, and `ts`
+// is deliberately absent — "avg of a timestamp" is a question about buckets, not
+// values, and `by` already answers it.
+const AGG_COLS = ['dwell_ms']
 
 // The session columns reachable via exposures.session_id → whitebox_sessions. A
 // FIXED ALLOWLIST — safe to reference a column by name; values are always bound.
@@ -384,16 +393,77 @@ function bucketSql(by, band, factIsComputed = false) {
   throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}; session:<utm…>; attr:<key>; fact:<key>)`)
 }
 
-function aggSql(agg, field) {
+// Where an aggregate reads its number from: a meta attribute (`field`) or an
+// exposure column (`column`). Returns { sql, binds } for a NUMERIC expression.
+//
+// Rows where the source is absent or non-numeric contribute NOTHING rather than a
+// zero — `avg` over "the events that carry a value" is the only reading that is not
+// a lie, since counting a missing value as 0 drags the mean toward zero in
+// proportion to how much data you are missing. Postgres's aggregates skip NULL,
+// which is exactly the behaviour wanted, so the cast is guarded rather than
+// coalesced.
+function numericSource({ field, column }, agg) {
+  if (field && column) throw new Error(`selector.group: \`${agg}\` takes either \`field\` (a meta attribute) or \`column\`, not both`)
+  if (column) {
+    if (!AGG_COLS.includes(column)) {
+      throw new Error(`selector.group: \`column\` must be one of ${AGG_COLS.join('/')} — got "${column}"`)
+    }
+    return { sql: `e.${column}`, binds: [] }
+  }
+  if (!field) {
+    throw new Error(`selector.group: \`${agg}\` needs a \`field\` (a meta attribute) or a \`column\` (${AGG_COLS.join('/')})`)
+  }
+  // NULL unless the text is entirely numeric — a stray "n/a" in one event must not
+  // abort the whole query with an invalid-input-syntax error.
+  return { sql: `case when (e.meta->>?) ~ ? then (e.meta->>?)::numeric end`, binds: [field, NUMERIC_TEXT, field] }
+}
+
+const NUMERIC_TEXT = '^-?[0-9]+(\\.[0-9]+)?$'
+
+function aggSql(agg, bounds = {}) {
+  const { field, column, p } = bounds
   switch (agg) {
     case 'count': return { sql: 'count(*)', bindings: [] }
     case 'distinct_sessions': return { sql: 'count(distinct e.session_id)', bindings: [] }
     case 'distinct_passports': return { sql: 'count(distinct e.passport_id)', bindings: [] }
     case 'sum_dwell_ms': return { sql: 'coalesce(sum(e.dwell_ms), 0)', bindings: [] }
-    case 'sum':
-      if (!field) throw new Error('selector.group: `sum` needs a `field`')
-      return { sql: 'coalesce(sum((e.meta->>?)::numeric), 0)', bindings: [field] }
-    default: throw new Error(`selector.group: aggregate "${agg}" not supported for grouping`)
+    case 'sum': {
+      const src = numericSource({ field, column }, 'sum')
+      return { sql: `coalesce(sum(${src.sql}), 0)`, bindings: src.binds }
+    }
+    // avg/min/max are NOT coalesced to 0: a bucket where nothing carried the field
+    // has no average, and reporting 0 would put it on the chart as a real low value
+    // rather than an absent one. It comes back null and the caller can say so.
+    case 'avg': case 'min': case 'max': {
+      const src = numericSource({ field, column }, agg)
+      return { sql: `${agg}(${src.sql})`, bindings: src.binds }
+    }
+    case 'median': case 'percentile': {
+      const src = numericSource({ field, column }, agg)
+      const frac = agg === 'median' ? 0.5 : Number(p)
+      if (!(frac >= 0 && frac <= 1)) {
+        throw new Error(`selector.group: \`percentile\` needs \`p\` between 0 and 1 (0.9 = the 90th) — got ${JSON.stringify(p)}`)
+      }
+      // percentile_cont is an ORDERED-SET aggregate, hence WITHIN GROUP; it
+      // interpolates between neighbours, which is what a percentile of a continuous
+      // measure means. It cannot be composed with the running-total path the gate
+      // uses, which is why these are group-only.
+      return { sql: `percentile_cont(?) within group (order by ${src.sql})`, bindings: [frac, ...src.binds] }
+    }
+    // Postgres has no first()/last() aggregate. array_agg with an explicit ORDER BY
+    // is the standard substitute and, unlike min()/max(), answers "the value at the
+    // earliest event" rather than "the smallest value" — a distinction that matters
+    // for anything non-monotonic, which is most measures.
+    // NAMED `earliest`/`latest`, not first/last: `last` is already the relative
+    // lookback window in FILTER_KEYS, so `{ last: { field } }` parses as a window and
+    // then reports "needs one aggregate" — a confusing error for a reasonable spec.
+    // One word cannot be both, and the window came first.
+    case 'earliest': case 'latest': {
+      const src = numericSource({ field, column }, agg)
+      const dir = agg === 'earliest' ? 'asc' : 'desc'
+      return { sql: `(array_agg(${src.sql} order by e.ts ${dir}))[1]`, bindings: src.binds }
+    }
+    default: throw new Error(`selector.group: aggregate "${agg}" not supported for grouping (one of ${GROUP_AGGS.join('/')})`)
   }
 }
 
@@ -410,7 +480,7 @@ export async function group(db, spec, { by, at, scope, limit, band } = {}) {
     throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
   }
   const bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
-  const value = aggSql(agg, bounds.field)
+  const value = aggSql(agg, bounds)
 
   let q = base(db, needsSession(filters, by))
   if (factKey != null) q = joinFact(db, q, factKey, now)
@@ -421,5 +491,8 @@ export async function group(db, spec, { by, at, scope, limit, band } = {}) {
     ? q.orderByRaw('2 desc').limit(limit)                     // top-N by value (the guardrail)
     : q.orderByRaw('1')                                       // by bucket (chronological for time grains)
 
-  return (await q).map(r => ({ bucket: r.bucket, value: Number(r.value) }))
+  // `value: null` is preserved deliberately. Number(null) is 0, and an avg/median of
+  // a bucket where nothing carried the field would then plot as a real zero — the
+  // same class of confident-wrong-number this engine keeps being bitten by.
+  return (await q).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
 }
