@@ -464,7 +464,7 @@ export function compactForExplain(kind, data) {
     return { total, slices: s.slice(0, 40).map((b) => [b.bucket, b.value, `${Math.round((b.value / total) * 100)}%`]) }
   }
   if (kind === 'scatter') {   // a scatter is about RELATIONSHIP — summarise ranges + correlation, not raw dots
-    const pts = (Array.isArray(data) ? data : data?.points) || []
+    const pts = (Array.isArray(data) ? data : data?.points || data?.series) || []
     const n = pts.length
     const rng = (sel) => { const v = pts.map(sel); return n ? { min: Math.min(...v), max: Math.max(...v) } : null }
     let r = null

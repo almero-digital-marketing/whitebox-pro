@@ -39,6 +39,76 @@ async function fixture() {
 
 const purchases = { filter: { metric: { content: 'purchase', count: {} } } }
 
+// The DENOMINATOR. A series of per-bucket numbers cannot be turned into a reach
+// percentage without knowing how many people the query was over, and getting it
+// took another call — plus more calls again for each cohort being compared.
+describe('selector group: cohortSize', () => {
+  const purchases3 = { filter: { metric: { content: 'purchase', count: {} } } }
+
+  it('returns a bare array unless asked — nothing that reads one has to change', async () => {
+    await fixture()
+    const r = await selector.resolve(purchases3, { group: { by: 'channel' } })
+    expect(Array.isArray(r)).toBe(true)
+  })
+
+  it('returns { series, cohortSize, aggregate } when asked', async () => {
+    await fixture()
+    const r = await selector.resolve(purchases3, { group: { by: 'channel', cohortSize: true } })
+    expect(Array.isArray(r)).toBe(false)
+    expect(asMap(r.series)).toEqual({ web: 2, email: 1 })
+    expect(r.cohortSize).toBe(2)            // two people, three purchases
+    expect(r.aggregate).toBe('count')       // so the caller knows what the values ARE
+  })
+
+  it('counts PEOPLE even when the series counts events', async () => {
+    // Otherwise a percentage divides events by people — two different units.
+    await fixture()
+    const r = await selector.resolve(purchases3, { group: { by: 'channel', cohortSize: true } })
+    const events = r.series.reduce((n, x) => n + x.value, 0)
+    expect(events).toBe(3)
+    expect(r.cohortSize).toBe(2)
+  })
+
+  it('is NOT trimmed by `limit` — the top-N guardrail must not inflate percentages', async () => {
+    await fixture()
+    const r = await selector.resolve(purchases3, { group: { by: 'channel', limit: 1, cohortSize: true } })
+    expect(r.series).toHaveLength(1)        // display trimmed
+    expect(r.cohortSize).toBe(2)            // denominator intact
+  })
+
+  it('counts the cohort the FILTER selects, including people in no bucket', async () => {
+    // Someone whose fact value is missing contributes to no bucket but is still in
+    // the cohort. Excluding them would flatter every percentage computed from this.
+    const a = await newPassport(), b = await newPassport()
+    for (const p of [a, b]) await expose(p, { ts: '2026-05-01' })
+    await facts.record({ passport_id: a, key: 'tier', value: 'pro', source: 't' })
+    // b has no `tier` at all
+    const r = await selector.resolve({ filter: { metric: { content: 'purchase', distinct_passports: {} } } },
+      { group: { by: 'fact:tier', cohortSize: true } })
+    expect(r.cohortSize).toBe(2)
+    expect(asMap(r.series)).toEqual({ pro: 1, null: 1 })   // b lands in the null bucket
+  })
+
+  it('answers an empty cohort in the SAME shape', async () => {
+    // A bare [] here would make a caller read `.series` off an array and get
+    // undefined — indistinguishable from a bug in their own code.
+    await fixture()
+    const r = await selector.resolve(
+      { filter: { all: [
+        { metric: { content: 'purchase', count: {} } },
+        { fact: { tier: { eq: 'nobody-has-this' } } },
+      ] } },
+      { group: { by: 'channel', cohortSize: true } })
+    expect(r).toEqual({ series: [], cohortSize: 0, aggregate: 'count' })
+  })
+
+  it('names cohortSize in the unknown-key hint', async () => {
+    await fixture()
+    await expect(selector.resolve(purchases3, { group: { by: 'channel', cohortsize: true } }))
+      .rejects.toThrow(/cohortSize: true/)
+  })
+})
+
 // `fact:<key>` — the bucket comes from whitebox_facts, so it needs its own join.
 // Core could not group by a fact at all; the analytics layer answered it with a
 // separate per-key query, which is why a fact breakdown could not be combined with

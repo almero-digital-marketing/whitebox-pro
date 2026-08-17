@@ -88,7 +88,15 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
 // high-cardinality guardrail). The one engine capability charts add.
 // Only these reach metric.group. Anything else a caller puts in `group` was
 // accepted-and-ignored, which is indistinguishable from an answer.
-const GROUP_KEYS = ['by', 'limit', 'band']
+const GROUP_KEYS = ['by', 'limit', 'band', 'cohortSize']
+
+// Which aggregate a metric clause names — echoed back beside `cohortSize` so the
+// caller knows what the series values ARE without inferring it from their own query.
+const GROUP_AGG_NAMES = [
+  'count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum',
+  'avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest',
+]
+const aggregateOf = (m) => GROUP_AGG_NAMES.find(a => m && a in m) || null
 
 export async function resolveGroup(selector, { group, scope, asOf } = {}) {
   // Strict validation, because this function forwards a SUBSET of its input and
@@ -100,7 +108,8 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
     throw new Error(
       `selector.group: unknown key "${unknownGroup[0]}" (allowed: ${GROUP_KEYS.join('/')}). ` +
       `Time-grain bucketing is chosen by \`by\` (hour/day/week/month), not a separate \`grain\`; ` +
-      `\`band\` groups a numeric \`fact:<key>\` into ranges (e.g. band: 5 → 20-24, 25-29).`,
+      `\`band\` groups a numeric \`fact:<key>\` into ranges (e.g. band: 5 → 20-24, 25-29); ` +
+      `\`cohortSize: true\` returns { series, cohortSize, aggregate } so a reach % needs no second call.`,
     )
   }
 
@@ -155,10 +164,17 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
         // Resolve the cohort half and AND it into scope. An empty result is a real
         // answer — nobody matched — and must NOT fall through to an unscoped query,
         // which is what an empty array means downstream (`if (scope?.length)`).
+        // An empty cohort answers in the shape the caller asked for. Returning a bare
+        // [] to a caller that requested `cohortSize` would make them read `.series`
+        // off an array and get undefined — an empty chart that looks like a bug in
+        // their code rather than a real "nobody matched".
+        const empty = () => (group?.cohortSize
+          ? { series: [], cohortSize: 0, aggregate: aggregateOf(m) }
+          : [])
         const ids = await filter.evaluate(rest.length === 1 ? rest[0] : { all: rest }, baseCtx(at))
-        if (!ids.length) return []
+        if (!ids.length) return empty()
         scopeArr = scopeArr ? scopeArr.filter(id => new Set(ids).has(id)) : ids
-        if (!scopeArr.length) return []
+        if (!scopeArr.length) return empty()
       }
     }
   }
@@ -168,7 +184,10 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
     )
   }
 
-  return metric.group(rt.db, m, { by: group?.by, limit: group?.limit, band: group?.band, at, scope: scopeArr })
+  return metric.group(rt.db, m, {
+    by: group?.by, limit: group?.limit, band: group?.band, cohortSize: group?.cohortSize,
+    at, scope: scopeArr,
+  })
 }
 
 // A minimal ctx for evaluating a `filter` over the whole base (knowledge cohort).

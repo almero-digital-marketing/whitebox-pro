@@ -133,6 +133,22 @@ stripped — so one page is one bucket however the link was shared. An unrecogni
 bucket is a **400 naming the accepted set**; it used to be read as a fact key and
 answered with an empty series.
 
+**`group: { cohortSize: true }`** returns `{ series, cohortSize, aggregate }` instead
+of a bare array, so a reach percentage needs no second call:
+
+```
+{ "selector": { "filter": { "metric": { "source": "video", "distinct_passports": {} } } },
+  "group": { "by": "content", "cohortSize": true } }
+→ { "series": [ … ], "cohortSize": 912, "aggregate": "distinct_passports" }
+```
+
+`cohortSize` is always **distinct passports**, whatever the series aggregates — a
+series of event counts still wants "of how many people", and a per-event denominator
+would divide two different units. It is counted **before `limit`**, so asking for the
+top 50 buckets cannot inflate the percentages in them, and it counts the whole cohort
+the filter selects, including passports that land in no bucket (an absent fact value
+is still a member). Opt-in, so the default return stays an array.
+
 This is the one engine capability charts add; trend and breakdown dashboards are
 built on it.
 

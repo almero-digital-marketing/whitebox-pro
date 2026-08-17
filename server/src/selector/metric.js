@@ -758,7 +758,7 @@ function aggSql(agg, bounds = {}) {
 // Default: ordered by bucket (chronological for time grains). `limit` is the
 // HIGH-CARDINALITY GUARDRAIL — an open key (attr:<key>, session:<utm>) can have
 // thousands of buckets, so `limit` returns the top-N by value (desc) instead.
-export async function group(db, spec, { by, at, scope, limit, band } = {}) {
+export async function group(db, spec, { by, at, scope, limit, band, cohortSize } = {}) {
   if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, attr:<key>, or fact:<key>)')
   const { filters, agg, bounds } = split(spec, GROUP_AGGS)
   const now = at ? new Date(at) : new Date()
@@ -831,5 +831,40 @@ export async function group(db, spec, { by, at, scope, limit, band } = {}) {
   // `value: null` is preserved deliberately. Number(null) is 0, and an avg/median of
   // a bucket where nothing carried the field would then plot as a real zero — the
   // same class of confident-wrong-number this engine keeps being bitten by.
-  return (await q).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
+  const series = (await q).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
+  return cohortSize ? withCohortSize(db, series, agg, filters, { at, scope, now }) : series
+}
+
+/**
+ * The DENOMINATOR — how many distinct passports the query is over — beside the
+ * series, so a reach percentage does not cost another round trip. Opt-in
+ * (`group: { cohortSize: true }`) precisely so the default return stays a bare
+ * array and nothing that already reads one has to change.
+ *
+ * Three decisions worth stating, because each one is a different number:
+ *
+ *  · Always distinct PASSPORTS, whatever the series aggregates. A series of
+ *    exposure counts still wants "of how many people", not "of how many events" —
+ *    a per-event denominator would make every percentage a ratio of two different
+ *    units.
+ *  · Counted BEFORE `limit`. `limit` is the top-N display guardrail; if it also
+ *    trimmed the denominator, asking for the top 50 buckets would silently inflate
+ *    every percentage in them.
+ *  · It counts the cohort the FILTER selects, including passports that contribute
+ *    nothing to any bucket — someone whose fact value is missing or non-numeric is
+ *    still in the cohort. That is the honest denominator for "what share of these
+ *    people did we see doing this"; the alternative flatters the answer.
+ *
+ * A second query rather than a window function: Postgres has no
+ * `count(distinct …) over ()`, so doing it in one statement would mean wrapping the
+ * whole thing in a CTE and re-shaping the query that every other path here shares.
+ * One extra aggregate over the same filtered set is the cheaper trade, and it is
+ * still one call for the caller.
+ */
+async function withCohortSize(db, series, agg, filters, { at, scope, now }) {
+  // No `by` passed to needsSession: the bucket dimension is irrelevant to a count
+  // of people, so the sessions join is only taken when a FILTER needs it.
+  const q = applyFilters(db, base(db, needsSession(filters)), filters, { at, scope, now })
+  const [row] = await q.select(db.raw('count(distinct e.passport_id)::int as n'))
+  return { series, cohortSize: row?.n ?? 0, aggregate: agg }
 }
