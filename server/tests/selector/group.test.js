@@ -39,6 +39,70 @@ async function fixture() {
 
 const purchases = { filter: { metric: { content: 'purchase', count: {} } } }
 
+// `fact:<key>` — the bucket comes from whitebox_facts, so it needs its own join.
+// Core could not group by a fact at all; the analytics layer answered it with a
+// separate per-key query, which is why a fact breakdown could not be combined with
+// an event window or aggregate.
+describe('selector group: fact:<key> buckets', () => {
+  it('buckets by a fact value', async () => {
+    const { p1, p2 } = await fixture()
+    await facts.record({ passport_id: p1, key: 'tier', value: 'pro', source: 't' })
+    await facts.record({ passport_id: p2, key: 'tier', value: 'free', source: 't' })
+    const series = await selector.resolve(purchases, { group: { by: 'fact:tier' } })
+    expect(asMap(series)).toEqual({ pro: 2, free: 1 })
+  })
+
+  it('puts a passport with no such fact in a null bucket, rather than dropping it', async () => {
+    const { p1 } = await fixture()
+    await facts.record({ passport_id: p1, key: 'tier', value: 'pro', source: 't' })
+    const series = await selector.resolve(purchases, { group: { by: 'fact:tier' } })
+    // p2 purchased too and has no `tier` — an absent value is information, and
+    // dropping the row would silently change the total.
+    const total = series.reduce((a, b) => a + b.value, 0)
+    expect(total).toBe(3)
+    expect(series.find((s) => s.bucket == null)?.value).toBe(1)
+  })
+
+  it('uses the CURRENT value, the same rule the fact predicate uses', async () => {
+    const { p1 } = await fixture()
+    await facts.record({ passport_id: p1, key: 'tier', value: 'free', source: 't', observed_at: new Date('2026-01-01') })
+    await facts.record({ passport_id: p1, key: 'tier', value: 'pro', source: 't', observed_at: new Date('2026-04-01') })
+    const series = await selector.resolve(purchases, { group: { by: 'fact:tier' } })
+    // latest wins — so a breakdown and `{ fact: { tier: { eq: 'pro' } } }` agree
+    expect(series.find((s) => s.bucket === 'pro')?.value).toBe(2)
+    expect(series.find((s) => s.bucket === 'free')).toBeUndefined()
+  })
+
+  it('bands a numeric fact into ranges', async () => {
+    const { p1, p2 } = await fixture()
+    await facts.record({ passport_id: p1, key: 'age', value: 34, source: 't' })
+    await facts.record({ passport_id: p2, key: 'age', value: 41, source: 't' })
+    const series = await selector.resolve(purchases, { group: { by: 'fact:age', band: 5 } })
+    expect(asMap(series)).toEqual({ '30-34': 2, '40-44': 1 })
+  })
+
+  it('bands non-numeric values to null instead of erroring', async () => {
+    const { p1 } = await fixture()
+    await facts.record({ passport_id: p1, key: 'age', value: 'unknown', source: 't' })
+    const series = await selector.resolve(purchases, { group: { by: 'fact:age', band: 5 } })
+    // one bad row must not empty the chart
+    expect(series.reduce((a, b) => a + b.value, 0)).toBe(3)
+  })
+
+  it('rejects band on a non-fact bucket, and a non-positive band', async () => {
+    await fixture()
+    await expect(selector.resolve(purchases, { group: { by: 'day', band: 5 } }))
+      .rejects.toThrow(/only applies to a `fact:<key>` bucket/)
+    await expect(selector.resolve(purchases, { group: { by: 'fact:age', band: 0 } }))
+      .rejects.toThrow(/positive number/)
+  })
+
+  it('names fact:<key> in the unknown-bucket error', async () => {
+    await fixture()
+    await expect(selector.resolve(purchases, { group: { by: 'wibble' } })).rejects.toThrow(/fact:<key>/)
+  })
+})
+
 describe('selector group (time-series + breakdown, §7)', () => {
   it('time-series: count of purchases by day', async () => {
     await fixture()

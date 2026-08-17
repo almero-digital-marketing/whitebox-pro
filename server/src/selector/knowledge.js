@@ -88,7 +88,7 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
 // high-cardinality guardrail). The one engine capability charts add.
 // Only these reach metric.group. Anything else a caller puts in `group` was
 // accepted-and-ignored, which is indistinguishable from an answer.
-const GROUP_KEYS = ['by', 'limit']
+const GROUP_KEYS = ['by', 'limit', 'band']
 
 export async function resolveGroup(selector, { group, scope, asOf } = {}) {
   // Strict validation, because this function forwards a SUBSET of its input and
@@ -99,7 +99,8 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
   if (unknownGroup.length) {
     throw new Error(
       `selector.group: unknown key "${unknownGroup[0]}" (allowed: ${GROUP_KEYS.join('/')}). ` +
-      `Time-grain bucketing is chosen by \`by\` (hour/day/week/month), not a separate \`grain\`.`,
+      `Time-grain bucketing is chosen by \`by\` (hour/day/week/month), not a separate \`grain\`; ` +
+      `\`band\` groups a numeric \`fact:<key>\` into ranges (e.g. band: 5 → 20-24, 25-29).`,
     )
   }
 
@@ -167,7 +168,7 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
     )
   }
 
-  return metric.group(rt.db, m, { by: group?.by, limit: group?.limit, at, scope: scopeArr })
+  return metric.group(rt.db, m, { by: group?.by, limit: group?.limit, band: group?.band, at, scope: scopeArr })
 }
 
 // A minimal ctx for evaluating a `filter` over the whole base (knowledge cohort).

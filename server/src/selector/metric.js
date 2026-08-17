@@ -57,6 +57,28 @@ const needsSession = (filters, by) =>
   (filters.session && Object.keys(filters.session).length > 0) ||
   (typeof by === 'string' && by.startsWith('session:'))
 
+// `fact:<key>` — the bucket comes from whitebox_facts, not from the exposure row,
+// so it needs its own join. Core could not group by a fact at all: the analytics
+// layer intercepted `fact:` and answered it with a separate per-key query, which is
+// why a fact breakdown could not be combined with an event window or aggregate.
+//
+// Joined at CURRENT-value-per-passport, the same rule the fact predicate uses, so a
+// breakdown and a `{ fact: { k: { eq: v } } }` filter agree about which bucket
+// someone is in. LEFT, so a passport with no such fact lands in a null bucket
+// rather than vanishing — an absent value is information, and dropping those rows
+// would silently change the total.
+const FACT_PREFIX = 'fact:'
+const factKeyOf = (by) => (typeof by === 'string' && by.startsWith(FACT_PREFIX) ? by.slice(FACT_PREFIX.length) : null)
+
+function joinFact(db, q, key) {
+  return q.joinRaw(
+    `left join (
+       select distinct on (passport_id) passport_id, value
+         from whitebox_facts where key = ?
+        order by passport_id, observed_at desc, id desc
+     ) f on f.passport_id = e.passport_id`, [key])
+}
+
 function base(db, joinSession) {
   let q = db(`${EXPOSURES} as e`)
   if (joinSession) q = q.leftJoin(`${SESSIONS} as s`, 's.id', 'e.session_id')
@@ -316,12 +338,38 @@ const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.sou
 // A bucket → { sql, binds }. Time grains (to_char of ts) and exposure/session
 // columns carry no binds (allowlisted names); `attr:<key>` binds the key.
 //   "day" | "channel" | "session:utm_campaign" | "attr:event"
-function bucketSql(by) {
+function bucketSql(by, band) {
   if (TIME_FMT[by]) return { sql: `to_char(e.ts, '${TIME_FMT[by]}')`, binds: [] }
   if (DIM_COL[by]) return { sql: DIM_COL[by], binds: [] }            // `content` here is DEPRECATED (opaque id)
   if (typeof by === 'string' && by.startsWith('session:')) return { sql: `s.${sessionCol(by.slice(8))}`, binds: [] }
   if (typeof by === 'string' && by.startsWith('attr:')) return { sql: 'e.meta ->> ?', binds: [by.slice(5)] }
-  throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}; session:<utm…>; attr:<key>)`)
+  if (factKeyOf(by) != null) {
+    // BANDED, for a numeric fact: `{ by: 'fact:age', band: 5 }` gives 20-24, 25-29…
+    // A per-year age breakdown is ninety buckets and answers nothing; the bands are
+    // the question. Labelled as a RANGE rather than the floor, because a bucket
+    // reading "40" beside one reading "45" invites being read as an exact age.
+    //
+    // Non-numeric values band to null rather than erroring: a key is not guaranteed
+    // to hold numbers on every row, and one bad row should not empty the chart.
+    if (band != null) {
+      const n = Number(band)
+      if (!Number.isFinite(n) || n <= 0) throw new Error(`selector.group: \`band\` must be a positive number, got ${JSON.stringify(band)}`)
+      // The numeric-looking test is a BOUND pattern, not a literal. knex scans raw
+      // SQL for `?` to count bindings and does not know a quotedstring from an
+      // operator, so `'^-?[0-9]+(\.[0-9]+)?$'` inline reads as two extra
+      // placeholders and the query dies with "Expected 5 bindings, saw 7".
+      const NUMERIC = '^-?[0-9]+(\\.[0-9]+)?$'
+      const num = `nullif(f.value #>> '{}', '')::numeric`
+      return {
+        sql: `case when (f.value #>> '{}') ~ ?
+                   then (floor(${num} / ?) * ?)::bigint || '-' || (floor(${num} / ?) * ? + ? - 1)::bigint
+              end`,
+        binds: [NUMERIC, n, n, n, n, n],
+      }
+    }
+    return { sql: `f.value #>> '{}'`, binds: [] }
+  }
+  throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}; session:<utm…>; attr:<key>; fact:<key>)`)
 }
 
 function aggSql(agg, field) {
@@ -341,14 +389,20 @@ function aggSql(agg, field) {
 // Default: ordered by bucket (chronological for time grains). `limit` is the
 // HIGH-CARDINALITY GUARDRAIL — an open key (attr:<key>, session:<utm>) can have
 // thousands of buckets, so `limit` returns the top-N by value (desc) instead.
-export async function group(db, spec, { by, at, scope, limit } = {}) {
-  if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, or attr:<key>)')
+export async function group(db, spec, { by, at, scope, limit, band } = {}) {
+  if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, attr:<key>, or fact:<key>)')
   const { filters, agg, bounds } = split(spec, GROUP_AGGS)
   const now = at ? new Date(at) : new Date()
-  const bucket = bucketSql(by)
+  const factKey = factKeyOf(by)
+  if (band != null && factKey == null) {
+    throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
+  }
+  const bucket = bucketSql(by, band)
   const value = aggSql(agg, bounds.field)
 
-  let q = applyFilters(db, base(db, needsSession(filters, by)), filters, { at, scope, now })
+  let q = base(db, needsSession(filters, by))
+  if (factKey != null) q = joinFact(db, q, factKey)
+  q = applyFilters(db, q, filters, { at, scope, now })
     .select(db.raw(`${bucket.sql} as bucket`, bucket.binds), db.raw(`${value.sql} as value`, value.bindings))
     .groupByRaw('1')                                          // group by the bucket (output position)
   q = (limit != null)
