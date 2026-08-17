@@ -121,18 +121,38 @@ because nothing was overwritten.
 
 ### Value operators
 The selector's structured clause filters on the current (or as‑of) value. Full set:
-`present` · `eq` · `ne` · `in` · `gt` · `gte` · `lt` · `lte`, plus three relative‑date
-ops for date values — `next` (upcoming), `last` (recent), `before` (older):
+`present` · `eq` · `ne` · `in` · `gt` · `gte` · `lt` · `lte` · `contains` ·
+`startsWith` · `endsWith`, plus three relative‑date ops for date values — `next`
+(upcoming), `last` (recent), `before` (older):
 
 ```text
 { fact: { plan_tier:           { eq: "pro" } } }
 { fact: { mrr:                 { gte: 200, lte: 400 } } }            -- multiple ops AND → a range
 { fact: { subscription_status: { in: ["active", "trialing"] } } }
+{ fact: { phone:               { startsWith: "359" } } }   -- substring ops stringify the value first
 { fact: { renewal_date:        { next: "30d" } } }   -- date in the NEXT 30d (upcoming)
 { fact: { last_order_at:       { last:  "30d" } } }   -- date in the LAST 30d (recent)
 { fact: { last_order_at:       { before: "60d" } } }   -- date older than 60d ago
 { fact: { plan_tier:           { present: true } } }   -- old "requires.crm" behavior, still here
 ```
+
+> **`use` — WHICH value, when a passport holds several.** A fact is single‑valued per
+> passport, so every read picks one; `use` says which, and it is a control key rather
+> than an operator (it needs an operator alongside it). `last` (default) and `first`
+> pick by `observed_at`; `max`/`min` pick by VALUE.
+>
+> ```text
+> { fact: { first_booked_at: { gte: "2026-01-01", use: "min" } } }
+> ```
+>
+> Normally nothing needs to write it: a deployment DECLARES what a key means, in
+> `facts.use` config or via `facts.describe(key, { use })`, and then every filter,
+> `fact:` bucket, aggregate and window anchor honours it. `use` on the query is the
+> override. Duplicate source records and passport merges make this routine rather than
+> exceptional — on GPoint, 2,487 of 3,326 customers with a `first_booked_at` hold more
+> than one, and under `last` "clients acquired since 1 January" over‑reported by 586
+> people, because a first booking cannot move forward. `facts.undeclaredAmbiguous()`
+> lists the keys where the choice is being made silently.
 
 > **Directional windows.** Every window word states its direction, so it can't be
 > misread: **`next`** is the future window (date in the next N — `renewal_date`),
@@ -151,8 +171,10 @@ History unlocks predicates about *movement*, not just state:
 { fact: { plan_tier:           { changed:    { last: "30d" } } } }                   -- any plan change
 ```
 
-(Temporal ops: `changed` · `transition {to?,from?}` · `decreased` · `increased`. Their
-`last` is the lookback window — see the direction note above.)
+(Temporal ops: `changed` · `transition {to?,from?}` · `decreased` · `increased` ·
+`held` (the value was held at some point in the window, not just now) · `distinct`
+({gte?,lte?} — how many DIFFERENT values were held). Their `last` is the lookback
+window — see the direction note above.)
 
 Against `p1` on 2026‑06‑20: `plan_tier transition→cancelled last 30d` ✅ (Jun‑15).
 

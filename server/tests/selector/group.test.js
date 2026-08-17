@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import knex from 'knex'
 import crypto from 'crypto'
 
@@ -201,6 +201,112 @@ describe('selector group: aggregates over a fact', () => {
     await fixture()
     await expect(selector.resolve(purchase({ avg: { fact: 'ltv', field: 'value' } }), { group: { by: 'month' } }))
       .rejects.toThrow(/one of `field`\/`column`\/`fact`/)
+  })
+})
+
+// WHICH value the aggregate and the bucket mean, when a passport holds several.
+//
+// A fact predicate has honoured `use` (last/first/max/min) since the key semantics
+// landed, and these two paths did not: `avg: { fact: 'ltv' }` and
+// `group.by: 'fact:ltv'` both took the latest write regardless of what the key was
+// declared to mean. So one query could contradict itself — filter on
+// `first_booked_at` under the declared `min` while bucketing the same key by `last`,
+// and the rows in a bucket were not the rows the filter selected.
+describe('selector group: `use` on a fact aggregate and a fact bucket', () => {
+  const purchase = (agg, opts) => selector.resolve(
+    { filter: { metric: { content: 'purchase', ...agg } } }, { group: opts })
+  const boot = (config = {}) => facts.init({ db, passports, logger, config })
+  afterEach(() => boot())                        // module state; don't leak a declaration
+
+  // One passport holding two legitimate values, as a passport merge or a duplicate
+  // CRM record produces: 100 written first, 300 written last. Plus a single-valued
+  // one, so an avg that silently picked the wrong value is still a plausible number
+  // rather than an obvious outlier — which is how this went unnoticed on live data.
+  async function conflicted() {
+    const p = await newPassport(), q = await newPassport()
+    await expose(p, { ts: '2026-05-01' }); await expose(q, { ts: '2026-05-01' })
+    await facts.record({ passport_id: p, key: 'ltv', value: 100, source: 'crm', external_id: 'a', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'ltv', value: 300, source: 'crm', external_id: 'b', observed_at: d('2026-04-01') })
+    await facts.record({ passport_id: q, key: 'ltv', value: 200, source: 'crm', external_id: 'c', observed_at: d('2026-01-01') })
+    return { p, q }
+  }
+
+  it('aggregates the latest value when nothing is declared', async () => {
+    await conflicted()
+    expect((await purchase({ avg: { fact: 'ltv' } }, { by: 'month' }))[0].value).toBe(250)   // (300 + 200) / 2
+  })
+
+  it('honours the declaration, with nothing changed at the call site', async () => {
+    await conflicted()
+    boot({ facts: { use: { ltv: 'min' } } })
+    expect((await purchase({ avg: { fact: 'ltv' } }, { by: 'month' }))[0].value).toBe(150)   // (100 + 200) / 2
+    boot({ facts: { use: { ltv: 'max' } } })
+    expect((await purchase({ avg: { fact: 'ltv' } }, { by: 'month' }))[0].value).toBe(250)
+  })
+
+  it('lets the aggregate override the declaration', async () => {
+    await conflicted()
+    boot({ facts: { use: { ltv: 'max' } } })
+    expect((await purchase({ avg: { fact: 'ltv', use: 'min' } }, { by: 'month' }))[0].value).toBe(150)
+    expect((await purchase({ sum: { fact: 'ltv', use: 'min' } }, { by: 'month' }))[0].value).toBe(300)
+  })
+
+  it('`first`/`last` are about WRITE ORDER, `min`/`max` about the value', async () => {
+    const p = await newPassport()
+    await expose(p, { ts: '2026-05-01' })
+    // Written earliest-first but DESCENDING in value, so the two rules disagree: a
+    // test where the earliest value is also the smallest proves nothing.
+    await facts.record({ passport_id: p, key: 'ltv', value: 500, source: 'crm', external_id: 'a', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'ltv', value: 50, source: 'crm', external_id: 'b', observed_at: d('2026-04-01') })
+    const at = async (use) => (await purchase({ avg: { fact: 'ltv', use } }, { by: 'month' }))[0].value
+    expect(await at('first')).toBe(500)
+    expect(await at('last')).toBe(50)
+    expect(await at('min')).toBe(50)
+    expect(await at('max')).toBe(500)
+  })
+
+  it('the fact BUCKET honours the declaration too', async () => {
+    const { p, q } = await conflicted()
+    boot({ facts: { use: { ltv: 'min' } } })
+    expect(asMap(await purchase({ count: {} }, { by: 'fact:ltv' }))).toEqual({ 100: 1, 200: 1 })
+    boot({ facts: { use: { ltv: 'max' } } })
+    expect(asMap(await purchase({ count: {} }, { by: 'fact:ltv' }))).toEqual({ 300: 1, 200: 1 })
+    expect(p && q).toBeTruthy()
+  })
+
+  it('the bucket can override it, via group.use', async () => {
+    await conflicted()
+    boot({ facts: { use: { ltv: 'min' } } })
+    expect(asMap(await purchase({ count: {} }, { by: 'fact:ltv', use: 'max' })))
+      .toEqual({ 300: 1, 200: 1 })
+  })
+
+  it('the bucket rule and the aggregate rule are independent', async () => {
+    // Two keys in one query, each meaning a different thing: the bucket takes the
+    // earliest tier, the aggregate the largest value. Sharing one `use` between them
+    // would make the honest spec unexpressible.
+    const p = await newPassport()
+    await expose(p, { ts: '2026-05-01' })
+    await facts.record({ passport_id: p, key: 'tier', value: 'free', source: 'crm', external_id: 'a', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'tier', value: 'pro', source: 'crm', external_id: 'b', observed_at: d('2026-04-01') })
+    await facts.record({ passport_id: p, key: 'ltv', value: 100, source: 'crm', external_id: 'a', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'ltv', value: 300, source: 'crm', external_id: 'b', observed_at: d('2026-04-01') })
+    const r = await purchase({ avg: { fact: 'ltv', use: 'max' } }, { by: 'fact:tier', use: 'first' })
+    expect(asMap(r)).toEqual({ free: 300 })
+  })
+
+  it('refuses `use` on an aggregate that is not over a fact', async () => {
+    await fixture()
+    await expect(purchase({ avg: { field: 'value', use: 'min' } }, { by: 'month' }))
+      .rejects.toThrow(/only applies with `fact`/)
+    await expect(purchase({ count: {} }, { by: 'month', use: 'min' }))
+      .rejects.toThrow(/only applies to a `fact:<key>` bucket/)
+  })
+
+  it('rejects an unknown rule rather than falling back to last', async () => {
+    await fixture()
+    await expect(purchase({ avg: { fact: 'ltv', use: 'biggest' } }, { by: 'month' }))
+      .rejects.toThrow(/one of last\/first\/max\/min/)
   })
 })
 

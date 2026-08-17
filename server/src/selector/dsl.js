@@ -40,7 +40,21 @@ const FACT_OP_TEXT = Object.fromEntries(Object.entries(FACT_OPS).map(([text, op]
 // stricter than the engine is the same class of bug as it being looser: both make
 // it lie about what the engine will do.
 const FACT_HISTORY_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
-const FACT_OP_NAMES = new Set([...Object.values(FACT_OPS), 'in', 'present', ...FACT_HISTORY_OPS])
+// The substring comparators, which have no symbol in the text grammar and so were
+// missing here for the same reason the temporal ones were: this list was assembled
+// from FACT_OPS, and FACT_OPS is only the operators that can be WRITTEN as `key > x`.
+// The engine matches them (operators.js: contains/startsWith/endsWith over asText),
+// so leaving them out made them unreachable through every path that validates —
+// which is everything except a direct selector.resolve().
+const FACT_TEXT_OPS = ['contains', 'startsWith', 'endsWith']
+// `use` is a CONTROL key, not an operator (facts/index.js CONTROL_KEYS): it says which
+// of a passport's values the operators apply to. Listed here because the check below
+// is over every key in the predicate, so an unlisted control key reads as a typo.
+const FACT_CONTROL_KEYS = ['use']
+const FACT_OP_NAMES = new Set([
+  ...Object.values(FACT_OPS), 'in', 'present',
+  ...FACT_TEXT_OPS, ...FACT_HISTORY_OPS, ...FACT_CONTROL_KEYS,
+])
 // The engine has TWO aggregate sets, and which one applies depends on how the
 // clause is evaluated — not on how it is written.
 //
@@ -421,6 +435,19 @@ export function validate(filter, { grouped = false } = {}) {
             }
             if ('in' in pred && !Array.isArray(pred.in)) err(`${path}.fact.${fk[0]}`, '`in` takes an array')
             if ('present' in pred && typeof pred.present !== 'boolean') err(`${path}.fact.${fk[0]}`, '`present` takes true or false')
+            // A predicate carrying ONLY `use` says which value to look at and then asks
+            // nothing about it, so it matches everybody — a silently empty question.
+            if ('use' in pred) {
+                if (!ANCHOR_USE.includes(pred.use)) {
+                    err(`${path}.fact.${fk[0]}.use`, `one of ${ANCHOR_USE.join(', ')} — last/first pick by observed_at, max/min by VALUE`)
+                }
+                if (ops.length === 1) err(`${path}.fact.${fk[0]}`, '`use` picks WHICH value to test, so it needs an operator too')
+            }
+            for (const o of FACT_TEXT_OPS) {
+                if (o in pred && (pred[o] == null || typeof pred[o] === 'object')) {
+                    err(`${path}.fact.${fk[0]}`, `\`${o}\` takes a string`)
+                }
+            }
             if ('distinct' in pred) {
                 const d = pred.distinct
                 const shape = d && typeof d === 'object' ? d : null
@@ -459,6 +486,14 @@ export function validate(filter, { grouped = false } = {}) {
                     err(`${path}.metric.${agg}`, 'needs a `field` (a meta attribute), a `column` (dwell_ms), or a `fact` (a fact key)')
                 }
                 if (given.length > 1) err(`${path}.metric.${agg}`, `takes one of field/column/fact, not ${given.join(' + ')}`)
+                // `use` picks WHICH of a passport's fact values to aggregate, so it is
+                // meaningless without a fact: an event attribute has one value per event.
+                if (bounds.use != null) {
+                    if (!ANCHOR_USE.includes(bounds.use)) {
+                        err(`${path}.metric.${agg}.use`, `one of ${ANCHOR_USE.join(', ')} — last/first pick by observed_at, max/min by VALUE`)
+                    }
+                    if (!bounds.fact) err(`${path}.metric.${agg}.use`, 'only applies with `fact` — an event attribute has one value per event')
+                }
                 if (agg === 'percentile' && !(typeof bounds.p === 'number' && bounds.p > 0 && bounds.p < 1)) {
                     err(`${path}.metric.percentile`, 'needs `p` between 0 and 1 (0.9 = the 90th percentile)')
                 }

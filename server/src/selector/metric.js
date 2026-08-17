@@ -85,18 +85,49 @@ const factKeyOf = (by) => (typeof by === 'string' && by.startsWith(FACT_PREFIX) 
 // the value in SQL — the same expression the fact predicate uses, so
 // `{ by: 'fact:age', band: 5 }` and `{ fact: { age: { gte: 30 } } }` cannot
 // disagree about how old anybody is.
-function joinFact(db, q, key, now, alias = 'f') {
+// Ordering for a non-`last` rule, kept identical to facts/store.js's USE_ORDER — the
+// bucket, the aggregate and the fact PREDICATE have to agree about which of a
+// passport's values they are talking about, or one query contradicts another about the
+// same customer.
+const USE_SQL = {
+  first: 'observed_at asc, id asc',
+  max: 'value desc, observed_at desc, id desc',
+  min: 'value asc, observed_at asc, id asc',
+}
+// `last` has no entry because it needs no sort — it is the row the projection holds.
+const USE_RULES = ['last', ...Object.keys(USE_SQL)]
+
+/**
+ * Join a passport's value for `key` as `<alias>.value`.
+ *
+ * `use` says WHICH value when a passport holds several — defaulting to whatever the
+ * deployment declared for the key, then to `last`. Without this, `avg: { fact: 'ltv' }`
+ * and `group.by: 'fact:first_booked_at'` silently took the latest write while a filter
+ * on the same key honoured its declaration: two halves of one query disagreeing about
+ * the same person.
+ *
+ * `last` reads the projection, which holds exactly that row — one per (passport_id,
+ * key), no sort. Any other rule has to read the log, because the projection physically
+ * does not contain the row being asked for.
+ */
+function joinFact(db, q, key, now, alias = 'f', use = undefined) {
   const d = computed.derivedSql(key, { now })
   const valueSql = d ? `${d.sql} as value` : 'value'
-  // From whitebox_facts_current (migration 006), which holds one row per
-  // (passport_id, key) — so the DISTINCT ON over the whole key partition is gone.
-  // This join never carried an `observed_at <= at` filter, so it was always reading
-  // the current value; the projection answers exactly the question it was asking.
+  const rule = use ?? declaredUseFor(key) ?? 'last'
+  // Checked, not just looked up: anything absent from USE_SQL would otherwise fall
+  // through to the projection and be answered as `last` — a misspelled rule silently
+  // returning a confident number for a different question.
+  if (rule !== 'last' && !USE_SQL[rule]) {
+    throw new Error(`selector.group: \`use\` must be one of ${USE_RULES.join('/')} — got "${rule}"`)
+  }
+  const inner = USE_SQL[rule]
+    ? `select distinct on (passport_id) passport_id, ${valueSql}
+         from whitebox_facts where key = ?
+        order by passport_id, ${USE_SQL[rule]}`
+    : `select passport_id, ${valueSql} from whitebox_facts_current where key = ?`
   return q.joinRaw(
-    `left join (
-       select passport_id, ${valueSql}
-         from whitebox_facts_current where key = ?
-     ) ${alias} on ${alias}.passport_id = e.passport_id`, [...(d ? d.binds : []), d ? d.from : key])
+    `left join (${inner}) ${alias} on ${alias}.passport_id = e.passport_id`,
+    [...(d ? d.binds : []), d ? d.from : key])
 }
 
 function base(db, joinSession) {
@@ -691,7 +722,13 @@ function bucketSql(by, band, factIsComputed = false) {
 // proportion to how much data you are missing. Postgres's aggregates skip NULL,
 // which is exactly the behaviour wanted, so the cast is guarded rather than
 // coalesced.
-function numericSource({ field, column, fact }, agg) {
+function numericSource({ field, column, fact, use }, agg) {
+  if (use != null && !fact) {
+    throw new Error(
+      `selector.group: \`${agg}.use\` picks WHICH of a passport's fact values to aggregate, ` +
+      `so it only applies with \`fact\` — got \`${field ? 'field' : column ? 'column' : 'no source'}\`. ` +
+      `An event attribute has one value per event; there is nothing to choose between.`)
+  }
   const given = [field && 'field', column && 'column', fact && 'fact'].filter(Boolean)
   if (given.length > 1) throw new Error(`selector.group: \`${agg}\` takes one of \`field\`/\`column\`/\`fact\`, not ${given.join(' + ')}`)
   // A fact source is aggregated in the OUTER level of a two-level query (see group),
@@ -716,25 +753,28 @@ function numericSource({ field, column, fact }, agg) {
 const NUMERIC_TEXT = '^-?[0-9]+(\\.[0-9]+)?$'
 
 function aggSql(agg, bounds = {}) {
-  const { field, column, p } = bounds
+  // `use` is forwarded to every numericSource call, not just the fact ones: its only
+  // job there is to REFUSE `use` on a source that has no values to choose between, and
+  // a guard that is skipped on exactly the specs it exists to catch is not a guard.
+  const { field, column, p, use } = bounds
   switch (agg) {
     case 'count': return { sql: 'count(*)', bindings: [] }
     case 'distinct_sessions': return { sql: 'count(distinct e.session_id)', bindings: [] }
     case 'distinct_passports': return { sql: 'count(distinct e.passport_id)', bindings: [] }
     case 'sum_dwell_ms': return { sql: 'coalesce(sum(e.dwell_ms), 0)', bindings: [] }
     case 'sum': {
-      const src = numericSource({ field, column, fact: bounds.fact }, 'sum')
+      const src = numericSource({ field, column, fact: bounds.fact, use }, 'sum')
       return { sql: `coalesce(sum(${src.sql}), 0)`, bindings: src.binds }
     }
     // avg/min/max are NOT coalesced to 0: a bucket where nothing carried the field
     // has no average, and reporting 0 would put it on the chart as a real low value
     // rather than an absent one. It comes back null and the caller can say so.
     case 'avg': case 'min': case 'max': {
-      const src = numericSource({ field, column, fact: bounds.fact }, agg)
+      const src = numericSource({ field, column, fact: bounds.fact, use }, agg)
       return { sql: `${agg}(${src.sql})`, bindings: src.binds }
     }
     case 'median': case 'percentile': {
-      const src = numericSource({ field, column, fact: bounds.fact }, agg)
+      const src = numericSource({ field, column, fact: bounds.fact, use }, agg)
       const frac = agg === 'median' ? 0.5 : Number(p)
       if (!(frac >= 0 && frac <= 1)) {
         throw new Error(`selector.group: \`percentile\` needs \`p\` between 0 and 1 (0.9 = the 90th) — got ${JSON.stringify(p)}`)
@@ -760,7 +800,7 @@ function aggSql(agg, bounds = {}) {
         // temporal operators (facts/operators.js) if that is what is wanted.
         throw new Error(`selector.group: \`${agg}\` orders by event time, so it needs a \`field\` or \`column\` — a \`fact\` has one current value per passport`)
       }
-      const src = numericSource({ field, column }, agg)
+      const src = numericSource({ field, column, use }, agg)
       const dir = agg === 'earliest' ? 'asc' : 'desc'
       return { sql: `(array_agg(${src.sql} order by e.ts ${dir}))[1]`, bindings: src.binds }
     }
@@ -772,13 +812,24 @@ function aggSql(agg, bounds = {}) {
 // Default: ordered by bucket (chronological for time grains). `limit` is the
 // HIGH-CARDINALITY GUARDRAIL — an open key (attr:<key>, session:<utm>) can have
 // thousands of buckets, so `limit` returns the top-N by value (desc) instead.
-export async function group(db, spec, { by, at, scope, limit, band, cohortSize } = {}) {
+export async function group(db, spec, { by, at, scope, limit, band, cohortSize, use: bucketUse } = {}) {
   if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, attr:<key>, or fact:<key>)')
   const { filters, agg, bounds } = split(spec, GROUP_AGGS)
   const now = at ? new Date(at) : new Date()
   const factKey = factKeyOf(by)
   if (band != null && factKey == null) {
     throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
+  }
+  // Refused rather than ignored. `use` picks which of a passport's fact values the
+  // BUCKET means, so on a time or column bucket it has no subject — and accepting it
+  // silently would read as "the rule was applied" to whoever wrote it. The aggregate's
+  // own rule lives in the aggregate (`avg: { fact, use }`), which is a different
+  // question about a possibly different key.
+  if (bucketUse !== undefined && factKey == null) {
+    throw new Error(
+      `selector.group: \`use\` only applies to a \`fact:<key>\` bucket (it picks WHICH of a passport's ` +
+      `values the bucket means) — got by: ${JSON.stringify(by)}. For an aggregate over a fact, ` +
+      `put it there: { avg: { fact: '<key>', use: '…' } }.`)
   }
   let bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
   const value = aggSql(agg, bounds)
@@ -795,7 +846,7 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
   // the others.
   const crossTab = !!(filters.window && filters.window.missingAnchor === 'bucket')
   if (crossTab) {
-    return crossTabByAnchor(db, { spec, filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey })
+    return crossTabByAnchor(db, { spec, filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey, bucketUse })
   }
 
   // ── aggregating a FACT: two levels, because a fact is PER PERSON ──────────────
@@ -814,8 +865,8 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
   // per bucket, which is the reading anybody asking for "avg by month" means.
   if (bounds.fact) {
     let inner = base(db, needsSession(filters, by))
-    if (factKey != null) inner = joinFact(db, inner, factKey, now)          // the BUCKET fact
-    inner = joinFact(db, inner, bounds.fact, now, 'af')                     // the AGGREGATED fact
+    if (factKey != null) inner = joinFact(db, inner, factKey, now, 'f', bucketUse)   // the BUCKET fact
+    inner = joinFact(db, inner, bounds.fact, now, 'af', bounds.use)         // the AGGREGATED fact
     const afCol = computed.isComputed(bounds.fact) ? 'af.value::text' : `af.value #>> '{}'`
     inner = applyFilters(db, inner, filters, { at, scope, now }).distinct(
       'e.passport_id',
@@ -833,7 +884,7 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
   }
 
   let q = base(db, needsSession(filters, by))
-  if (factKey != null) q = joinFact(db, q, factKey, now)
+  if (factKey != null) q = joinFact(db, q, factKey, now, 'f', bucketUse)
   q = applyFilters(db, q, filters, { at, scope, now })
     .select(db.raw(`${bucket.sql} as bucket`, bucket.binds), db.raw(`${value.sql} as value`, value.bindings))
     .groupByRaw('1')                                          // group by the bucket (output position)
@@ -867,12 +918,12 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize }
  */
 const ANCHORED_BUCKET = '__anchored__'
 
-async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey }) {
+async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey, bucketUse }) {
   const alias = filters.window.between ? 'awa' : 'aw'
   const cohort = { sql: `case when ${alias}.anchor is null then ? else ? end`, binds: [NO_ANCHOR_BUCKET, ANCHORED_BUCKET] }
   const build = () => {
     let q = base(db, needsSession(filters, by))
-    if (factKey != null) q = joinFact(db, q, factKey, now)
+    if (factKey != null) q = joinFact(db, q, factKey, now, 'f', bucketUse)
     return applyFilters(db, q, filters, { at, scope, now })
   }
 
@@ -892,8 +943,8 @@ async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, a
         .groupByRaw(keys.map((_, i) => i + 1).join(', '))
     }
     let inner = base(db, needsSession(filters, by))
-    if (factKey != null) inner = joinFact(db, inner, factKey, now)
-    inner = joinFact(db, inner, bounds.fact, now, 'af')
+    if (factKey != null) inner = joinFact(db, inner, factKey, now, 'f', bucketUse)
+    inner = joinFact(db, inner, bounds.fact, now, 'af', bounds.use)
     const afCol = computed.isComputed(bounds.fact) ? 'af.value::text' : `af.value #>> '{}'`
     inner = applyFilters(db, inner, filters, { at, scope, now }).distinct(
       'e.passport_id',

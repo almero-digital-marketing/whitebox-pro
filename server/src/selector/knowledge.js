@@ -88,7 +88,7 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
 // high-cardinality guardrail). The one engine capability charts add.
 // Only these reach metric.group. Anything else a caller puts in `group` was
 // accepted-and-ignored, which is indistinguishable from an answer.
-const GROUP_KEYS = ['by', 'limit', 'band', 'cohortSize']
+const GROUP_KEYS = ['by', 'limit', 'band', 'cohortSize', 'use']
 
 // Which aggregate a metric clause names — echoed back beside `cohortSize` so the
 // caller knows what the series values ARE without inferring it from their own query.
@@ -109,7 +109,8 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
       `selector.group: unknown key "${unknownGroup[0]}" (allowed: ${GROUP_KEYS.join('/')}). ` +
       `Time-grain bucketing is chosen by \`by\` (hour/day/week/month), not a separate \`grain\`; ` +
       `\`band\` groups a numeric \`fact:<key>\` into ranges (e.g. band: 5 → 20-24, 25-29); ` +
-      `\`cohortSize: true\` returns { series, cohortSize, aggregate } so a reach % needs no second call.`,
+      `\`cohortSize: true\` returns { series, cohortSize, aggregate } so a reach % needs no second call; ` +
+      `\`use\` picks which of a passport's values a \`fact:<key>\` bucket reads (last/first/max/min).`,
     )
   }
 
@@ -186,7 +187,7 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
 
   return metric.group(rt.db, m, {
     by: group?.by, limit: group?.limit, band: group?.band, cohortSize: group?.cohortSize,
-    at, scope: scopeArr,
+    use: group?.use, at, scope: scopeArr,
   })
 }
 

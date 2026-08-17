@@ -83,9 +83,51 @@ describe('validateQuery — malformed queries are named precisely', () => {
   })
 
   it('names an unknown fact operator and lists the real ones', () => {
-    const [err] = validateQuery({ selector: { filter: { fact: { city: { contains: 'Sof' } } } } })
-    expect(err.message).toMatch(/unknown operator "contains"/)
+    const [err] = validateQuery({ selector: { filter: { fact: { city: { simmilar: 'Sof' } } } } })
+    expect(err.message).toMatch(/unknown operator "simmilar"/)
     expect(err.message).toMatch(/eq, ne, gt, gte, lt, lte, in, present/)
+  })
+
+  // The validator standing between the API and the engine has now been stricter than
+  // the engine three times: the temporal operators, the value aggregates, and these.
+  // Each time the feature was built, tested against selector.resolve directly, and
+  // shipped unreachable — every widget using it failing to save with "unknown
+  // operator" for something the engine matches perfectly well.
+  it('accepts the substring operators the engine matches', () => {
+    for (const op of ['contains', 'startsWith', 'endsWith']) {
+      expect(validateQuery({ selector: { filter: { fact: { city: { [op]: 'Sof' } } } } })).toEqual([])
+    }
+    const [err] = validateQuery({ selector: { filter: { fact: { city: { contains: { eq: 'x' } } } } } })
+    expect(err.message).toMatch(/`contains` takes a string/)
+  })
+
+  it('accepts `use` on a fact predicate, and checks the rule', () => {
+    expect(validateQuery({
+      selector: { filter: { fact: { first_booked_at: { gte: '2026-01-01', use: 'min' } } } },
+    })).toEqual([])
+
+    const [bad] = validateQuery({
+      selector: { filter: { fact: { first_booked_at: { gte: '2026-01-01', use: 'earliest' } } } },
+    })
+    expect(bad.path).toBe('query.selector.filter.fact.first_booked_at.use')
+    expect(bad.message).toMatch(/last, first, min, max/)
+
+    // `use` alone picks a value and asks nothing about it — true of everyone.
+    const [alone] = validateQuery({ selector: { filter: { fact: { ltv: { use: 'max' } } } } })
+    expect(alone.message).toMatch(/needs an operator too/)
+  })
+
+  it('accepts `use` on an aggregate over a fact, and refuses it elsewhere', () => {
+    expect(validateQuery({
+      selector: { filter: { metric: { avg: { fact: 'ltv', use: 'max' } } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })).toEqual([])
+
+    const [noFact] = validateQuery({
+      selector: { filter: { metric: { avg: { field: 'value', use: 'max' } } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })
+    expect(noFact.message).toMatch(/only applies with `fact`/)
   })
 
   it('reaches inside a funnel step', () => {
