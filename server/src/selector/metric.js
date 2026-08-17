@@ -14,6 +14,7 @@
 // uses it; it is removed once analytics migrates off (docs/event-attributes.md §4/§7).
 
 import { whereScope } from '../db.js'
+import * as computed from '../facts/computed.js'
 
 const EXPOSURES = 'whitebox_awareness_exposures'
 const SESSIONS = 'whitebox_sessions'
@@ -70,13 +71,19 @@ const needsSession = (filters, by) =>
 const FACT_PREFIX = 'fact:'
 const factKeyOf = (by) => (typeof by === 'string' && by.startsWith(FACT_PREFIX) ? by.slice(FACT_PREFIX.length) : null)
 
-function joinFact(db, q, key) {
+// A COMPUTED key (see facts/computed.js) reads its source key's rows and derives
+// the value in SQL — the same expression the fact predicate uses, so
+// `{ by: 'fact:age', band: 5 }` and `{ fact: { age: { gte: 30 } } }` cannot
+// disagree about how old anybody is.
+function joinFact(db, q, key, now) {
+  const d = computed.derivedSql(key, { now })
+  const valueSql = d ? `${d.sql} as value` : 'value'
   return q.joinRaw(
     `left join (
-       select distinct on (passport_id) passport_id, value
+       select distinct on (passport_id) passport_id, ${valueSql}
          from whitebox_facts where key = ?
         order by passport_id, observed_at desc, id desc
-     ) f on f.passport_id = e.passport_id`, [key])
+     ) f on f.passport_id = e.passport_id`, [...(d ? d.binds : []), d ? d.from : key])
 }
 
 function base(db, joinSession) {
@@ -338,7 +345,7 @@ const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.sou
 // A bucket → { sql, binds }. Time grains (to_char of ts) and exposure/session
 // columns carry no binds (allowlisted names); `attr:<key>` binds the key.
 //   "day" | "channel" | "session:utm_campaign" | "attr:event"
-function bucketSql(by, band) {
+function bucketSql(by, band, factIsComputed = false) {
   if (TIME_FMT[by]) return { sql: `to_char(e.ts, '${TIME_FMT[by]}')`, binds: [] }
   if (DIM_COL[by]) return { sql: DIM_COL[by], binds: [] }            // `content` here is DEPRECATED (opaque id)
   if (typeof by === 'string' && by.startsWith('session:')) return { sql: `s.${sessionCol(by.slice(8))}`, binds: [] }
@@ -359,15 +366,20 @@ function bucketSql(by, band) {
       // operator, so `'^-?[0-9]+(\.[0-9]+)?$'` inline reads as two extra
       // placeholders and the query dies with "Expected 5 bindings, saw 7".
       const NUMERIC = '^-?[0-9]+(\\.[0-9]+)?$'
-      const num = `nullif(f.value #>> '{}', '')::numeric`
+      // A STORED value is jsonb, so `#>> '{}'` unwraps the scalar; a DERIVED one is
+      // already numeric. Using `::text` for both would render a stored string as
+      // `"pro"`, quotes included, and a stored number as text that still parses —
+      // so the bug would show up only on the string buckets.
+      const col = factIsComputed ? 'f.value::text' : `f.value #>> '{}'`
+      const num = `nullif(${col}, '')::numeric`
       return {
-        sql: `case when (f.value #>> '{}') ~ ?
+        sql: `case when (${col}) ~ ?
                    then (floor(${num} / ?) * ?)::bigint || '-' || (floor(${num} / ?) * ? + ? - 1)::bigint
               end`,
         binds: [NUMERIC, n, n, n, n, n],
       }
     }
-    return { sql: `f.value #>> '{}'`, binds: [] }
+    return { sql: factIsComputed ? 'f.value::text' : `f.value #>> '{}'`, binds: [] }
   }
   throw new Error(`selector.group: unknown bucket "${by}" (time: ${Object.keys(TIME_FMT).join('/')}; column: ${Object.keys(DIM_COL).join('/')}; session:<utm…>; attr:<key>; fact:<key>)`)
 }
@@ -397,11 +409,11 @@ export async function group(db, spec, { by, at, scope, limit, band } = {}) {
   if (band != null && factKey == null) {
     throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
   }
-  const bucket = bucketSql(by, band)
+  const bucket = bucketSql(by, band, factKey != null && computed.isComputed(factKey))
   const value = aggSql(agg, bounds.field)
 
   let q = base(db, needsSession(filters, by))
-  if (factKey != null) q = joinFact(db, q, factKey)
+  if (factKey != null) q = joinFact(db, q, factKey, now)
   q = applyFilters(db, q, filters, { at, scope, now })
     .select(db.raw(`${bucket.sql} as bucket`, bucket.binds), db.raw(`${value.sql} as value`, value.bindings))
     .groupByRaw('1')                                          // group by the bucket (output position)

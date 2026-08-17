@@ -2,6 +2,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import * as store from './store.js'
+import * as computed from './computed.js'
 import { matchValue, matchTemporal, temporalMatchedAt, isTemporal } from './operators.js'
 
 // Facts — the core structured memory: an append-only, typed, value-queryable
@@ -30,6 +31,18 @@ export function init(deps) {
   // user's custom CRM field (whitebox-pro-server-plugin-crm writes arbitrary
   // external field names as fact keys — there's no fixed vocabulary to default).
   labels = new Map(Object.entries(deps.config?.facts?.labels || {}))
+  // Computed keys (age from birthdate, tenure from first_booked_at, …) — declared
+  // once in config and then usable anywhere a stored key is. Validated here so a
+  // bad unit is a boot error, not an empty chart weeks later.
+  const n = computed.init(deps.config?.facts?.computed)
+  if (n) logger?.info?.({ keys: computed.computedKeys() }, 'facts: computed keys registered')
+}
+
+// A computed key reads its SOURCE key's rows and derives the value in SQL.
+// Returns what to actually query: the real key, plus the expression (if any).
+function resolveKey(key, at) {
+  const d = computed.derivedSql(key, { now: at || new Date() })
+  return d ? { key: d.from, derive: d } : { key, derive: undefined }
 }
 
 // Register a human-readable label for a fact key — e.g. a plugin calling
@@ -304,7 +317,10 @@ export async function recordMany({ passport_ids, key, value, type, source, obser
 // Every key in use, deployment-wide. describedKeys() is the subset someone has
 // given a human label to; this is all of them, which is what a key field needs
 // to suggest — an undescribed key is still a key you must not misspell.
-export const usedKeys = () => store.distinctKeys()
+// Computed keys are part of the vocabulary a caller can query, so discovery has to
+// list them — otherwise `age` works but nothing advertises it, and the compose
+// model never learns it exists.
+export const usedKeys = async () => [...new Set([...(await store.distinctKeys()), ...computed.computedKeys()])]
 
 // Current value of every key (or just `keys`) for a passport → { key: value }.
 export async function current(passport_id, keys) {
@@ -357,8 +373,10 @@ export async function matchesTimed(key, predicate, { at, scope } = {}) {
   const now = at ? new Date(at) : new Date()
   const scopeArr = scope == null ? undefined : [].concat(scope)
 
+  const src = resolveKey(key, at && now)
+
   if (isTemporal(predicate)) {
-    const rows = await store.keyRows(key, { at: at && now, scope: scopeArr })
+    const rows = await store.keyRows(src.key, { at: at && now, scope: scopeArr, derive: src.derive })
     const byPassport = new Map()
     for (const r of rows) {
       let h = byPassport.get(r.passport_id)
@@ -373,8 +391,15 @@ export async function matchesTimed(key, predicate, { at, scope } = {}) {
     return out
   }
 
-  const rows = await store.currentByKey(key, { at: at && now, scope: scopeArr })
-  return rows
+  const rows = await store.currentByKey(src.key, { at: at && now, scope: scopeArr, derive: src.derive })
+  // A derived value of NULL means the source was absent or unparseable — there is no
+  // age to compare, so the passport does not match. Dropped explicitly rather than
+  // left to the comparator: matchValue only short-circuits on `undefined`, so a null
+  // reaches cmp(), where asNumber and toTime both give up and it falls through to a
+  // LEXICAL compare — 'null' > '1' — and every `{ gte: n }` matches. One row with an
+  // empty birthdate would join every age cohort.
+  const usable = src.derive ? rows.filter(r => r.value != null) : rows
+  return usable
     .filter(r => matchValue(r.value, predicate, now))
     .map(r => ({ id: r.passport_id, matched_at: r.observed_at ? new Date(r.observed_at) : null }))
 }

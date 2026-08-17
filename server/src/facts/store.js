@@ -113,22 +113,28 @@ export async function historyRows(passportId, key) {
 
 // Current (or as-of `at`) value of `key` for every passport, optionally
 // restricted to `scope` (passport ids). One row per passport.
-export async function currentByKey(key, { at, scope } = {}) {
+// `derive` — a { sql, binds } expression (see facts/computed.js) selected AS the
+// value instead of the stored one. The query still reads the SOURCE key's rows; the
+// caller substitutes that key. Derived in SQL rather than in JS after the fetch so
+// the predicate path and the grouped path share one definition of "age".
+export async function currentByKey(key, { at, scope, derive } = {}) {
   let q = db(TABLE).distinctOn('passport_id').where({ key })
   if (at) q = q.where('observed_at', '<=', at)
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
-  return q
-    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
-    .select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
+  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }])
+  return derive
+    ? q.select('passport_id', db.raw(`${derive.sql} as value`, derive.binds), 'observed_at')
+    : q.select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
 }
 
 // Every row for `key` (optionally up to `at`, restricted to `scope`), ordered so
 // the caller can group into per-passport histories for temporal operators.
-export async function keyRows(key, { at, scope } = {}) {
+export async function keyRows(key, { at, scope, derive } = {}) {
   let q = db(TABLE).where({ key })
   if (at) q = q.where('observed_at', '<=', at)
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
-  return q
-    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }])
-    .select('passport_id', 'value', 'observed_at')
+  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'asc' }])
+  return derive
+    ? q.select('passport_id', db.raw(`${derive.sql} as value`, derive.binds), 'observed_at')
+    : q.select('passport_id', 'value', 'observed_at')
 }
