@@ -42,7 +42,7 @@
 // (comma-separated, no spaces) — matched against package.json `name`,
 // regardless of which of the two roots it lives in.
 
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -61,6 +61,13 @@ const ONLY = argv.includes('--only') && onlyArg
     ? new Set(onlyArg.split(',').map(s => s.trim()).filter(Boolean))
     : null
 
+// isDirectory(), or a symlink that RESOLVES to one.
+async function isDirLike(root, entry) {
+    if (entry.isDirectory()) return true
+    if (!entry.isSymbolicLink()) return false
+    try { return (await stat(path.join(root, entry.name))).isDirectory() } catch { return false }
+}
+
 async function findPackagesUnder(root) {
     let entries
     try {
@@ -70,7 +77,15 @@ async function findPackagesUnder(root) {
     }
     const pkgs = []
     for (const entry of entries) {
-        if (!entry.isDirectory()) continue
+        // A SYMLINK to a package counts. whitebox-pro-integrations is a directory of
+        // symlinks (scripts/link-integrations.sh puts them there), and a Dirent for a
+        // symlink answers isSymbolicLink() — NOT isDirectory(). So this skipped every
+        // integration package: all three ad networks, both mail providers, both SMS
+        // providers, auth0, maxmind. Nine packages absent from the plan, from the
+        // "already on npm" list, and from the summary count — the run then reported
+        // success, which is how a version can be bumped, committed, pushed and never
+        // actually published.
+        if (!(await isDirLike(root, entry))) continue
         if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
         const dir = path.join(root, entry.name)
         const pkgPath = path.join(dir, 'package.json')
