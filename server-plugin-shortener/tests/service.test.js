@@ -131,6 +131,37 @@ describe('resolveRedirect', () => {
     expect(r.location).toBe('https://clinic.com/whitening')
   })
 
+  it('mints a token for a PREFILL-ONLY link — data is not identity', async () => {
+    // `data` reaches the page only through claim(), so a link carrying prefill and
+    // naming nobody used to deliver nothing at all. Every password-reset link one
+    // deployment sent was exactly this shape — data: { email }, no passport_id, no
+    // identify — so the page loaded with an empty field and a disabled button.
+    setup()
+    store.getLink.mockResolvedValue({ ...bindable, passport_id: null, identify: null, data: { email: 'a@b.c' } })
+    const r = await service.resolveRedirect('c', {})
+    expect(store.insertClick).toHaveBeenCalledWith(expect.objectContaining({ code: 'c', claim_token: 'TOKEN-XYZ' }))
+    expect(r.location).toBe('https://clinic.com/whitening#wb=TOKEN-XYZ')
+  })
+
+  it('still plain-redirects a link with NEITHER identity nor data', async () => {
+    setup()
+    store.getLink.mockResolvedValue({ ...bindable, passport_id: null, identify: null, data: {} })
+    const r = await service.resolveRedirect('c', {})
+    expect(store.insertClick).not.toHaveBeenCalled()
+    expect(r.location).toBe('https://clinic.com/whitening')
+  })
+
+  it('delivers prefill even after the identity window closed', async () => {
+    // The identity window is about BINDING. Prefill has its own lifetime — the
+    // link's own expires_at — so an expired identity must not silence the data.
+    setup()
+    store.getLink.mockResolvedValue({
+      ...bindable, identity_expires_at: new Date(Date.now() - 1000), data: { email: 'a@b.c' },
+    })
+    const r = await service.resolveRedirect('c', {})
+    expect(r.location).toBe('https://clinic.com/whitening#wb=TOKEN-XYZ')
+  })
+
   it('stays bindable (mints a fresh token) after the identity was already consumed once — a revisit still redirects with a claim, it just wont re-merge on claim (see claim() below)', async () => {
     setup()
     store.getLink.mockResolvedValue({ ...bindable, identity_consumed_at: new Date() })
@@ -175,6 +206,22 @@ describe('claim', () => {
       type: 'shortener.claimed',
       data: expect.objectContaining({ code: 'c', passport_id: 'P_known', merged: true }),
     }))
+  })
+
+  it('prefill-only link: hands over the data, binds nobody, consumes nothing', async () => {
+    // The other half of a prefill-only link. It must deliver `data` to the page and
+    // NOT report an identity binding that never happened — identity_consumed_at is
+    // read as "this link's identity was used", so stamping it here would lie.
+    const { passports } = setup()
+    store.getClick.mockResolvedValue(validClick())
+    store.getLink.mockResolvedValue({
+      code: 'c', url: 'https://clinic.com/reset', passport_id: null, identify: null,
+      data: { email: 'dk@example.bg' },
+    })
+    const r = await service.claim('T', 'P_anon')
+    expect(r).toMatchObject({ bound: true, data: { email: 'dk@example.bg' } })
+    expect(passports.merge).not.toHaveBeenCalled()
+    expect(store.consumeIdentity).not.toHaveBeenCalled()
   })
 
   it('first-touch: adopts the customer with no merge', async () => {

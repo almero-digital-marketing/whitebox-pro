@@ -67,12 +67,12 @@ export async function resolveRedirect(code, ctx = {}) {
 
   store.bumpClicks(code).catch(() => {})
 
-  if (!bindable(link)) {
-    logger?.info?.({ code, url: link.url, bindable: false }, 'Shortlink click: %s', code)
-    return { location: link.url }   // campaign / consumed / window-passed → plain redirect
+  if (!claimable(link)) {
+    logger?.info?.({ code, url: link.url, bindable: false, data: false }, 'Shortlink click: %s', code)
+    return { location: link.url }   // nothing to hand over → plain redirect
   }
 
-  logger?.info?.({ code, url: link.url, bindable: true }, 'Shortlink click: %s', code)
+  logger?.info?.({ code, url: link.url, bindable: bindable(link), data: hasData(link) }, 'Shortlink click: %s', code)
   const token = newClaimToken()
   await store.insertClick({
     code, claim_token: token,
@@ -133,7 +133,10 @@ export async function claim(token, visitorPassportId) {
   // Stamps first-bound time for stats/observability only — bindable() no
   // longer gates on this, so the link stays claimable (fresh token per
   // click, same as any other redirect) until identity_expires_at passes.
-  await store.consumeIdentity(link.code, now)
+  //
+  // Only when there WAS an identity: a prefill-only link consumes nothing, and
+  // stamping it would report an identity binding that never happened.
+  if (bindable(link)) await store.consumeIdentity(link.code, now)
   await store.setClickPassport(token, bound)
   if (link.identify) await passports.link(bound, identifyItems(link.identify)).catch(() => {})
 
@@ -244,11 +247,30 @@ function applyUtm(dest, utm) {
   return applied
 }
 
+// Whether the click can stitch this browser onto a KNOWN customer.
 function bindable(link) {
   if (!link.passport_id && !link.identify) return false           // campaign link: nothing to bind
   if (link.identity_expires_at && new Date(link.identity_expires_at) < new Date()) return false
   return true
 }
+
+// `data` is PREFILL, not identity — an email to put in a field, a booking to show.
+// It is delivered only through claim() (nothing else returns it), so a link needs a
+// claim token to hand it over.
+//
+// It used to need bindable() for that, which conflated two unrelated jobs: a link
+// carrying prefill but naming nobody got no token, so its data was unreachable by
+// construction. Every password-reset link one deployment sent looked like this —
+// `data: { email }`, no passport_id, no identify — so the reset page loaded with an
+// empty email field and a permanently disabled submit button, and the link simply
+// did not work. Nothing errored anywhere; the data was just never asked for.
+//
+// So the two are separate now: prefill is delivered whenever there IS prefill, and
+// identity is bound whenever there is an identity to bind. Neither gates the other.
+const hasData = (link) => !!link.data && Object.keys(link.data).length > 0
+
+// Mint a token if the click has anything to hand over — prefill, identity, or both.
+const claimable = (link) => bindable(link) || hasData(link)
 
 async function targetPassport(link) {
   if (link.passport_id) return passports.resolve(link.passport_id)
