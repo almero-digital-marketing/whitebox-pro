@@ -19,7 +19,7 @@ import * as computed from '../facts/computed.js'
 const EXPOSURES = 'whitebox_awareness_exposures'
 const SESSIONS = 'whitebox_sessions'
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
-const FILTER_KEYS = ['content', 'channel', 'direction', 'last', 'since', 'until', 'session', 'attrs']
+const FILTER_KEYS = ['content', 'source', 'channel', 'direction', 'last', 'since', 'until', 'window', 'session', 'attrs']
 const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
 const GROUP_AGGS = [
   'count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum',
@@ -113,11 +113,225 @@ function asDate(v, key) {
   return d
 }
 
-function applyFilters(db, q, { content, channel, direction, last, since, until, session, attrs }, { at, scope, now }) {
+// An exposure column that is a low-cardinality label: one value, or a list. A list
+// is `in`, which is what a caller means by ["video","page"] and previously threw.
+function whereLabel(q, col, val) {
+  if (val == null) return q
+  if (Array.isArray(val)) return q.whereIn(col, val)
+  if (typeof val === 'object') {
+    if (Array.isArray(val.in)) return q.whereIn(col, val.in)
+    if (val.present === true) return q.whereNotNull(col)
+    if (val.present === false) return q.whereNull(col)
+    throw new Error(`selector.metric: ${col.replace('e.', '')} needs a value, { in: [...] }, or { present: true|false }`)
+  }
+  return q.where(col, val)
+}
+
+// WHICH CONTENT, by identity rather than by guesswork.
+//
+// There was no predicate on content at all. For video the only handles were
+// `attrs` (completion_pct, duration_s, muted — measurements OF the asset, none of
+// which name it) and `about` semantic similarity, which is fuzzy and only as good
+// as the transcript. So "was this person exposed to THIS video" was inexpressible,
+// and the class question "…to video at all" was too, because `source` was not
+// filterable either — `channel: 'web'` lumps video in with page views and text.
+//
+//   content: { url: { in: [...] } }        exact urls
+//   content: { url: { prefix: '…/faq/' } } a folder / campaign of assets
+//   content: { id: 'welcome-1' }           the emitter's own id
+//   content: { hash: '…' }                 the same TEXT, wherever it appeared
+//
+// The url is canonicalised on BOTH sides — the stored value and the argument —
+// with the same expression the `content_url` bucket uses. Otherwise a filter and a
+// breakdown could disagree about one page: `?utm_source=…` made every share of a
+// link a different string, so a filter written from a real address would silently
+// miss most of its own traffic.
+function applyContent(db, q, content) {
+  if (typeof content === 'string') {
+    // DEPRECATED substring form — do not extend. Kept resolving for callers that
+    // still pass it (docs/event-attributes.md §4/§7).
+    return content === '*' ? q : q.whereILike('e.content_id', `%${content}%`)
+  }
+  const { url, id, hash, prefix, ...rest } = content
+  const unknown = Object.keys(rest)
+  if (unknown.length) {
+    throw new Error(`selector.metric: content has no "${unknown[0]}" (use url/id/hash/prefix). Measurements like completion_pct are \`attrs\`, not content.`)
+  }
+  if (prefix != null) q = q.whereRaw(`${CONTENT_URL_CANON.sql} like ?`, [...CONTENT_URL_CANON.binds, `${canonUrl(prefix)}%`])
+  if (url != null) {
+    if (typeof url === 'object' && !Array.isArray(url)) {
+      if (url.prefix != null) q = q.whereRaw(`${CONTENT_URL_CANON.sql} like ?`, [...CONTENT_URL_CANON.binds, `${canonUrl(url.prefix)}%`])
+      else if (Array.isArray(url.in)) q = q.whereRaw(`${CONTENT_URL_CANON.sql} = any(?)`, [...CONTENT_URL_CANON.binds, url.in.map(canonUrl)])
+      else if (url.present === true) q = q.whereNotNull('e.content_url')
+      else if (url.present === false) q = q.whereNull('e.content_url')
+      else throw new Error('selector.metric: content.url needs a url, { in: [...] }, { prefix: … }, or { present: true|false }')
+    } else if (Array.isArray(url)) {
+      q = q.whereRaw(`${CONTENT_URL_CANON.sql} = any(?)`, [...CONTENT_URL_CANON.binds, url.map(canonUrl)])
+    } else {
+      q = q.whereRaw(`${CONTENT_URL_CANON.sql} = ?`, [...CONTENT_URL_CANON.binds, canonUrl(url)])
+    }
+  }
+  if (id != null) q = whereLabel(q, 'e.content_id', id)
+  if (hash != null) q = whereLabel(q, 'e.content_hash', hash)
+  return q
+}
+
+// The argument canonicalised the way the stored column is, so both sides of the
+// comparison mean the same thing.
+const canonUrl = (u) => String(u).split('?')[0].split('#')[0]
+
+// ── fact-anchored windows: a PER-PASSPORT time bound ─────────────────────────
+//
+// `since`/`until` take one date for everybody and `asOf` moves the whole query's
+// clock. Neither can express "before THIS person's first booking", where the
+// boundary is a different instant for every passport.
+//
+// A funnel already orders events per passport, but it answers with the surviving
+// COHORT — it cannot hand back the subset of EXPOSURES that fall before the
+// anchor as something groupable. So "which videos do people watch before they
+// book" had no expression at all: you could get who booked, never what they
+// watched first.
+//
+//   window: { before: { fact: 'first_booked_at' } }
+//   window: { after:  { fact: 'churned_at' }, within: '7d' }     the week after
+//   window: { before: { fact: 'churned_at' }, within: '7d' }     the week before
+//   window: { between: [{ fact: 'signed_up_at' }, { fact: 'first_booked_at' }] }
+//
+// SEMANTICS, stated rather than left to the reader:
+//   · The anchor is the fact's VALUE cast to a timestamp — not observed_at. When
+//     the CRM backfills a booking made in March, the anchor is March, not the
+//     night the row was written.
+//   · `before` is STRICT (<) and `after` is INCLUSIVE (>=), so the two are an
+//     exact partition of the same population: every exposure lands in one, none
+//     in both, and the two counts sum to the unwindowed total.
+//   · Comparison is in UTC, on timestamptz. A date-only fact value ('2026-08-07')
+//     is midnight UTC.
+//   · `use` picks among a fact's history: 'last' (default — the fact's CURRENT
+//     value, the same rule every other fact read uses), 'first', 'min', 'max'.
+//     For an "…_at" milestone that got corrected, 'min' is the earliest date ever
+//     claimed and 'last' is the one the CRM currently stands behind.
+const ANCHOR_USE = ['last', 'first', 'min', 'max']
+const MISSING = ['exclude', 'include', 'only']
+const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missing']
+
+function anchorSql(db, spec, alias) {
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+    throw new Error(`selector.metric: window anchor must be { fact: '<key>' } — got ${JSON.stringify(spec)}`)
+  }
+  const { fact, use = 'last', ...rest } = spec
+  if (!fact || typeof fact !== 'string') throw new Error('selector.metric: window anchor needs `fact` (the key whose VALUE is the boundary)')
+  if (Object.keys(rest).length) throw new Error(`selector.metric: window anchor has no "${Object.keys(rest)[0]}" (use fact/use)`)
+  if (!ANCHOR_USE.includes(use)) throw new Error(`selector.metric: window anchor \`use\` must be one of ${ANCHOR_USE.join('/')} — got "${use}"`)
+  if (computed.isComputed(fact)) {
+    // A computed fact derives a NUMBER (age in years, days since a visit), not an
+    // instant, so it cannot be a boundary. Naming its source is what was meant.
+    throw new Error(`selector.metric: "${fact}" is a computed fact (a number), so it cannot anchor a window — use the stored date it derives from`)
+  }
+  // Same cast as facts/computed.js: `nullif` so an empty value is NULL rather than
+  // an error that takes the whole query down.
+  const VAL = `nullif(value #>> '{}', '')::timestamptz`
+  const inner = (use === 'min' || use === 'max')
+    ? `select passport_id, ${use}(${VAL}) as anchor from whitebox_facts where key = ? group by passport_id`
+    : `select distinct on (passport_id) passport_id, ${VAL} as anchor
+         from whitebox_facts where key = ?
+        order by passport_id, observed_at ${use === 'first' ? 'asc' : 'desc'}, id ${use === 'first' ? 'asc' : 'desc'}`
+  return { sql: `left join (${inner}) ${alias} on ${alias}.passport_id = e.passport_id`, binds: [fact] }
+}
+
+// Seconds, signed — an offset may point either way ('-7d' moves the boundary a
+// week earlier). Bound as a number into make_interval, never interpolated.
+function offsetSecs(v, key) {
+  if (v == null) return 0
+  const m = /^(-?\d+)\s*(h|d|w)$/.exec(String(v).trim())
+  if (!m) throw new Error(`selector.metric: bad \`${key}\` "${v}" (use 7d, -7d, 24h, 2w)`)
+  return Number(m[1]) * MS[m[2]] / 1000
+}
+
+function applyWindow(db, q, win, now) {
+  if (typeof win !== 'object' || Array.isArray(win)) throw new Error('selector.metric: `window` must be an object')
+  const unknown = Object.keys(win).filter(k => !WINDOW_KEYS.includes(k))
+  if (unknown.length) throw new Error(`selector.metric: window has no "${unknown[0]}" (use ${WINDOW_KEYS.join('/')})`)
+
+  const { before, after, between, offset, within, missing = 'exclude' } = win
+  if (!MISSING.includes(missing)) throw new Error(`selector.metric: window \`missing\` must be one of ${MISSING.join('/')} — got "${missing}"`)
+  const given = ['before', 'after', 'between'].filter(k => win[k] != null)
+  if (given.length !== 1) {
+    throw new Error(`selector.metric: window takes exactly one of before/after/between — got ${given.length ? given.join(' + ') : 'none'}`)
+  }
+  if (within != null && between != null) {
+    throw new Error('selector.metric: `within` bounds the far side of a before/after window; `between` already has two bounds')
+  }
+
+  const off = offsetSecs(offset, 'offset')
+  const span = within == null ? null : offsetSecs(within, 'within')
+  if (span != null && span < 0) throw new Error(`selector.metric: \`within\` must be positive — it is a distance from the anchor, and the direction comes from before/after`)
+
+  // Composed as {sql, binds} rather than knex raws: `raw.toString()` INLINES its
+  // bindings, so nesting raws to build a compound predicate would interpolate a
+  // caller value into SQL text and reformat timestamps on the way through. Every
+  // value below stays a bind.
+  const bound = (alias, secs) => secs
+    ? { sql: `${alias}.anchor + make_interval(secs => ?)`, binds: [secs] }
+    : { sql: `${alias}.anchor`, binds: [] }
+  const cmp = (op, alias, secs) => {
+    const b = bound(alias, secs)
+    return { sql: `e.ts ${op} ${b.sql}`, binds: b.binds }
+  }
+  const and = (parts) => ({
+    sql: parts.map(p => p.sql).join(' and '),
+    binds: parts.flatMap(p => p.binds),
+  })
+  const orNull = (nullSql, inner) => ({ sql: `(${nullSql} or (${inner.sql}))`, binds: inner.binds })
+
+  if (between) {
+    if (!Array.isArray(between) || between.length !== 2) {
+      throw new Error('selector.metric: window `between` takes exactly two anchors: [{ fact: … }, { fact: … }]')
+    }
+    const a = anchorSql(db, between[0], 'awa')
+    const b = anchorSql(db, between[1], 'awb')
+    q = q.joinRaw(a.sql, a.binds).joinRaw(b.sql, b.binds)
+    const missingSql = 'awa.anchor is null or awb.anchor is null'
+    if (missing === 'only') return q.whereRaw(`(${missingSql})`)
+    const pred = and([cmp('>=', 'awa', off), cmp('<', 'awb', off)])
+    if (missing === 'include') {
+      const w = orNull(missingSql, pred)
+      return q.whereRaw(w.sql, w.binds)
+    }
+    q = q.whereNotNull('awa.anchor').whereNotNull('awb.anchor')
+    return q.whereRaw(pred.sql, pred.binds)
+  }
+
+  const a = anchorSql(db, before ?? after, 'aw')
+  q = q.joinRaw(a.sql, a.binds)
+  if (missing === 'only') {
+    // The comparison group, addressable rather than dropped: the people who never
+    // reached the milestone at all. In the case this was built for, 486 of 894
+    // video watchers had never booked — they are most of the population, and the
+    // baseline that makes "watched before booking" mean anything.
+    return q.whereNull('aw.anchor')
+  }
+
+  // `before` STRICT, `after` INCLUSIVE — an exact partition (see the note above).
+  const pred = and(before
+    ? [cmp('<', 'aw', off), ...(span == null ? [] : [cmp('>=', 'aw', off - span)])]
+    : [cmp('>=', 'aw', off), ...(span == null ? [] : [cmp('<', 'aw', off + span)])])
+
+  if (missing === 'include') {
+    // No anchor ⇒ no boundary to be on the wrong side of, so everything they did
+    // qualifies. Useful for "…and people who never got there", in one series.
+    const w = orNull('aw.anchor is null', pred)
+    return q.whereRaw(w.sql, w.binds)
+  }
+  return q.whereNotNull('aw.anchor').whereRaw(pred.sql, pred.binds)
+}
+
+function applyFilters(db, q, { content, source, channel, direction, last, since, until, window: win, session, attrs }, { at, scope, now }) {
   if (scope?.length) q = whereScope(q, 'e.passport_id', scope)
-  if (content && content !== '*') q = q.whereILike('e.content_id', `%${content}%`)   // DEPRECATED — do not extend
-  if (channel) q = q.where('e.channel', channel)
-  if (direction) q = q.where('e.direction', direction)
+  if (content != null && content !== '') q = applyContent(db, q, content)
+  q = whereLabel(q, 'e.source', source)
+  if (channel) q = whereLabel(q, 'e.channel', channel)
+  if (direction) q = whereLabel(q, 'e.direction', direction)
+  if (win) q = applyWindow(db, q, win, now)
   if (at) q = q.where('e.ts', '<=', now)                                    // as-of: ignore the future
   if (last) q = q.where('e.ts', '>=', new Date(now.getTime() - windowMs(last)))   // lookback window
 
@@ -381,7 +595,12 @@ const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.sou
 // `split_part(e.content_url, '?', 1)` reads as one extra bind and either dies or
 // silently splits on the wrong thing. This exact trap has now appeared three times
 // in this file: a regex quantifier, the clock in `months`, and here.
-const CONTENT_URL_CANON = { sql: 'split_part(e.content_url, ?, 1)', binds: ['?'] }
+// Both separators, in the same order ingest cuts them (awareness/pii.js), so the
+// read side and the write side agree — and so `canonUrl()` in JS, which strips
+// query AND fragment, cannot disagree with the SQL about the same address. When
+// only `?` was stripped here, `page#t=30` and `page` were different buckets and a
+// filter written from a real url matched one of them.
+const CONTENT_URL_CANON = { sql: 'split_part(split_part(e.content_url, ?, 1), ?, 1)', binds: ['?', '#'] }
 
 // A bucket → { sql, binds }. Time grains (to_char of ts) and exposure/session
 // columns carry no binds (allowlisted names); `attr:<key>` binds the key.

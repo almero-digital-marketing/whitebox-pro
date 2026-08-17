@@ -264,8 +264,19 @@ export async function runQuery(deps, query = {}, kind) {
   // way — one people-count per fact value. This also rescues the compose model, which
   // emits the fact key as the bucket in several forms ("fact:status", or a bare
   // "status") instead of the breakdownFact shape.
-  const CORE_BUCKETS = new Set(['hour', 'day', 'week', 'month', 'channel', 'direction', 'source', 'content'])
+  // MUST list every bucket the engine understands. `content_url`/`content_hash`
+  // were missing, and the else-branch below reads an unlisted token as a FACT KEY —
+  // so `by: 'content_url'` ran a breakdown of a fact nobody has ever recorded and
+  // returned `{ series: [], total: 0 }`. An empty chart, no error, and the bucket
+  // had been supported by the engine the whole time.
+  const CORE_BUCKETS = new Set([
+    'hour', 'day', 'week', 'month',
+    'channel', 'direction', 'source', 'content', 'content_url', 'content_hash',
+  ])
   const by = typeof q.group?.by === 'string' ? q.group.by : null
+  // An explicit `fact:` prefix is unambiguous, so it is taken at its word. Only a
+  // BARE token is a guess, and only a guess gets checked against the vocabulary.
+  const explicitFact = by != null && by.startsWith('fact:')
   const factGroup = !by ? null
     : by.startsWith('fact:') ? by.slice(5)
       : (by.startsWith('session:') || by.startsWith('attr:') || CORE_BUCKETS.has(by)) ? null
@@ -274,6 +285,23 @@ export async function runQuery(deps, query = {}, kind) {
     const scope = await cohortScope()
     if (emptyCohort(scope)) return { series: [], total: 0 }
     const key = q.breakdownFact?.key || factGroup
+    // The bare-token fallback exists to rescue the compose model, which emits a
+    // fact key as the bucket in several shapes. It also swallowed every typo and
+    // every unlisted core bucket: an unknown key has no rows, and no rows renders
+    // as a legitimately empty chart. If the key is not in the fact vocabulary,
+    // say so and name what IS accepted.
+    if (factGroup && !q.breakdownFact && !explicitFact) {
+      let known = null
+      try { known = (await deps.facts?.usedKeys?.()) ?? null } catch { known = null }
+      if (Array.isArray(known) && !known.includes(key)) {
+        const e = new Error(
+          `unknown group bucket "${key}" — not a fact key and not a core bucket ` +
+          `(${[...CORE_BUCKETS].join('/')}, session:<utm>, attr:<key>, fact:<key>). ` +
+          `Known facts: ${known.slice(0, 12).join(', ')}${known.length > 12 ? ', …' : ''}`)
+        e.status = 400
+        throw e
+      }
+    }
     // never break a chart down by a contact identifier — its bucket labels would be raw PII
     if (CONTACT_KEYS.has(key)) { const e = new Error(`cannot group by the identity field "${key}"`); e.status = 400; throw e }
     const values = q.breakdownFact?.values
@@ -375,8 +403,23 @@ export async function runQuery(deps, query = {}, kind) {
     // shape the drop-off report into a chartable series (each step a bar)
     return { series: (f.report || []).map((s) => ({ bucket: s.name || `Step ${s.step}`, value: s.count })), report: f.report }
   }
+  // `scope` ONLY — deliberately not cohortScope().
+  //
+  // This path hands `q.selector` straight to the engine, so the filter is already
+  // applied where it belongs. Adding cohortScope() here would resolve that same
+  // filter a second time, to a full id list, purely to pass it back as a scope the
+  // engine then re-intersects — materialising the 153,245 ids / 9.4 MB that
+  // PROJECTION_FOR above exists to avoid, to answer a `stat` that is one number.
+  // Same result, twice the work, on the two commonest widget kinds.
+  //
+  // cohortScope() is for the branches that CANNOT do this: breakdownFact,
+  // distribution, scatter and cohort read a scope array and never see
+  // `selector.filter` at all, which is the bug it was added for.
+  const plainScope = Array.isArray(q.scope) || !q.scope
+    ? q.scope
+    : (await selector.resolve(q.scope, { projection: 'people', asOf: q.asOf })).passports.map((p) => p.id)
   return selector.resolve(q.selector || {}, {
-    projection: q.projection || PROJECTION_FOR[kind], scope: await cohortScope(), passport: q.passport,
+    projection: q.projection || PROJECTION_FOR[kind], scope: plainScope, passport: q.passport,
     asOf: q.asOf, limit: q.limit, group: q.group,
   })
 }

@@ -58,14 +58,28 @@ const FACT_OP_NAMES = new Set([...Object.values(FACT_OPS), 'in', 'present', ...F
 // Validating both against the gate rules rejected the two commonest widget
 // shapes there are, which is exactly what happened.
 const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
-const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum']
+// MUST match metric.js GROUP_AGGS. It did not: the value aggregates shipped in the
+// engine and this list was left behind, so `avg`/`median` reached here and were
+// rejected as "not an aggregate" — the feature existed and no caller could get to
+// it, because everything except a direct selector.resolve() comes through
+// validate(). Engine tests passed precisely because they bypass this file.
+const VALUE_AGGS = ['avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest']
+const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum', ...VALUE_AGGS]
 // The notation can write either, so parse and print span both.
 const AGGS = [...new Set([...GATE_AGGS, ...GROUP_AGGS])]
 // Metric filter keys that are their own column. Anything else in an aggregate's
 // argument list is an open per-event dimension and lands in `attrs`, which is
 // what `event = '...'` relies on.
-const METRIC_COLS = ['channel', 'direction', 'content']
-const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'since', 'until', 'session', 'attrs'])
+// `source` belongs here: it is an indexed exposure column that has always been
+// groupable, and filtering on it is how "was exposed to video AT ALL" is said.
+// Without it the only handle was `channel`, which lumps video in with page views
+// and text engagement.
+const METRIC_COLS = ['channel', 'direction', 'source', 'content']
+const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'since', 'until', 'window', 'session', 'attrs'])
+const ANCHOR_USE = ['last', 'first', 'min', 'max']
+const MISSING = ['exclude', 'include', 'only']
+const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missing']
+const OFFSET = /^-?\d+\s*[hdw]$/
 const SESSION_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer']
 const WINDOW = /^\d+\s*[hdw]$/
 
@@ -436,6 +450,66 @@ export function validate(filter, { grouped = false } = {}) {
                 err(`${path}.metric.${agg}`, 'needs a numeric gte or lte — an aggregate with no bound matches nothing')
             }
             if (agg === 'sum' && !bounds.field) err(`${path}.metric.sum`, 'needs a `field`')
+            // Value aggregates read ONE numeric source. Mirrors numericSource() in
+            // metric.js — kept here so a bad shape is one error naming all three
+            // options, not a 500 from the engine.
+            if (VALUE_AGGS.includes(agg)) {
+                const given = ['field', 'column', 'fact'].filter((k) => bounds[k] != null)
+                if (given.length === 0 && !['earliest', 'latest'].includes(agg)) {
+                    err(`${path}.metric.${agg}`, 'needs a `field` (a meta attribute), a `column` (dwell_ms), or a `fact` (a fact key)')
+                }
+                if (given.length > 1) err(`${path}.metric.${agg}`, `takes one of field/column/fact, not ${given.join(' + ')}`)
+                if (agg === 'percentile' && !(typeof bounds.p === 'number' && bounds.p > 0 && bounds.p < 1)) {
+                    err(`${path}.metric.percentile`, 'needs `p` between 0 and 1 (0.9 = the 90th percentile)')
+                }
+                if (['earliest', 'latest'].includes(agg) && bounds.fact != null) {
+                    err(`${path}.metric.${agg}`, 'orders by event time, and a fact has one current value per passport — there is no first or last one to take')
+                }
+            }
+            // A fact-anchored window: the boundary is a different instant for every
+            // passport, so it is the one time bound `since`/`until`/`asOf` cannot say.
+            if (m.window != null) {
+                const w = m.window
+                if (typeof w !== 'object' || Array.isArray(w)) err(`${path}.metric.window`, 'takes an object')
+                else {
+                    for (const k of Object.keys(w)) {
+                        if (!WINDOW_KEYS.includes(k)) err(`${path}.metric.window`, `unknown key "${k}" — one of ${WINDOW_KEYS.join(', ')}`)
+                    }
+                    const sides = ['before', 'after', 'between'].filter((k) => w[k] != null)
+                    if (sides.length !== 1) {
+                        err(`${path}.metric.window`, `takes exactly one of before/after/between, got ${sides.length ? sides.join(' + ') : 'none'}`)
+                    }
+                    if (w.within != null && w.between != null) {
+                        err(`${path}.metric.window`, '`within` bounds the far side of a before/after window; `between` already has two bounds')
+                    }
+                    if (w.missing != null && !MISSING.includes(w.missing)) {
+                        err(`${path}.metric.window.missing`, `one of ${MISSING.join(', ')} — "exclude" drops passports with no anchor, "only" returns just them (the never-reached-it comparison group)`)
+                    }
+                    for (const k of ['offset', 'within']) {
+                        if (w[k] != null && !OFFSET.test(String(w[k]))) err(`${path}.metric.window.${k}`, `bad offset ${JSON.stringify(w[k])} — use 7d, -7d, 24h or 2w`)
+                    }
+                    const anchors = w.between != null ? (Array.isArray(w.between) ? w.between : [w.between]) : [w.before ?? w.after]
+                    if (w.between != null && (!Array.isArray(w.between) || w.between.length !== 2)) {
+                        err(`${path}.metric.window.between`, 'takes exactly two anchors: [{ fact: … }, { fact: … }]')
+                    }
+                    anchors.forEach((a, i) => {
+                        const at = `${path}.metric.window.${w.between != null ? `between[${i}]` : (w.before != null ? 'before' : 'after')}`
+                        if (!a || typeof a !== 'object' || Array.isArray(a)) return err(at, "must be { fact: '<key>' }")
+                        if (!a.fact || typeof a.fact !== 'string') err(at, 'needs `fact` — the key whose VALUE is the boundary (not its observed_at)')
+                        if (a.use != null && !ANCHOR_USE.includes(a.use)) err(`${at}.use`, `one of ${ANCHOR_USE.join(', ')}`)
+                        for (const k of Object.keys(a)) if (!['fact', 'use'].includes(k)) err(at, `unknown key "${k}" — one of fact, use`)
+                    })
+                }
+            }
+            // Content by identity. A string is the DEPRECATED substring-on-content_id
+            // form; an object names which handle it is.
+            if (m.content != null && typeof m.content === 'object') {
+                for (const k of Object.keys(m.content)) {
+                    if (!['url', 'id', 'hash', 'prefix'].includes(k)) {
+                        err(`${path}.metric.content`, `unknown key "${k}" — one of url, id, hash, prefix. Measurements like completion_pct are \`attrs\`, not content.`)
+                    }
+                }
+            }
             if (m.last != null && !WINDOW.test(String(m.last))) err(`${path}.metric.last`, `bad window ${JSON.stringify(m.last)} — use 30d, 24h or 2w`)
             for (const [col, v] of Object.entries(m.session || {})) {
                 if (!SESSION_COLS.includes(col)) err(`${path}.metric.session`, `unknown column "${col}" — one of ${SESSION_COLS.join(', ')}`)

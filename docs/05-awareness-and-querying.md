@@ -127,8 +127,64 @@ POST /query
 → [ { "bucket": "2026-W10", "value": 42 }, { "bucket": "2026-W11", "value": 51 }, … ]
 ```
 
+Also `content_url` / `content_hash` (which asset), `session:<utm>`, `attr:<key>`
+and `fact:<key>`. `content_url` is canonicalised — query string and fragment
+stripped — so one page is one bucket however the link was shared. An unrecognised
+bucket is a **400 naming the accepted set**; it used to be read as a fact key and
+answered with an empty series.
+
 This is the one engine capability charts add; trend and breakdown dashboards are
 built on it.
+
+### which content, and windows anchored on a fact
+
+A `metric` filters on `source` (`"video"`, or a list) and on content **identity**:
+
+```
+{ "metric": { "count": {}, "source": "video",
+              "content": { "url": { "prefix": "https://cms.example/faq/" } } } }
+```
+
+`content` takes `url` (a value, `{ in: [...] }`, `{ prefix }`, `{ present }`),
+`id`, `hash`, or a bare `prefix`. Urls are canonicalised on both sides, so a
+filter written from a real address matches the same rows the `content_url` bucket
+counts. (A bare *string* `content` is the deprecated substring-on-`content_id`
+form.)
+
+**`window`** bounds the events by a per-passport instant — the fact's **value**,
+not when it was recorded:
+
+```
+{ "metric": { "count": {}, "source": "video",
+              "window": { "before": { "fact": "first_booked_at" } } } }
+```
+
+| key | meaning |
+| --- | --- |
+| `before` / `after` | one anchor. `before` is strict (`<`), `after` inclusive (`>=`) |
+| `between` | `[{fact}, {fact}]` — two anchors |
+| `within` | bounds the far side: `before` + `within: "7d"` is *the week before* |
+| `offset` | shifts the boundary (`"7d"`, `"-7d"`) |
+| `missing` | passports with no anchor: `exclude` (default), `include`, `only` |
+| `<anchor>.use` | which historical value: `last` (default), `first`, `min`, `max` |
+
+`before` + `after` + `missing: "only"` is an **exact partition** — every event
+lands in exactly one and the three sum to the unwindowed total. `missing: "only"`
+is how you address the never-reached-the-milestone group, which is usually the
+comparison baseline rather than something to drop. Comparison is UTC; a date-only
+value is midnight UTC. An anchor must be a stored date fact — a computed fact
+derives a number, not an instant, and is rejected.
+
+This is what a funnel cannot do: a funnel returns the surviving **cohort**, while
+this returns the **events** on one side of each person's own milestone, still
+groupable. *"Which videos do people watch before their first booking"* is:
+
+```
+{ "selector": { "filter": { "metric": {
+    "distinct_passports": {}, "source": "video",
+    "window": { "before": { "fact": "first_booked_at" } } } } },
+  "group": { "by": "content_url", "limit": 50 } }
+```
 
 ### funnel — ordered, windowed steps
 

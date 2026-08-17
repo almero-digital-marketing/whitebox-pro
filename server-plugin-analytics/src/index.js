@@ -75,7 +75,7 @@ export function analytics(options = {}) {
         // itself: fact keys, events and attributes all come from the data.
         compose.init({ db, ai, selector, awareness, facts, logger, domain: options.domain })
         mountComposition(app, { requireRead, requireWrite, selector, awareness, passports, logger })
-        registerCompositionMcp(ctx, { selector, awareness, passports, logger })
+        registerCompositionMcp(ctx, { selector, awareness, passports, facts, logger })
         logger.info('Analytics composition surface ready (reports · resolve · compose)')
       } else {
         logger.warn('Analytics composition surface skipped (no db/selector in ctx)')

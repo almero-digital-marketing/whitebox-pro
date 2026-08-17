@@ -17,9 +17,9 @@ import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain
 import { CONTACT_KEYS } from './mask.js'
 import { renderChart } from './chart-render.js'
 
-export function registerMcp(ctx, { selector, awareness, passports, logger }) {
+export function registerMcp(ctx, { selector, awareness, passports, facts, logger }) {
   if (!ctx.mcp) return
-  const deps = { selector, awareness }
+  const deps = { selector, awareness, facts }
   const ok = data => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] })
 
   // Structured arguments arrive as JSON STRINGS from some MCP clients.
