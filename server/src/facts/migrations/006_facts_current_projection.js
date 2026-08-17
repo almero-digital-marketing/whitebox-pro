@@ -59,6 +59,10 @@ export const up = async knex => {
       source       varchar(64)              NOT NULL,
       external_id  varchar(256),
       observed_at  timestamptz              NOT NULL,
+      -- Mirrored so a projection row IS the log row in every column: record() returns
+      -- "what is now current" to its caller, and that row must not be missing fields
+      -- depending on whether the write was suppressed.
+      recorded_at  timestamptz,
       PRIMARY KEY (passport_id, key)
     )`)
 
@@ -75,9 +79,9 @@ export const up = async knex => {
   await knex.raw(`
     CREATE OR REPLACE FUNCTION ${T}_apply() RETURNS trigger LANGUAGE plpgsql AS $fn$
     BEGIN
-      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at, recorded_at)
       SELECT DISTINCT ON (passport_id, key)
-             passport_id, key, id, value, type, source, external_id, observed_at
+             passport_id, key, id, value, type, source, external_id, observed_at, recorded_at
         FROM new_table
        ORDER BY passport_id, key, observed_at DESC, id DESC
       ON CONFLICT (passport_id, key) DO UPDATE SET
@@ -86,7 +90,8 @@ export const up = async knex => {
              type        = excluded.type,
              source      = excluded.source,
              external_id = excluded.external_id,
-             observed_at = excluded.observed_at
+             observed_at = excluded.observed_at,
+             recorded_at = excluded.recorded_at
        -- Only if the incoming row really is newer. record() accepts a past
        -- observed_at, so a backfill of March data must not overwrite today's value.
        WHERE (excluded.observed_at, excluded.fact_id)
@@ -107,9 +112,9 @@ export const up = async knex => {
        USING _wbfc_affected a
        WHERE c.passport_id = a.passport_id AND c.key = a.key;
 
-      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at, recorded_at)
       SELECT DISTINCT ON (f.passport_id, f.key)
-             f.passport_id, f.key, f.id, f.value, f.type, f.source, f.external_id, f.observed_at
+             f.passport_id, f.key, f.id, f.value, f.type, f.source, f.external_id, f.observed_at, f.recorded_at
         FROM whitebox_facts f
         JOIN _wbfc_affected a ON a.passport_id = f.passport_id AND a.key = f.key
        ORDER BY f.passport_id, f.key, f.observed_at DESC, f.id DESC;
@@ -137,9 +142,9 @@ export const up = async knex => {
        USING _wbfc_affected a
        WHERE c.passport_id = a.passport_id AND c.key = a.key;
 
-      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+      INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at, recorded_at)
       SELECT DISTINCT ON (f.passport_id, f.key)
-             f.passport_id, f.key, f.id, f.value, f.type, f.source, f.external_id, f.observed_at
+             f.passport_id, f.key, f.id, f.value, f.type, f.source, f.external_id, f.observed_at, f.recorded_at
         FROM whitebox_facts f
         JOIN _wbfc_affected a ON a.passport_id = f.passport_id AND a.key = f.key
        ORDER BY f.passport_id, f.key, f.observed_at DESC, f.id DESC;
@@ -161,9 +166,9 @@ export const up = async knex => {
   // ── backfill ──────────────────────────────────────────────────────────────
   // One statement. On GPoint this reads 7.42M rows and writes 2.49M.
   await knex.raw(`
-    INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+    INSERT INTO ${T} (passport_id, key, fact_id, value, type, source, external_id, observed_at, recorded_at)
     SELECT DISTINCT ON (passport_id, key)
-           passport_id, key, id, value, type, source, external_id, observed_at
+           passport_id, key, id, value, type, source, external_id, observed_at, recorded_at
       FROM whitebox_facts
      ORDER BY passport_id, key, observed_at DESC, id DESC
     ON CONFLICT (passport_id, key) DO NOTHING`)

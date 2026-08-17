@@ -87,11 +87,14 @@ const factKeyOf = (by) => (typeof by === 'string' && by.startsWith(FACT_PREFIX) 
 function joinFact(db, q, key, now, alias = 'f') {
   const d = computed.derivedSql(key, { now })
   const valueSql = d ? `${d.sql} as value` : 'value'
+  // From whitebox_facts_current (migration 006), which holds one row per
+  // (passport_id, key) — so the DISTINCT ON over the whole key partition is gone.
+  // This join never carried an `observed_at <= at` filter, so it was always reading
+  // the current value; the projection answers exactly the question it was asking.
   return q.joinRaw(
     `left join (
-       select distinct on (passport_id) passport_id, ${valueSql}
-         from whitebox_facts where key = ?
-        order by passport_id, observed_at desc, id desc
+       select passport_id, ${valueSql}
+         from whitebox_facts_current where key = ?
      ) ${alias} on ${alias}.passport_id = e.passport_id`, [...(d ? d.binds : []), d ? d.from : key])
 }
 
@@ -240,11 +243,17 @@ function anchorSql(db, spec, alias) {
   // Same cast as facts/computed.js: `nullif` so an empty value is NULL rather than
   // an error that takes the whole query down.
   const VAL = `nullif(value #>> '{}', '')::timestamptz`
-  const inner = (use === 'min' || use === 'max')
-    ? `select passport_id, ${use}(${VAL}) as anchor from whitebox_facts where key = ? group by passport_id`
-    : `select distinct on (passport_id) passport_id, ${VAL} as anchor
-         from whitebox_facts where key = ?
-        order by passport_id, observed_at ${use === 'first' ? 'asc' : 'desc'}, id ${use === 'first' ? 'asc' : 'desc'}`
+  // `last` is the CURRENT value, so it comes from the projection — one row per
+  // passport, no sort over the key partition. `first`/`min`/`max` are questions about
+  // the HISTORY and can only be answered from the log, which is the whole reason the
+  // projection is a projection and not a replacement.
+  const inner = (use === 'last')
+    ? `select passport_id, ${VAL} as anchor from whitebox_facts_current where key = ?`
+    : (use === 'min' || use === 'max')
+      ? `select passport_id, ${use}(${VAL}) as anchor from whitebox_facts where key = ? group by passport_id`
+      : `select distinct on (passport_id) passport_id, ${VAL} as anchor
+           from whitebox_facts where key = ?
+          order by passport_id, observed_at asc, id asc`
   return { sql: `left join (${inner}) ${alias} on ${alias}.passport_id = e.passport_id`, binds: [fact] }
 }
 

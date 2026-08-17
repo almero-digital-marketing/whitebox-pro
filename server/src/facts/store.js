@@ -85,12 +85,18 @@ export async function currentForPairs(pairs) {
   if (!pairs?.length) return []
   const passportIds = [...new Set(pairs.map(p => p.passport_id))]
   const keys = [...new Set(pairs.map(p => p.key))]
-  return db(TABLE)
-    .distinctOn(['passport_id', 'key'])
+  // From the projection: one row per pair by construction, so no DISTINCT ON and no
+  // sort. Correct for suppression's timing too — the trigger updates the projection
+  // AFTER the insert, so this still reads the state as it was before this write.
+  // `fact_id as id`, because this row is what record() RETURNS when a write is
+  // suppressed as a no-op — the caller's contract is "what is now current for this
+  // key", and a row missing `id` would break it depending on whether the write
+  // happened to be a repeat.
+  return db(CURRENT)
     .whereIn('passport_id', passportIds)
     .whereIn('key', keys)
-    .orderBy([{ column: 'passport_id' }, { column: 'key' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
-    .select('*')
+    .select('passport_id', 'key', 'value', 'type', 'source', 'external_id', 'observed_at', 'recorded_at',
+            db.raw('fact_id as id'))
 }
 
 // ── the current-value projection (whitebox_facts_current) ─────────────────────
@@ -141,9 +147,9 @@ export async function rebuildCurrent() {
   return db.transaction(async trx => {
     await trx.raw(`DELETE FROM ${CURRENT}`)
     const r = await trx.raw(`
-      INSERT INTO ${CURRENT} (passport_id, key, fact_id, value, type, source, external_id, observed_at)
+      INSERT INTO ${CURRENT} (passport_id, key, fact_id, value, type, source, external_id, observed_at, recorded_at)
       SELECT DISTINCT ON (passport_id, key)
-             passport_id, key, id, value, type, source, external_id, observed_at
+             passport_id, key, id, value, type, source, external_id, observed_at, recorded_at
         FROM ${TABLE}
        ORDER BY passport_id, key, observed_at DESC, id DESC`)
     return r.rowCount
@@ -161,11 +167,9 @@ export async function distinctKeys() {
 // Latest value per key for a passport (optionally restricted to `keys`).
 // DISTINCT ON (key) + ORDER BY key, observed_at DESC keeps the newest per key.
 export async function currentRows(passportId, keys) {
-  let q = db(TABLE).distinctOn('key').where({ passport_id: passportId })
+  let q = db(CURRENT).where({ passport_id: passportId })
   if (keys?.length) q = q.whereIn('key', keys)
-  return q
-    .orderBy([{ column: 'key' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
-    .select('key', 'value', 'type', 'observed_at')
+  return q.orderBy('key').select('key', 'value', 'type', 'observed_at')
 }
 
 // Value per key as it was at instant `at` (the newest row not after `at`).
@@ -197,10 +201,13 @@ export async function historyRows(passportId, key) {
 // caller substitutes that key. Derived in SQL rather than in JS after the fetch so
 // the predicate path and the grouped path share one definition of "age".
 export async function currentByKey(key, { at, scope, derive } = {}) {
-  let q = db(TABLE).distinctOn('passport_id').where({ key })
-  if (at) q = q.where('observed_at', '<=', at)
+  // `at` is TIME TRAVEL — "what was this on 3 March" — which the projection cannot
+  // answer: it holds one row, the current one. Only the un-anchored read switches.
+  let q = at
+    ? db(TABLE).distinctOn('passport_id').where({ key }).where('observed_at', '<=', at)
+        .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
+    : db(CURRENT).where({ key })
   if (scope?.length) q = whereScope(q, 'passport_id', scope)
-  q = q.orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
   return derive
     ? q.select('passport_id', db.raw(`${derive.sql} as value`, derive.binds), 'observed_at')
     : q.select('passport_id', 'value', 'observed_at')   // observed_at = the matched_at for a value-op match
@@ -224,11 +231,12 @@ export async function currentByKey(key, { at, scope, derive } = {}) {
 export async function absentByKey(key, { at, scope, derive } = {}) {
   const valueSql = derive ? derive.sql : 'value'
   const binds = derive ? derive.binds : []
-  let cur = db(TABLE).distinctOn('passport_id').where({ key })
-  if (at) cur = cur.where('observed_at', '<=', at)
-  cur = cur
-    .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
-    .select('passport_id', db.raw(`${valueSql} as value`, binds))
+  // As above: only the un-anchored read can come from the projection.
+  let cur = at
+    ? db(TABLE).distinctOn('passport_id').where({ key }).where('observed_at', '<=', at)
+        .orderBy([{ column: 'passport_id' }, { column: 'observed_at', order: 'desc' }, { column: 'id', order: 'desc' }])
+        .select('passport_id', db.raw(`${valueSql} as value`, binds))
+    : db(CURRENT).where({ key }).select('passport_id', db.raw(`${valueSql} as value`, binds))
 
   let q = db('whitebox_passports as p')
     .leftJoin(cur.as('cur'), 'cur.passport_id', 'p.id')
