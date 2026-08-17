@@ -108,23 +108,65 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
     throw new Error(`selector.group: \`${selKeys[0]}\` is not applied when grouping — only \`filter.metric\` is. Remove it, or scope the query instead.`)
   }
 
-  const m = selector?.filter?.metric
-  if (!m) throw new Error('selector: `group` requires a single `metric` filter (the aggregate to bucket)')
+  const at = asOf ? new Date(asOf) : null
+  let scopeArr = scope == null ? null : [].concat(scope)
 
-  // A sibling clause next to `metric` (e.g. `fact`) was silently discarded here,
-  // so a cohort-restricted breakdown returned global totals — off by ~550× on the
-  // GPoint dataset. `scope` is the placement that actually confines a grouped
-  // query to a cohort (it resolves to passport ids and reaches applyFilters).
-  const siblings = Object.keys(selector.filter).filter(k => k !== 'metric')
-  if (siblings.length) {
+  // A grouped query takes ONE aggregate to bucket, plus — now — any cohort clauses
+  // beside it. Two shapes reach here:
+  //
+  //   { filter: { metric: … } }                        the aggregate alone
+  //   { filter: { all: [ { metric: … }, { fact: … } ] } }   aggregate AND a cohort
+  //
+  // The second used to throw, telling the caller to move the cohort into
+  // `scope.filter`. That was honest — it never silently dropped anything — but it
+  // refused the shape everybody writes, and "breakdown of THIS cohort" is the
+  // commonest chart there is. The clauses beside the metric are now resolved as a
+  // people cohort and intersected into `scope`, which is exactly what moving them
+  // to `scope.filter` by hand would have done.
+  //
+  // `{ metric, fact }` as siblings in ONE clause is still invalid, and rejected by
+  // filter.js — a clause carries exactly one of all/any/not/fact/metric. `all` is
+  // how you say AND, and that is the form accepted here.
+  let m = selector?.filter?.metric
+  if (m) {
+    // The grouped path reads `filter.metric` straight out of the tree, so
+    // filter.js's assertClause never runs and cannot catch this for us. Without the
+    // check the sibling is taken as the metric and the rest DROPPED — the exact
+    // silent-cohort bug that `all` support exists to make expressible. Same message
+    // as assertClause, because it is the same rule.
+    const siblings = Object.keys(selector.filter).filter(k => k !== 'metric')
+    if (siblings.length) {
+      throw new Error(
+        `selector.filter: a clause takes exactly one of all/any/not/fact/metric — got metric + ${siblings.join(' + ')}. ` +
+        `Combine them explicitly: { all: [{ metric: … }, { ${siblings[0]}: … }] }.`,
+      )
+    }
+  }
+  if (!m && Array.isArray(selector?.filter?.all)) {
+    const metrics = selector.filter.all.filter(c => c && c.metric)
+    if (metrics.length > 1) {
+      throw new Error('selector.group: `all` holds more than one `metric` — a grouped query buckets exactly one aggregate')
+    }
+    if (metrics.length === 1) {
+      m = metrics[0].metric
+      const rest = selector.filter.all.filter(c => !(c && c.metric))
+      if (rest.length) {
+        // Resolve the cohort half and AND it into scope. An empty result is a real
+        // answer — nobody matched — and must NOT fall through to an unscoped query,
+        // which is what an empty array means downstream (`if (scope?.length)`).
+        const ids = await filter.evaluate(rest.length === 1 ? rest[0] : { all: rest }, baseCtx(at))
+        if (!ids.length) return []
+        scopeArr = scopeArr ? scopeArr.filter(id => new Set(ids).has(id)) : ids
+        if (!scopeArr.length) return []
+      }
+    }
+  }
+  if (!m) {
     throw new Error(
-      `selector.group: \`filter.${siblings[0]}\` is not applied when grouping — only \`filter.metric\` is. ` +
-      `To restrict a breakdown to a cohort, put it in \`scope.filter\` instead.`,
+      'selector: `group` requires a `metric` to bucket — either `filter.metric`, or one `{ metric: … }` inside `filter.all`',
     )
   }
 
-  const at = asOf ? new Date(asOf) : null
-  const scopeArr = scope == null ? null : [].concat(scope)
   return metric.group(rt.db, m, { by: group?.by, limit: group?.limit, at, scope: scopeArr })
 }
 

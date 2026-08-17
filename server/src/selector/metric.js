@@ -18,7 +18,7 @@ import { whereScope } from '../db.js'
 const EXPOSURES = 'whitebox_awareness_exposures'
 const SESSIONS = 'whitebox_sessions'
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
-const FILTER_KEYS = ['content', 'channel', 'direction', 'last', 'session', 'attrs']
+const FILTER_KEYS = ['content', 'channel', 'direction', 'last', 'since', 'until', 'session', 'attrs']
 const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
 const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum']
 
@@ -64,13 +64,36 @@ function base(db, joinSession) {
 }
 
 // Apply the shared event filters to a knex query (all exposure cols qualified `e.`).
-function applyFilters(db, q, { content, channel, direction, last, session, attrs }, { at, scope, now }) {
+// A bound date, or a named error. `new Date('last week')` is Invalid Date, and an
+// Invalid Date in a WHERE silently matches NOTHING — an empty chart that looks
+// like an honest zero.
+function asDate(v, key) {
+  const d = v instanceof Date ? v : new Date(String(v))
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`selector.metric: \`${key}\` is not a date — got ${JSON.stringify(v)} (use an ISO date like 2026-02-16)`)
+  }
+  return d
+}
+
+function applyFilters(db, q, { content, channel, direction, last, since, until, session, attrs }, { at, scope, now }) {
   if (scope?.length) q = whereScope(q, 'e.passport_id', scope)
   if (content && content !== '*') q = q.whereILike('e.content_id', `%${content}%`)   // DEPRECATED — do not extend
   if (channel) q = q.where('e.channel', channel)
   if (direction) q = q.where('e.direction', direction)
   if (at) q = q.where('e.ts', '<=', now)                                    // as-of: ignore the future
   if (last) q = q.where('e.ts', '>=', new Date(now.getTime() - windowMs(last)))   // lookback window
+
+  // Absolute window, beside the relative one. `last: '30d'` answers "in the last
+  // month" and moves with the clock; `since: '2026-02-16'` answers "since the
+  // campaign launched" and does not. Both are lower bounds, so given together the
+  // later one wins — which is what AND means and needs no special case.
+  //
+  // `since` used to be rejected as an unknown key, with the hint pointing at
+  // `asOf`. That hint was wrong: `asOf` moves the whole query's clock backwards
+  // (time travel — "what did this look like in March"), it does not bound a range
+  // inside the present. There was no way to express a fixed-date window at all.
+  if (since) q = q.where('e.ts', '>=', asDate(since, 'since'))
+  if (until) q = q.where('e.ts', '<=', asDate(until, 'until'))
 
   // Session-joined typed dimensions (allowlisted column name, bound value).
   //

@@ -47,7 +47,19 @@ function cmp(a, b) {
   return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0   // else lexical
 }
 
-const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased']
+// `held` and `distinct` join these because they read the HISTORY, not the current
+// value — which is the whole point of them.
+//
+// A fact is latest-value-per-passport by design: `booking_location` answers "which
+// studio is this customer's most recent" and cannot answer "which studios has this
+// customer used", because the earlier rows are invisible to `eq`/`in`. The event
+// stream can answer it via `attr:location`, but one row per visit means a customer
+// is counted once per visit rather than once per studio.
+//
+//   { booking_location: { held: 'София - Лозенец' } }        ever, not just latest
+//   { booking_location: { held: { in: [...], last: '90d' } } }
+//   { booking_location: { distinct: { gte: 2 } } }           uses two or more studios
+const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
 
 // A predicate needs the history (not just the current value) iff it uses a
 // temporal operator.
@@ -142,6 +154,30 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
 
   let composite = null
   for (const [op, spec] of Object.entries(p)) {
+    // An aggregate over the history rather than a test on one row, so it cannot go
+    // in the per-row loop below. matched_at is the instant the count REACHED the
+    // bound — the visit that made them a two-studio customer, which is the event a
+    // funnel step should anchor on, not their latest visit.
+    if (op === 'distinct') {
+      const { gte, lte, last } = (spec && typeof spec === 'object') ? spec : { gte: spec }
+      const seen = new Set()
+      let reachedAt = null
+      for (const r of history) {
+        if (last && !inWin(r, last)) continue
+        if (r.value === undefined || r.value === null) continue
+        seen.add(JSON.stringify(r.value))                    // by VALUE — objects included
+        if (gte != null && reachedAt == null && seen.size >= gte) reachedAt = new Date(r.observed_at).getTime()
+      }
+      const n = seen.size
+      if (gte != null && n < gte) return null
+      if (lte != null && n > lte) return null
+      // No gte to cross (an lte-only bound) → the last observation is the answer.
+      const best = reachedAt ?? (history.length ? new Date(history[history.length - 1].observed_at).getTime() : null)
+      if (best == null) return null
+      if (composite == null || best > composite) composite = best
+      continue
+    }
+
     let best = null   // latest qualifying observed_at (ms) for this op
     for (let i = 0; i < history.length; i++) {
       const r = history[i]
@@ -165,6 +201,16 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
         case 'increased':
           ok = i > 0 && inWin(r, spec.last) && cmp(r.value, history[i - 1].value) > 0
           break
+        case 'held': {
+          // The value comparators, applied to a historical row instead of the
+          // current one — so `held` accepts everything `eq`/`in`/a range does and
+          // cannot drift from them. A bare value or array is sugar for eq/in.
+          const raw = (spec && typeof spec === 'object' && !Array.isArray(spec)) ? spec : (Array.isArray(spec) ? { in: spec } : { eq: spec })
+          const { last, ...valuePred } = raw
+          if (last && !inWin(r, last)) break
+          ok = matchValue(r.value, Object.keys(valuePred).length ? valuePred : { present: true }, now)
+          break
+        }
         default: throw new Error(`facts: unknown temporal operator "${op}"`)
       }
       if (ok) { const t = new Date(r.observed_at).getTime(); if (best == null || t > best) best = t }

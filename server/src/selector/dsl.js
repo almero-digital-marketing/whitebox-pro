@@ -33,7 +33,14 @@
 // with >= or <=, while a fact takes the full set.
 const FACT_OPS = { '=': 'eq', '!=': 'ne', '>': 'gt', '>=': 'gte', '<': 'lt', '<=': 'lte' }
 const FACT_OP_TEXT = Object.fromEntries(Object.entries(FACT_OPS).map(([text, op]) => [op, text]))
-const FACT_OP_NAMES = new Set([...Object.values(FACT_OPS), 'in', 'present'])
+// The value comparators PLUS the history operators. This carried only the
+// comparators, so the validator rejected every temporal predicate the engine has
+// always supported — `transition`, `changed`, `decreased`, `increased` — and a
+// widget using one failed to save with "unknown operator". The validator being
+// stricter than the engine is the same class of bug as it being looser: both make
+// it lie about what the engine will do.
+const FACT_HISTORY_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
+const FACT_OP_NAMES = new Set([...Object.values(FACT_OPS), 'in', 'present', ...FACT_HISTORY_OPS])
 // The engine has TWO aggregate sets, and which one applies depends on how the
 // clause is evaluated — not on how it is written.
 //
@@ -58,7 +65,7 @@ const AGGS = [...new Set([...GATE_AGGS, ...GROUP_AGGS])]
 // argument list is an open per-event dimension and lands in `attrs`, which is
 // what `event = '...'` relies on.
 const METRIC_COLS = ['channel', 'direction', 'content']
-const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'session', 'attrs'])
+const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'since', 'until', 'session', 'attrs'])
 const SESSION_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer']
 const WINDOW = /^\d+\s*[hdw]$/
 
@@ -389,11 +396,24 @@ export function validate(filter, { grouped = false } = {}) {
             if (fk.length !== 1) return err(path, `a fact clause takes exactly one key, got ${fk.length}`)
             const pred = f[fk[0]]
             if (!pred || typeof pred !== 'object' || Array.isArray(pred)) return err(`${path}.fact.${fk[0]}`, 'takes an { op: value } object')
+            // MULTIPLE operators are AND-ed by the engine — `{ gte: 200, lte: 400 }`
+            // is how a range is written, and operators.js documents it as such. This
+            // insisted on exactly one, so the validator refused the only way to
+            // express a range.
             const ops = Object.keys(pred)
-            if (ops.length !== 1) return err(`${path}.fact.${fk[0]}`, `takes exactly one operator, got ${ops.join(' + ') || 'none'}`)
-            if (!FACT_OP_NAMES.has(ops[0])) return err(`${path}.fact.${fk[0]}`, `unknown operator "${ops[0]}" — one of ${[...FACT_OP_NAMES].join(', ')}`)
-            if (ops[0] === 'in' && !Array.isArray(pred.in)) err(`${path}.fact.${fk[0]}`, '`in` takes an array')
-            if (ops[0] === 'present' && pred.present !== true) err(`${path}.fact.${fk[0]}`, '`present` takes true')
+            if (!ops.length) return err(`${path}.fact.${fk[0]}`, 'takes at least one operator')
+            for (const o of ops) {
+                if (!FACT_OP_NAMES.has(o)) return err(`${path}.fact.${fk[0]}`, `unknown operator "${o}" — one of ${[...FACT_OP_NAMES].join(', ')}`)
+            }
+            if ('in' in pred && !Array.isArray(pred.in)) err(`${path}.fact.${fk[0]}`, '`in` takes an array')
+            if ('present' in pred && typeof pred.present !== 'boolean') err(`${path}.fact.${fk[0]}`, '`present` takes true or false')
+            if ('distinct' in pred) {
+                const d = pred.distinct
+                const shape = d && typeof d === 'object' ? d : null
+                if (!shape || (shape.gte == null && shape.lte == null)) {
+                    err(`${path}.fact.${fk[0]}`, '`distinct` takes { gte: n } and/or { lte: n } — how many different values were held')
+                }
+            }
             return
         }
 

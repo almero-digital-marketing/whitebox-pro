@@ -128,8 +128,17 @@ const QUERY_HINTS = {
   fact: 'put it in `selector.filter.fact`, or `scope.filter.fact` when grouping',
   about: 'put it in `selector.about`',
   grain: '`group.by` chooses the time grain (hour/day/week/month)',
-  window: 'not implemented — use `asOf` for a point in time',
-  since: 'not implemented — use `asOf` for a point in time',
+  // Both windows live INSIDE the metric, beside the aggregate — `last` relative,
+  // `since`/`until` absolute. The old hints here sent people to `asOf`, which is a
+  // different thing entirely: it moves the whole query's clock backwards (time
+  // travel — "what did this look like in March"), it does not bound a range inside
+  // the present.
+  window: 'a window belongs in the metric — `filter.metric.last` (relative, e.g. 30d) or `since`/`until` (absolute dates)',
+  since: 'put it in the metric — `filter.metric: { count: {...}, since: "2026-02-16" }` (and `until` for a closed range)',
+  until: 'put it in the metric — `filter.metric: { count: {...}, until: "2026-02-16" }`',
+  last: 'put it in the metric — `filter.metric: { count: {...}, last: "30d" }`',
+  held: 'put it in the fact — `filter.fact.<key>: { held: "value" }` (ever held, not just current)',
+  distinct: 'put it in the fact — `filter.fact.<key>: { distinct: { gte: 2 } }` (how many different values held)',
   by: 'put it in `group.by`',
   key: 'put it in `breakdownFact.key` (or `distribution.key`)',
 }

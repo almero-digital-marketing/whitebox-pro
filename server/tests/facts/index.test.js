@@ -334,9 +334,21 @@ describe('facts external_id + resolve', () => {
 
   it('appends as before when no external_id is given', async () => {
     const p = await newPassport()
+    // A CHANGED value, because an identical one is now suppressed as a no-op — the
+    // point here is that the external_id unique index is PARTIAL and so does not
+    // constrain anonymous rows, not that restatements append (they do not).
     await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
-    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'visits', value: 2, source: 'x', observed_at: d('2026-01-02') })
     expect(await rows(p)).toHaveLength(2)      // untouched: the index is partial
+  })
+
+  it('a restatement of an anonymous fact is suppressed, and force overrides', async () => {
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
+    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01') })
+    expect(await rows(p)).toHaveLength(1)                                    // no-op suppression
+    await facts.record({ passport_id: p, key: 'visits', value: 1, source: 'x', observed_at: d('2026-01-01'), force: true })
+    expect(await rows(p)).toHaveLength(2)                                    // opted out
   })
 
   it('resolve:skip makes a re-send free', async () => {
@@ -406,10 +418,12 @@ describe('facts external_id + resolve', () => {
       base(p),
       { passport_id: p, key: 'visits_total', value: 12, source: 'gpoint', observed_at: d('2026-03-01T10:00:00Z') },
     ], { resolve: 'skip' })
-    // Re-send both: the identified one is skipped, the anonymous one appends.
+    // Re-send both: the identified one is skipped by ON CONFLICT, the anonymous one
+    // appends because its VALUE moved (an identical restatement would be suppressed
+    // as a no-op, which is a different mechanism and tested on its own above).
     await facts.recordBatch([
       base(p),
-      { passport_id: p, key: 'visits_total', value: 12, source: 'gpoint', observed_at: d('2026-03-01T10:00:00Z') },
+      { passport_id: p, key: 'visits_total', value: 13, source: 'gpoint', observed_at: d('2026-03-02T10:00:00Z') },
     ], { resolve: 'skip' })
     const all = await rows(p)
     expect(all.filter(r => r.key === 'booking')).toHaveLength(1)

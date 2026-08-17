@@ -91,7 +91,7 @@ describe('selector group (time-series + breakdown, §7)', () => {
   it('errors when group has no metric to aggregate', async () => {
     await fixture()
     await expect(selector.resolve({ filter: { fact: { plan_tier: { eq: 'pro' } } } }, { group: { by: 'day' } }))
-      .rejects.toThrow(/requires a single `metric`/)
+      .rejects.toThrow(/requires a `metric`/)
   })
 
   it('errors on an unknown bucket', async () => {

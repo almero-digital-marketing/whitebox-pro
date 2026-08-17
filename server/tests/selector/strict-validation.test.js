@@ -103,13 +103,44 @@ describe('selector — strict clause validation', () => {
     })
 
     // The ~550x error: a cohort-restricted breakdown silently returned global totals.
-    it('rejects a `fact` sibling next to `metric` when grouping, and points at scope', async () => {
+    it('still rejects `{ metric, fact }` as siblings in ONE clause', async () => {
       await seed()
-      const p = selector.resolve({
+      // Not a grouping rule — a clause carries exactly one of all/any/not/fact/metric,
+      // and this shape is refused by filter.js wherever it appears. `all` is how AND
+      // is written, and that form IS accepted when grouping (see below).
+      await expect(selector.resolve({
         filter: { metric: { count: {} }, fact: { plan_tier: { eq: 'pro' } } },
+      }, { group: { by: 'day' } })).rejects.toThrow(/exactly one of/)
+    })
+
+    it('ACCEPTS a cohort clause beside the metric via `all`, and applies it', async () => {
+      await seed()                                  // one 'pro' passport with an exposure
+      // A second passport on a different tier, so there is something for the cohort
+      // to exclude — with only the seeded 'pro' row, a narrowed series and the base
+      // are identical and the assertion would pass without the filter doing anything.
+      const other = crypto.randomUUID()
+      await db('whitebox_passports').insert({ id: other })
+      await db('whitebox_awareness_exposures').insert({
+        passport_id: other, ts: new Date('2026-05-01'), channel: 'web', direction: 'expression',
+        text: 'y', content_id: 'purchase', dwell_ms: 10, meta: JSON.stringify({ event: 'purchase' }),
+      })
+      await facts.record({ passport_id: other, key: 'plan_tier', value: 'free', type: 'text', source: 'test' })
+
+      const sum = (r) => (r || []).reduce((acc, x) => acc + (x.value || 0), 0)
+      const all = await selector.resolve({ filter: { metric: { count: {} } } }, { group: { by: 'day' } })
+      const pro = await selector.resolve({
+        filter: { all: [{ metric: { count: {} } }, { fact: { plan_tier: { eq: 'pro' } } }] },
       }, { group: { by: 'day' } })
-      await expect(p).rejects.toThrow(/not applied when grouping/)
-      await expect(p).rejects.toThrow(/scope\.filter/)
+      expect(sum(all)).toBe(2)
+      expect(sum(pro)).toBe(1)                      // the cohort actually narrowed it
+    })
+
+    it('a cohort clause matching nobody gives an empty series, not the base', async () => {
+      await seed()
+      const r = await selector.resolve({
+        filter: { all: [{ metric: { count: {} } }, { fact: { plan_tier: { eq: '__none__' } } }] },
+      }, { group: { by: 'day' } })
+      expect(r).toEqual([])
     })
 
     it('rejects selector.about when grouping (it does not rank a series)', async () => {
@@ -121,7 +152,7 @@ describe('selector — strict clause validation', () => {
     it('keeps rejecting a group with no metric', async () => {
       await seed()
       await expect(selector.resolve({ filter: { fact: { plan_tier: { eq: 'pro' } } } }, { group: { by: 'day' } }))
-        .rejects.toThrow(/requires a single `metric`/)
+        .rejects.toThrow(/requires a `metric`/)
     })
 
     // scope IS honoured — it must not be swept up by the new checks.
