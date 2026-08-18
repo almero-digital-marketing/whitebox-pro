@@ -36,16 +36,39 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
   // Parsed here, once, rather than in eight handlers. A string that is not JSON
   // is passed through untouched — `question` is legitimately a string, and so is
   // anything a future tool takes.
-  const parsed = (v) => {
+  //
+  // A string that IS meant to be JSON and does not parse is REFUSED. The previous
+  // version returned it unchanged, which restored the exact bug the parsing was added
+  // to fix: one surplus closing brace, `q.selector` undefined, and the response was the
+  // whole base — 301,787 people — presented as an ordinary answer to a query whose real
+  // result was 17. Failing to parse is not a reason to answer a different question.
+  const parsed = (v, key) => {
     if (typeof v !== 'string') return v
     const s = v.trim()
+    // Not JSON-shaped: a prose `question`, a name. Left alone.
     if (!s.startsWith('{') && !s.startsWith('[')) return v
-    try { return JSON.parse(s) } catch { return v }
+    try {
+      return JSON.parse(s)
+    } catch (err) {
+      // Show WHERE. These arrive as one long line from a client that serialised them, and
+      // "Unexpected token }" against 600 characters is not something anyone can act on.
+      const at = /position (\d+)/.exec(err.message)
+      const pos = at ? Number(at[1]) : null
+      const near = pos == null ? '' :
+        ` near: …${s.slice(Math.max(0, pos - 40), pos)}<<HERE>>${s.slice(pos, pos + 40)}…`
+      const e = new Error(
+        `\`${key}\` is not valid JSON: ${err.message}.${near}\n` +
+        `Refused rather than parsed loosely — a query that cannot be read is not a query ` +
+        `with no filter, and answering it would return the whole population as though it ` +
+        `were the result.`)
+      e.status = 400
+      throw e
+    }
   }
   const STRUCTURED = ['query', 'layout', 'presentation', 'position', 'scope']
   const coerce = (args = {}) => {
     const out = { ...args }
-    for (const k of STRUCTURED) if (k in out) out[k] = parsed(out[k])
+    for (const k of STRUCTURED) if (k in out) out[k] = parsed(out[k], k)
     return out
   }
 

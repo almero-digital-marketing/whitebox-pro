@@ -5,6 +5,29 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-analytics 0.16.1
+
+### Fixed — malformed JSON was answered with the whole population
+
+A query string with one surplus closing brace was accepted, the filter discarded, and the
+response was the total passport count — 301,787 — for a query whose real answer was 17.
+Reproducibly, so it read as a real number.
+
+Two places, the same mechanism: a JSON string that failed to parse was replaced with
+something harmless-looking. At the MCP boundary it was returned unchanged, after which
+`q.selector` is undefined; in `runQuery` it became `{}`. An undefined or empty filter is
+EVERYONE, so "cannot read this request" degenerated into "no filter at all".
+
+Both now refuse with a 400 naming the parse position and marking it in context. An
+explicitly empty `{}` still means the whole base — that is a real request; only an
+unreadable one is refused.
+
+Worth noting where this came from: the string-coercion was itself added to fix exactly
+this symptom for VALID JSON strings, and its own `catch` branch preserved the bug for
+invalid ones. The error path of a fix is part of the fix.
+
+---
+
 ## whitebox-pro-server-plugin-analytics 0.16.0 · whitebox-pro-server 2.28.0
 
 ### BREAKING — the resolve envelope is now UNCONDITIONAL

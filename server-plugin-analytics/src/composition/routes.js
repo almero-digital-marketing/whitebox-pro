@@ -389,6 +389,21 @@ function assertQueryKeys(q) {
 // time-series, a fact-value breakdown, a funnel, a grounded answer, or a multi-
 // series comparison (series[] / splitBy). Exported so mcp.js can run the exact
 // same live-preview/widget-resolve logic the REST routes below use.
+// A stored or transmitted query def, or an error. Never `{}` — see runQuery.
+function parseQueryString(query) {
+  const s = query.trim()
+  if (!s) bad('query is empty')
+  try {
+    return JSON.parse(s)
+  } catch (err) {
+    const at = /position (\d+)/.exec(err.message)
+    const pos = at ? Number(at[1]) : null
+    const near = pos == null ? '' :
+      ` near: …${s.slice(Math.max(0, pos - 40), pos)}<<HERE>>${s.slice(pos, pos + 40)}…`
+    bad(`query is not valid JSON: ${err.message}.${near}`)
+  }
+}
+
 export async function runQuery(deps, query = {}, kind) {
   // A query def stored or passed as a JSON STRING is still a query def.
   //
@@ -398,9 +413,15 @@ export async function runQuery(deps, query = {}, kind) {
   // with the entire population. Silently, and on every view. Coercing here
   // repairs those rows without a migration; anything already an object passes
   // straight through.
-  const q = typeof query === 'string'
-    ? (() => { try { return JSON.parse(query) } catch { return {} } })()
-    : (query || {})
+  //
+  // UNPARSEABLE is refused, not defaulted. This used to `return {}`, which is the
+  // whole base — the same "invalid request answered with a plausible number" this
+  // coercion exists to prevent, reintroduced by its own error branch. A stored widget
+  // holding broken JSON should show an error, not a total.
+  const q = typeof query === 'string' ? parseQueryString(query) : (query || {})
+  if (typeof q !== 'object' || Array.isArray(q)) {
+    bad(`query must be an object — got ${Array.isArray(q) ? 'an array' : typeof q}`)
+  }
   assertQueryKeys(q)
   const { selector, awareness } = deps
   // `scope` confines a query to a cohort: an explicit passport-id array, OR a people
