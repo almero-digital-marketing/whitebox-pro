@@ -350,12 +350,33 @@ When a query rests on a fact that holds conflicting values for the people it res
 
 Without warnings the result is returned bare, exactly as before.
 
-A **declared** key never warns — the deployment decided and the answer is right, so it
-appears in `applied` as a statement of the rule used, with no alarm. Warning on it
-anyway would fire on every query touching `first_booked_at` forever, which is how a
-warning becomes noise. `pct_of_cohort` is scoped to the resolved cohort, not the base: a
-key ambiguous for 3% of everyone can be ambiguous for 100% of the people a query
-selected.
+There are two codes, and the difference is which question a declaration closes:
+
+| code | fires when | why |
+|---|---|---|
+| `ambiguous_fact_value` | the key is ambiguous **and undeclared** | nobody chose; `last` won by default and the caller cannot see it |
+| `ambiguous_anchor_fact` | the key is ambiguous **and used as a `window` anchor** — declared or not | a declaration says which value a key MEANS; it does not say where each person's boundary lands |
+
+A declared key used as an ordinary **filter** never warns: the deployment decided, the
+answer is right, and warning anyway would fire on every query touching
+`first_booked_at` forever — which is how a warning becomes noise. It appears in
+`applied` instead, as a statement with no alarm.
+
+A declared key used as an **anchor** does warn, because the question is not the same
+one. `window: { before: { fact: 'first_booked_at' } }` draws a boundary per person, and
+someone holding several candidate dates gets a window containing a different set of
+events depending on which was taken. Nothing is wrong — the rule is declared and
+applied — but "what they watched before booking" should be read as *before the `min`
+first_booked_at*, and `used` says so. Pass `use` on the anchor to ask for a different
+one.
+
+`pct_of_cohort` is scoped to the resolved cohort, not the base: a key ambiguous for 3%
+of everyone can be ambiguous for 100% of the people a query selected.
+
+**Cost.** A declared non-anchor key needs no database work at all — the declaration is
+in memory. Anchors and undeclared keys cost one indexed query (the partial index on
+`value_count > 1`), so the price is proportional to how much a deployment has left
+undecided plus how many anchors a query uses.
 
 Ambiguity is **permanent**, not a bug awaiting a fix. The fact log is append-only, so a
 key legitimately holds many values over time. It does not collapse, and a backfill

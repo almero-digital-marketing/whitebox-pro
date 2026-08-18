@@ -9,7 +9,7 @@ vi.mock('../src/composition/store.js', () => ({
   namesByPassports: vi.fn(async () => ({})),
 }))
 
-import { runQuery, factKeysOf } from '../src/composition/routes.js'
+import { runQuery, factKeysOf, anchorKeysOf } from '../src/composition/routes.js'
 
 // A key being in the allowlist is not the same as it being usable. Unknown keys were
 // rejected from the start; a KNOWN key carrying the wrong shape was not, and the
@@ -118,5 +118,38 @@ describe('factKeysOf', () => {
     expect(keys({ selector: { filter: { metric: { count: {}, source: 'video' } } }, group: { by: 'month' } })).toEqual([])
     expect(keys({})).toEqual([])
     expect(keys(undefined)).toEqual([])
+  })
+})
+
+// Anchors are extracted separately from every other fact a query touches, because they
+// are warned about even when declared — a declaration says which value a key means, not
+// where each person's window boundary lands.
+describe('anchorKeysOf', () => {
+  const keys = (q) => [...anchorKeysOf(q)].sort()
+
+  it('finds only the window anchors, not other fact references', () => {
+    expect(keys({ selector: { filter: { all: [
+      { fact: { tier: { eq: 'gold' } } },
+      { metric: { count: {}, window: { after: { fact: 'first_booked_at' } } } },
+    ] } } })).toEqual(['first_booked_at'])
+  })
+
+  it('finds both sides of a between', () => {
+    expect(keys({ selector: { filter: { metric: {
+      count: {}, window: { between: [{ fact: 'signed_up_at' }, { fact: 'first_booked_at' }] } } } } }))
+      .toEqual(['first_booked_at', 'signed_up_at'])
+  })
+
+  it('reaches through combinators, scope and series', () => {
+    expect(keys({
+      scope: { filter: { metric: { count: {}, window: { before: { fact: 'churned_at' } } } } },
+      series: [{ name: 'A', query: { selector: { filter: { not: {
+        metric: { count: {}, window: { after: { fact: 'first_visit_at' } } } } } } } }],
+    })).toEqual(['churned_at', 'first_visit_at'])
+  })
+
+  it('finds nothing when the query anchors on nothing', () => {
+    expect(keys({ selector: { filter: { fact: { tier: { eq: 'gold' } } } }, group: { by: 'fact:tier' } })).toEqual([])
+    expect(keys({})).toEqual([])
   })
 })

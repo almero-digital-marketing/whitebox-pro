@@ -277,6 +277,36 @@ export function factKeysOf(q, out = new Set()) {
   return out
 }
 
+// The fact keys a query ANCHORS on — the `window` boundaries specifically, not every
+// fact it touches.
+//
+// Separated from factKeysOf because the two warrant different warnings. A declaration
+// settles what a key MEANS, which is enough for a filter: "clients whose first booking
+// was after January" has one answer once you have said which value counts. An anchor is
+// not settled by the same statement — each person's boundary is still one of several
+// dates, and moving it moves which events fall inside the window, so a caller comparing
+// "what they watched before booking" against "after" should know the line was drawn
+// among candidates even when the rule for drawing it is declared.
+export function anchorKeysOf(q, out = new Set()) {
+  if (!q || typeof q !== 'object') return out
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    for (const c of ['all', 'any']) if (Array.isArray(node[c])) node[c].forEach(walk)
+    if (node.not) walk(node.not)
+    const w = node.metric?.window
+    if (w && typeof w === 'object') {
+      for (const side of ['before', 'after', 'between']) {
+        for (const one of [].concat(w[side] ?? [])) {
+          if (one && typeof one === 'object' && typeof one.fact === 'string') out.add(one.fact)
+        }
+      }
+    }
+  }
+  for (const side of ['selector', 'scope']) walk(q[side]?.filter)
+  if (Array.isArray(q.series)) q.series.forEach(e => anchorKeysOf(e?.query, out))
+  return out
+}
+
 function assertQueryKeys(q) {
   for (const k of Object.keys(q)) {
     if (QUERY_KEYS.has(k)) continue

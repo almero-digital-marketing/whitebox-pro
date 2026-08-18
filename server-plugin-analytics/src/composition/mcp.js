@@ -13,7 +13,7 @@
 import { z } from 'zod'
 import * as store from './store.js'
 import * as compose from './compose.js'
-import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf} from './routes.js'
+import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf, anchorKeysOf} from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
 import { renderChart } from './chart-render.js'
 
@@ -135,8 +135,12 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
     if (!facts?.factNotes) return data
     const keys = [...factKeysOf(query || {})]
     if (!keys.length) return data
+    // Anchors are passed separately: they are warned about even when declared, because a
+    // declaration says which value a key means and not where each person's boundary
+    // falls. See facts.factNotes.
+    const anchors = [...anchorKeysOf(query || {})]
     let notes
-    try { notes = await facts.factNotes(keys, { scope }) } catch { return data }
+    try { notes = await facts.factNotes(keys, { scope, anchors }) } catch { return data }
     if (!notes?.warnings?.length) return data
     return { data, applied: notes.applied, warnings: notes.warnings }
   }

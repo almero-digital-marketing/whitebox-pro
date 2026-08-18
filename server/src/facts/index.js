@@ -169,37 +169,61 @@ export const allAmbiguous = () => store.ambiguousKeys({ undeclaredOnly: false })
  * ambiguous keys on this deployment are declared — which is the point. It is a
  * tripwire for the next key someone adds without deciding what it means.
  */
-export async function factNotes(keys, { scope } = {}) {
+export async function factNotes(keys, { scope, anchors } = {}) {
   const wanted = [...new Set([].concat(keys ?? []).filter(k => typeof k === 'string' && k))]
   if (!wanted.length) return { applied: {}, warnings: [] }
 
+  // Keys used as a WINDOW ANCHOR are held to a stricter rule: they are checked for
+  // ambiguity whether or not they are declared.
+  //
+  // A declaration answers "which value does this key mean", and for a filter that is the
+  // whole question. An anchor asks something the declaration does not settle — where each
+  // person's boundary falls — and if that person has several candidate dates, the window
+  // silently contains a different set of events depending on which was picked. Someone
+  // comparing before-booking against after-booking behaviour is entitled to know the line
+  // was drawn among candidates, even when the rule for drawing it is written down.
+  const anchorSet = new Set([].concat(anchors ?? []).filter(k => typeof k === 'string' && k))
+
   const applied = {}
-  const undeclared = []
+  const toCheck = []
   for (const key of wanted) {
     const rule = useFor(key)
     if (rule) applied[key] = rule
-    else undeclared.push(key)
+    // Undeclared: nobody chose, so `last` won by default and the caller cannot see it.
+    // Declared AND an anchor: the rule is known, the ambiguity still matters.
+    if (!rule || anchorSet.has(key)) toCheck.push(key)
   }
 
-  // Only the undeclared keys reach the database. A deployment that declares its
-  // vocabulary pays nothing for this.
-  if (!undeclared.length) return { applied, warnings: [] }
+  // Everything else stays free: a declared, non-anchor key needs no database work,
+  // because the declaration in memory is the whole answer.
+  if (!toCheck.length) return { applied, warnings: [] }
 
-  const rows = await store.ambiguityFor(undeclared, { scope })
-  const warnings = rows.map(r => ({
-    code: 'ambiguous_fact_value',
-    fact: r.key,
-    affected_passports: r.ambiguous_passports,
-    pct_of_cohort: r.pct,
-    max_values_for_one_passport: r.max_values_for_one_passport,
-    used: 'last',
-    // Said in the warning rather than left to a doc: the fix is a declaration, not a
-    // per-query override, because the override has to be repeated by every caller
-    // forever and the declaration is written once by whoever knows what the key means.
-    remedy: `declare it — facts.use: { ${r.key}: 'last' | 'first' | 'min' | 'max' } ` +
-            `in config, or facts.describe('${r.key}', { use }) from the plugin that writes it. ` +
-            `Until then reads take the latest write.`,
-  }))
+  const rows = await store.ambiguityFor(toCheck, { scope })
+  const warnings = rows.map(r => {
+    const isAnchor = anchorSet.has(r.key)
+    const rule = useFor(r.key)
+    return {
+      code: isAnchor ? 'ambiguous_anchor_fact' : 'ambiguous_fact_value',
+      fact: r.key,
+      affected_passports: r.ambiguous_passports,
+      pct_of_cohort: r.pct,
+      max_values_for_one_passport: r.max_values_for_one_passport,
+      // The rule actually applied, so the reader knows which boundary they got rather
+      // than only that several existed.
+      used: rule ?? 'last',
+      // Said in the warning rather than left to a doc. For an undeclared key the fix is
+      // a declaration — an override has to be repeated by every caller forever, while a
+      // declaration is written once by whoever knows what the key means. For a declared
+      // anchor there is nothing to fix: the note exists so the number is read correctly.
+      remedy: rule
+        ? `the window anchored on "${r.key}" using \`${rule}\`; ${r.ambiguous_passports} of these ` +
+          `people hold more than one value, so their boundary is one of several. Nothing is wrong — ` +
+          `read the window as "relative to the ${rule} ${r.key}", and pass use: '…' on the anchor to ask a different one.`
+        : `declare it — facts.use: { ${r.key}: 'last' | 'first' | 'min' | 'max' } ` +
+          `in config, or facts.describe('${r.key}', { use }) from the plugin that writes it. ` +
+          `Until then reads take the latest write.`,
+    }
+  })
   return { applied, warnings }
 }
 

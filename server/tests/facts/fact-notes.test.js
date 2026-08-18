@@ -114,6 +114,83 @@ describe('facts.factNotes', () => {
     expect(n.warnings.map(w => w.fact)).toEqual(['mystery_key'])
   })
 
+
+  // A WINDOW ANCHOR is held to a stricter rule than a filter.
+  //
+  // A declaration answers "which value does this key mean", and for a filter that closes
+  // the question. An anchor asks something it does not close — where each person's
+  // boundary falls — and when a person has several candidate dates the window contains a
+  // different set of events depending on which was taken. So an anchor on an ambiguous
+  // key is reported whether or not the key is declared, with the rule that was applied.
+  it('flags an ambiguous anchor even when the key IS declared', async () => {
+    await conflicted()
+    boot({ facts: { use: { first_booked_at: 'min' } } })
+
+    // As a filter: settled, silent.
+    const asFilter = await facts.factNotes(['first_booked_at'])
+    expect(asFilter.warnings).toEqual([])
+
+    // As an anchor: same key, same declaration, now reported.
+    const asAnchor = await facts.factNotes(['first_booked_at'], { anchors: ['first_booked_at'] })
+    expect(asAnchor.applied).toEqual({ first_booked_at: 'min' })
+    expect(asAnchor.warnings).toHaveLength(1)
+    expect(asAnchor.warnings[0]).toMatchObject({
+      code: 'ambiguous_anchor_fact',
+      fact: 'first_booked_at',
+      affected_passports: 2,
+      used: 'min',                       // the rule applied, not a default
+    })
+  })
+
+  it('says `used: last` for an anchor nobody declared', async () => {
+    await conflicted()
+    const n = await facts.factNotes(['first_booked_at'], { anchors: ['first_booked_at'] })
+    expect(n.warnings[0]).toMatchObject({ code: 'ambiguous_anchor_fact', used: 'last' })
+  })
+
+  it('stays quiet on an anchor whose values do not conflict', async () => {
+    // The trigger is ambiguity, not anchoring: an anchor everyone has one value for
+    // draws one boundary and there is nothing to say about it.
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'signed_up_at', value: '2025-01-01', source: 'crm' })
+    boot({ facts: { use: { signed_up_at: 'min' } } })
+    const n = await facts.factNotes(['signed_up_at'], { anchors: ['signed_up_at'] })
+    expect(n.applied).toEqual({ signed_up_at: 'min' })
+    expect(n.warnings).toEqual([])
+  })
+
+  it('scopes the anchor warning to the cohort too', async () => {
+    const { a, b } = await conflicted()
+    boot({ facts: { use: { first_booked_at: 'min' } } })
+    const n = await facts.factNotes(['first_booked_at'],
+      { anchors: ['first_booked_at'], scope: [a, b] })
+    expect(n.warnings[0].pct_of_cohort).toBe(100)
+  })
+
+  it('keeps a declared NON-anchor key free of database work', async () => {
+    // The anchor rule must not cost the common case its exemption.
+    await conflicted()
+    boot({ facts: { use: { first_booked_at: 'min' } } })
+    let queries = 0
+    const count = () => { queries++ }
+    db.on('query', count)
+    await facts.factNotes(['first_booked_at'], { anchors: [] })
+    db.off('query', count)
+    expect(queries).toBe(0)
+  })
+
+  it('reports both kinds at once, each with its own code', async () => {
+    await conflicted('first_booked_at')
+    await conflicted('mystery_key')
+    boot({ facts: { use: { first_booked_at: 'min' } } })
+    const n = await facts.factNotes(['first_booked_at', 'mystery_key'], { anchors: ['first_booked_at'] })
+    const byFact = Object.fromEntries(n.warnings.map(w => [w.fact, w]))
+    expect(byFact.first_booked_at.code).toBe('ambiguous_anchor_fact')
+    expect(byFact.first_booked_at.used).toBe('min')
+    expect(byFact.mystery_key.code).toBe('ambiguous_fact_value')
+    expect(byFact.mystery_key.used).toBe('last')
+  })
+
   it('handles no keys, unknown keys and duplicates without a query', async () => {
     expect(await facts.factNotes([])).toEqual({ applied: {}, warnings: [] })
     expect(await facts.factNotes(undefined)).toEqual({ applied: {}, warnings: [] })
