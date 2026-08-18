@@ -44,7 +44,17 @@ export function registerMcp(ctx, { selector }) {
       passport:   z.string().optional(),
       asOf:       z.string().optional(),
       limit:      z.number().int().positive().max(1000).optional(),
-      group:      z.object({ by: z.string(), limit: z.number().int().positive().max(1000).optional() }).optional(),
+      // Mirrors the HTTP envelope's groupShape — see query/routes.js. `by` takes two
+      // dimensions to cross-tabulate; band/cohortSize/use were shipped in the engine
+      // and unreachable from here.
+      group:      z.object({
+        by:         z.union([z.string(), z.array(z.string()).length(2)]),
+        limit:      z.number().int().positive().max(1000).optional(),
+        band:       z.number().positive().optional(),
+        cohortSize: z.boolean().optional(),
+        use:        z.enum(['last', 'first', 'min', 'max']).optional(),
+        seriesLimit: z.number().int().positive().max(50).optional(),   // caps the SERIES dimension of a two-dimension `by`
+      }).optional(),
     },
     handler: async ({ selector: sel = {}, ...opts }) => json(await selector.resolve(sel, opts)),
   })

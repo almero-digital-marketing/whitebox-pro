@@ -30,9 +30,22 @@ const selectorShape = z.object({
   judge:  z.object({}).passthrough().optional(),
 }).passthrough()
 
+// MUST list every key metric.group accepts. Being `.strict()` makes an omission here
+// a REJECTION rather than a silent strip, which is the safer failure — but it is still
+// a failure: `band`, `cohortSize` and `use` all shipped in the engine and none of them
+// could cross this boundary, so an HTTP caller could not reach three features that
+// worked perfectly in-process. Same class as the validator lagging the engine on
+// `contains` and the value aggregates. Keep this in step with selector/knowledge.js
+// GROUP_KEYS.
 const groupShape = z.object({
-  by:    z.string(),
-  limit: z.number().int().positive().max(1000).optional(),   // top-N guardrail for high-cardinality keys
+  // A string, or exactly two to cross-tabulate: the first is the x-axis, the second
+  // becomes one series per value.
+  by:         z.union([z.string(), z.array(z.string()).length(2)]),
+  limit:      z.number().int().positive().max(1000).optional(),   // top-N guardrail for high-cardinality keys
+  band:       z.number().positive().optional(),                   // banding for a numeric fact:<key> bucket
+  cohortSize: z.boolean().optional(),                             // return the denominator beside the series
+  use:        z.enum(['last', 'first', 'min', 'max']).optional(),  // WHICH value a fact:<key> bucket means
+  seriesLimit: z.number().int().positive().max(50).optional(),   // caps the SERIES dimension of a two-dimension `by`
 }).strict()   // §7 — a time grain is chosen by `by`; there is no separate `grain`
 
 const querySchema = z.object({

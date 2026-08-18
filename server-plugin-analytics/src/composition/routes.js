@@ -147,12 +147,134 @@ const QUERY_HINTS = {
 // /query envelope rejects it): a grain only applies to a `fact:<key>` bucket,
 // which is resolved in this layer, and the engine's own time grains are chosen
 // by `by` instead.
-const GROUP_KEYS = new Set(['by', 'limit', 'grain'])
+const GROUP_KEYS = new Set(['by', 'limit', 'grain', 'band', 'cohortSize', 'use', 'seriesLimit'])
 
 const GROUP_HINTS = {
   // `group: { by: "day", key: "first_booked_at" }` read as "people by the day of
   // first_booked_at" but resolved as "event rows per calendar day" — off by ~100x.
   key: 'to bucket people by a date fact, use `group: { by: "fact:<key>", grain: "day" }`',
+}
+
+// A key being ALLOWED is not the same as it being usable. The allowlist above caught
+// typos from the start; what it could not catch is a real key carrying the wrong
+// shape, which the resolver then skips over a `?.` guard and drops in silence.
+//
+// `{"splitBy": "attr:location"}` was the reported case: splitBy is a legitimate key,
+// so it passed, and `q.splitBy?.key` is undefined for a string, so the query resolved
+// as though it had never been written — a month series with no split and no complaint.
+// Same silent-ignore class as breakdownFact on a removed key and group.by:"content_url".
+const bad = (msg) => { const e = new Error(msg); e.status = 400; throw e }
+
+function assertQueryShapes(q) {
+  if (q.splitBy !== undefined) {
+    const v = q.splitBy
+    if (typeof v !== 'object' || Array.isArray(v) || v === null) {
+      // A string here is someone reaching for a second dimension. Say what splitBy is
+      // AND where a second dimension actually lives, because the two are different
+      // questions: splitBy compares values of one FACT, group.by takes the dimensions.
+      bad(`splitBy must be an object { key: "<factKey>", values: [...] } — got ${JSON.stringify(v)}. ` +
+          `It splits one series per value of a FACT. To break down by an event attribute ` +
+          `or a second dimension, use \`group.by\` (e.g. { by: ["month", "attr:location"] }).`)
+    }
+    if (typeof v.key !== 'string' || !v.key) {
+      bad(`splitBy needs a \`key\` naming a fact — got ${JSON.stringify(v.key)}`)
+    }
+    if (v.key.startsWith('attr:') || v.key.startsWith('session:')) {
+      bad(`splitBy splits by a FACT's values, and "${v.key}" is an event dimension. ` +
+          `Use \`group.by: ["<time or dim>", "${v.key}"]\` for a second dimension.`)
+    }
+    if (!Array.isArray(v.values) || !v.values.length) {
+      bad(`splitBy needs a non-empty \`values\` array — the values of "${v.key}" to compare. ` +
+          `Got ${JSON.stringify(v.values)}.`)
+    }
+  }
+
+  if (q.series !== undefined) {
+    if (!Array.isArray(q.series) || !q.series.length) {
+      bad(`series must be a non-empty array of { name, query } — got ${JSON.stringify(q.series)}`)
+    }
+    q.series.forEach((entry, i) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        bad(`series[${i}] must be { name, query } — got ${JSON.stringify(entry)}`)
+      }
+      if (!entry.query || typeof entry.query !== 'object') {
+        bad(`series[${i}] needs a \`query\` — got ${JSON.stringify(entry.query)}`)
+      }
+    })
+  }
+
+  if (q.breakdownFact !== undefined) {
+    const v = q.breakdownFact
+    if (typeof v !== 'object' || Array.isArray(v) || v === null || typeof v.key !== 'string' || !v.key) {
+      bad(`breakdownFact must be { key: "<factKey>", values?: [...] } — got ${JSON.stringify(v)}`)
+    }
+  }
+
+  if (q.distribution !== undefined) {
+    const v = q.distribution
+    if (typeof v !== 'object' || Array.isArray(v) || v === null || typeof v.key !== 'string' || !v.key) {
+      bad(`distribution must be { source, key } — got ${JSON.stringify(v)}`)
+    }
+  }
+}
+
+// Every fact key a query def rests on, from every shape that can name one.
+//
+// Needed because a warning about "the fact this answer depends on" has to know which
+// facts those are, and they hide in eight different places — a filter tree that
+// recurses through all/any/not, a window anchor, an aggregate source, a bucket prefix,
+// a breakdown, a distribution, a scatter axis, a splitBy, and a nested series query.
+// Missing one means a silent-default question goes unwarned, which is the whole point.
+export function factKeysOf(q, out = new Set()) {
+  if (!q || typeof q !== 'object') return out
+  const FACT_PREFIX = 'fact:'
+
+  const walkFilter = (node) => {
+    if (!node || typeof node !== 'object') return
+    for (const combinator of ['all', 'any']) {
+      if (Array.isArray(node[combinator])) node[combinator].forEach(walkFilter)
+    }
+    if (node.not) walkFilter(node.not)
+    if (node.fact && typeof node.fact === 'object') {
+      for (const k of Object.keys(node.fact)) out.add(k)
+    }
+    const m = node.metric
+    if (m && typeof m === 'object') {
+      // The window ANCHOR is a fact, and it is the shape most likely to rest on an
+      // ambiguous one — "before they first booked" is exactly the question where
+      // which-value-do-you-mean changes the answer.
+      const w = m.window
+      if (w && typeof w === 'object') {
+        for (const side of ['before', 'after', 'between']) {
+          const spec = w[side]
+          for (const one of [].concat(spec ?? [])) {
+            if (one && typeof one === 'object' && typeof one.fact === 'string') out.add(one.fact)
+          }
+        }
+      }
+      // An aggregate reading a fact rather than an event attribute.
+      for (const v of Object.values(m)) {
+        if (v && typeof v === 'object' && typeof v.fact === 'string') out.add(v.fact)
+      }
+    }
+  }
+
+  for (const side of ['selector', 'scope']) {
+    const sel = q[side]
+    if (sel && typeof sel === 'object') walkFilter(sel.filter)
+  }
+  const by = q.group?.by
+  for (const one of [].concat(by ?? [])) {
+    if (typeof one === 'string' && one.startsWith(FACT_PREFIX)) out.add(one.slice(FACT_PREFIX.length))
+  }
+  if (typeof q.breakdownFact?.key === 'string') out.add(q.breakdownFact.key)
+  if (q.distribution?.source === 'fact' && typeof q.distribution.key === 'string') out.add(q.distribution.key)
+  for (const axis of ['x', 'y', 'colorBy']) {
+    if (typeof q.scatter?.[axis] === 'string') out.add(q.scatter[axis])
+  }
+  if (typeof q.splitBy?.key === 'string') out.add(q.splitBy.key)
+  if (Array.isArray(q.series)) q.series.forEach(e => factKeysOf(e?.query, out))
+  return out
 }
 
 function assertQueryKeys(q) {
@@ -163,6 +285,7 @@ function assertQueryKeys(q) {
     e.status = 400
     throw e
   }
+  assertQueryShapes(q)
   if (q.group && typeof q.group === 'object') {
     for (const k of Object.keys(q.group)) {
       if (GROUP_KEYS.has(k)) continue

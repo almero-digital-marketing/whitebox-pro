@@ -150,6 +150,59 @@ export const undeclaredAmbiguous = () =>
 // picture rather than only the outstanding decisions.
 export const allAmbiguous = () => store.ambiguousKeys({ undeclaredOnly: false })
 
+/**
+ * What a caller should be TOLD about the fact keys a query rested on.
+ *
+ *   { applied:  { key: rule, … }   — the rule used, for every key that has one
+ *     warnings: [ { code, fact, … } ] }
+ *
+ * The split is the whole design. A DECLARED key that holds several values is not a
+ * warning — the deployment decided, the answer is right, and warning about it on every
+ * query is the noise that got per-query warnings rejected the first time this was
+ * proposed. first_booked_at alone would fire on 3,350 passports forever while being
+ * correct. So a declaration produces a STATEMENT of what was done, with no alarm and —
+ * because the declaration is in memory — no database work at all.
+ *
+ * A key that is ambiguous and UNDECLARED is the opposite: nobody has chosen, `last`
+ * won by default, and that default is a coin toss the caller cannot see. That is worth
+ * a warning, and it costs one indexed query. Today the set is empty, because all 16
+ * ambiguous keys on this deployment are declared — which is the point. It is a
+ * tripwire for the next key someone adds without deciding what it means.
+ */
+export async function factNotes(keys, { scope } = {}) {
+  const wanted = [...new Set([].concat(keys ?? []).filter(k => typeof k === 'string' && k))]
+  if (!wanted.length) return { applied: {}, warnings: [] }
+
+  const applied = {}
+  const undeclared = []
+  for (const key of wanted) {
+    const rule = useFor(key)
+    if (rule) applied[key] = rule
+    else undeclared.push(key)
+  }
+
+  // Only the undeclared keys reach the database. A deployment that declares its
+  // vocabulary pays nothing for this.
+  if (!undeclared.length) return { applied, warnings: [] }
+
+  const rows = await store.ambiguityFor(undeclared, { scope })
+  const warnings = rows.map(r => ({
+    code: 'ambiguous_fact_value',
+    fact: r.key,
+    affected_passports: r.ambiguous_passports,
+    pct_of_cohort: r.pct,
+    max_values_for_one_passport: r.max_values_for_one_passport,
+    used: 'last',
+    // Said in the warning rather than left to a doc: the fix is a declaration, not a
+    // per-query override, because the override has to be repeated by every caller
+    // forever and the declaration is written once by whoever knows what the key means.
+    remedy: `declare it — facts.use: { ${r.key}: 'last' | 'first' | 'min' | 'max' } ` +
+            `in config, or facts.describe('${r.key}', { use }) from the plugin that writes it. ` +
+            `Until then reads take the latest write.`,
+  }))
+  return { applied, warnings }
+}
+
 // Is the current-value projection consistent with the append-only log? Exposed so a
 // deployment can assert it on a schedule — the projection is trigger-maintained and
 // therefore hard to desynchronise, but "hard" is not "impossible" and the failure

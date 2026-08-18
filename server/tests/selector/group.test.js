@@ -374,6 +374,119 @@ describe('selector group: bounding events in time', () => {
   })
 })
 
+// TWO dimensions in one query. "Revenue per studio per month" needed one query per
+// period before this, and the results could not be compared without reassembling them
+// by hand — `group.by: ["month","attr:location"]` answered "unknown bucket
+// month,attr:location".
+describe('selector group: cross-tabulating two dimensions', () => {
+  const purchase = (agg) => ({ filter: { metric: { content: 'purchase', ...agg } } })
+  const byName = (r) => Object.fromEntries(r.series.map(s => [s.name, asMap(s.points)]))
+
+  beforeEach(async () => {
+    // Two studios, two months, distinct values so every cell is identifiable.
+    const p1 = await newPassport(), p2 = await newPassport()
+    const rows = [
+      [p1, '2026-05-01', 'sofia', 10], [p1, '2026-05-02', 'sofia', 5],
+      [p1, '2026-06-01', 'sofia', 20], [p2, '2026-05-01', 'plovdiv', 100],
+      [p2, '2026-06-01', 'plovdiv', 200], [p2, '2026-06-02', 'burgas', 1],
+    ]
+    for (const [p, ts, location, value] of rows) {
+      await db('whitebox_awareness_exposures').insert({
+        passport_id: p, ts: d(ts), channel: 'web', direction: 'expression', text: 'x',
+        content_id: 'purchase', meta: JSON.stringify({ value, location }),
+      })
+    }
+  })
+
+  it('returns one series per value of the SECOND dimension, bucketed by the first', async () => {
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['month', 'attr:location'] } })
+    expect(r.multi).toBe(true)
+    expect(r.aggregate).toBe('sum')
+    expect(byName(r)).toEqual({
+      sofia:   { '2026-05': 15, '2026-06': 20 },
+      plovdiv: { '2026-05': 100, '2026-06': 200 },
+      burgas:  { '2026-06': 1 },
+    })
+  })
+
+  it('the ORDER of the dimensions decides which is the axis', async () => {
+    // Swapped: one series per month, bucketed by studio. Same numbers, transposed —
+    // and a chart drawn with the axes the wrong way round is not a small mistake.
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['attr:location', 'month'] } })
+    expect(byName(r)).toEqual({
+      '2026-05': { sofia: 15, plovdiv: 100 },
+      '2026-06': { sofia: 20, plovdiv: 200, burgas: 1 },
+    })
+  })
+
+  it('caps the SERIES dimension and says that it did', async () => {
+    // Without a cap, `['month','attr:location']` returned 123 series on live data:
+    // unreadable, and indistinguishable from a complete answer.
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['month', 'attr:location'], seriesLimit: 2 } })
+    expect(r.series).toHaveLength(2)
+    expect(r.seriesTruncated).toEqual({ shown: 2, cap: 2, dimension: 'attr:location' })
+    // Top-N BY VALUE, so the two biggest studios survive, not an arbitrary two.
+    expect(Object.keys(byName(r)).sort()).toEqual(['plovdiv', 'sofia'])
+  })
+
+  it('says nothing about truncation when nothing was truncated', async () => {
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['month', 'attr:location'], seriesLimit: 10 } })
+    expect(r.seriesTruncated).toBeUndefined()
+  })
+
+  it('`limit` still bounds the x-axis, independently of the series cap', async () => {
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['month', 'attr:location'], limit: 1 } })
+    for (const s of r.series) expect(Object.keys(s.points)).toHaveLength(1)
+  })
+
+  it('gives ONE cohortSize — every series is the same cohort sliced again', async () => {
+    // Not one per series: they are not separate cohorts, and a per-series "size" would
+    // invite dividing a slice by itself.
+    const r = await selector.resolve(purchase({ distinct_passports: {} }),
+      { group: { by: ['month', 'attr:location'], cohortSize: true } })
+    expect(r.cohortSize).toBe(2)
+    expect(r.sizes).toBeUndefined()
+  })
+
+  it('cross-tabs a FACT dimension against an event one', async () => {
+    const p = await newPassport()
+    await db('whitebox_awareness_exposures').insert({
+      passport_id: p, ts: d('2026-05-01'), channel: 'web', direction: 'expression',
+      text: 'x', content_id: 'purchase', meta: JSON.stringify({ value: 7, location: 'sofia' }),
+    })
+    await facts.record({ passport_id: p, key: 'tier', value: 'gold', source: 't' })
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['fact:tier', 'attr:location'] } })
+    // The fixture's own rows have no `tier`, so they bucket as null — an absent value
+    // is a real bucket here, which is the point of the LEFT join.
+    expect(byName(r).sofia).toEqual({ gold: 7, null: 35 })   // 10 + 5 + 20, all months
+  })
+
+  it('refuses the shapes that cannot mean anything', async () => {
+    const bad = (opts) => selector.resolve(purchase({ count: {} }), { group: opts })
+    await expect(bad({ by: ['month', 'attr:location', 'channel'] }))
+      .rejects.toThrow(/exactly two to cross-tabulate.*got 3/s)
+    await expect(bad({ by: ['month'] })).rejects.toThrow(/got 1/)
+    await expect(bad({ by: ['month', 'month'] })).rejects.toThrow(/both `by` dimensions are "month"/)
+    await expect(bad({ by: ['month', 42] })).rejects.toThrow(/must be a string/)
+    await expect(bad({ by: ['fact:tier', 'fact:city'] }))
+      .rejects.toThrow(/at most one `fact:<key>` dimension/)
+  })
+
+  it('refuses to combine with missingAnchor:"bucket" — both want the series', async () => {
+    await expect(selector.resolve(
+      { filter: { metric: { content: 'purchase', count: {},
+        window: { after: { fact: 'tier' }, missingAnchor: 'bucket' } } } },
+      { group: { by: ['month', 'attr:location'] } }))
+      .rejects.toThrow(/already splits the result into one series per cohort/)
+  })
+})
+
 describe('selector group: content buckets', () => {
   const withUrl = async (passport_id, { ts, url }) => {
     await db('whitebox_awareness_exposures').insert({

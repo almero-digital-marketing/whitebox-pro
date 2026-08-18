@@ -13,7 +13,7 @@
 import { z } from 'zod'
 import * as store from './store.js'
 import * as compose from './compose.js'
-import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS } from './routes.js'
+import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf} from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
 import { renderChart } from './chart-render.js'
 
@@ -118,18 +118,42 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
     return { explanation: await compose.explainPerson({ who, facts: safeFacts, activity, context }) }
   })
 
+
+  // What the caller should be told about the facts an answer rested on.
+  //
+  // Attached only when there is a WARNING — i.e. the query leaned on a fact that holds
+  // conflicting values for these people and nobody has declared which one it means, so
+  // `last` won by default and the answer is one of several defensible ones. With no
+  // warning the result is returned exactly as before, so nothing that reads this today
+  // has to change; today there are no warnings, because every ambiguous key on this
+  // deployment is declared.
+  //
+  // A declared key produces `applied` instead — a statement of the rule that was used,
+  // with no alarm attached, since the question is settled. It rides along when a
+  // warning is present so the caller can see the whole picture at once.
+  const withFactNotes = async (data, query, scope) => {
+    if (!facts?.factNotes) return data
+    const keys = [...factKeysOf(query || {})]
+    if (!keys.length) return data
+    let notes
+    try { notes = await facts.factNotes(keys, { scope }) } catch { return data }
+    if (!notes?.warnings?.length) return data
+    return { data, applied: notes.applied, warnings: notes.warnings }
+  }
+
   // --- resolve (live preview / persisted widgets) ---
   const kindEnum = z.enum([...KINDS])
   read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys.', { query: z.any(), kind: kindEnum.optional() }, async ({ query, kind }) => {
     let data = await runQuery(deps, query || {}, kind)
     if (kind === 'table') data = await enrichPeople(data, passports)
-    return data
+    return withFactNotes(data, query)
   })
   read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data.', { id: z.string() }, async ({ id }) => {
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
     let data = await runQuery(deps, w.query, w.kind)
     if (w.kind === 'table') data = await enrichPeople(data, passports)
+    data = await withFactNotes(data, w.query)
     return data
   })
 

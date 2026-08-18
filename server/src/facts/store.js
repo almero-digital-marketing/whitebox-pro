@@ -147,6 +147,52 @@ export async function ambiguousKeys({ undeclaredOnly = true, declared = new Set(
 }
 
 /**
+ * Per-key ambiguity for a NAMED set of keys, optionally confined to a cohort.
+ *
+ * ambiguousKeys() above answers "which keys are a problem across the base" — a
+ * data-health question, one row per key, whole population. This answers "does THIS
+ * query rest on a key that is ambiguous for the people it just resolved", which is a
+ * different question with a different denominator: a key ambiguous for 3% of the base
+ * may be ambiguous for most of a small cohort, and averaging that away is how a
+ * warning becomes useless.
+ *
+ * Served by the partial index on (key, passport_id) WHERE value_count > 1, so the
+ * scan is over the ambiguous minority rather than the projection.
+ */
+export async function ambiguityFor(keys, { scope } = {}) {
+  const wanted = [...new Set([].concat(keys ?? []).filter(k => typeof k === 'string' && k))]
+  if (!wanted.length) return []
+
+  const scoped = scope != null ? [].concat(scope) : null
+  // An empty cohort is not "no ambiguity", it is no question — and passing an empty
+  // array to = ANY() would silently return zero for every key.
+  if (scoped && !scoped.length) return []
+
+  const binds = [wanted]
+  let cohort = ''
+  if (scoped) { cohort = 'and c.passport_id = any(?)'; binds.push(scoped) }
+
+  const { rows } = await db.raw(`
+    select c.key,
+           count(*) filter (where c.value_count > 1) as ambiguous_passports,
+           count(*)                                  as passports_with_key,
+           coalesce(max(c.value_count), 1)           as max_values_for_one_passport
+      from ${CURRENT} c
+     where c.key = any(?) ${cohort}
+     group by c.key`, binds)
+
+  return rows
+    .filter(r => Number(r.ambiguous_passports) > 0)
+    .map(r => ({
+      key: r.key,
+      ambiguous_passports: Number(r.ambiguous_passports),
+      passports_with_key: Number(r.passports_with_key),
+      pct: Math.round((Number(r.ambiguous_passports) / Number(r.passports_with_key)) * 1000) / 10,
+      max_values_for_one_passport: Number(r.max_values_for_one_passport),
+    }))
+}
+
+/**
  * Does the projection agree with the log? Returns the disagreements, empty when it
  * is exact.
  *

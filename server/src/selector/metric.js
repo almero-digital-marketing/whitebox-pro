@@ -846,8 +846,17 @@ function aggSql(agg, bounds = {}) {
 // Default: ordered by bucket (chronological for time grains). `limit` is the
 // HIGH-CARDINALITY GUARDRAIL — an open key (attr:<key>, session:<utm>) can have
 // thousands of buckets, so `limit` returns the top-N by value (desc) instead.
-export async function group(db, spec, { by, at, scope, limit, band, cohortSize, use: bucketUse } = {}) {
+export async function group(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse } = {}) {
   if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, attr:<key>, or fact:<key>)')
+  // TWO dimensions: `by: ['month', 'attr:location']` — the first is the x-axis, the
+  // second becomes one series per value. "Revenue per studio per month" needed one
+  // query per period before this, and the answers could not be compared without
+  // reassembling them by hand.
+  //
+  // Delegated to its own function rather than threaded through this one: the output is
+  // a different SHAPE ({ multi, series }), and every branch below returns a flat
+  // [{bucket, value}].
+  if (Array.isArray(by)) return crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse })
   const { filters, agg, bounds } = split(spec, GROUP_AGGS)
   const now = at ? new Date(at) : new Date()
   const factKey = factKeyOf(by)
@@ -859,6 +868,12 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   // silently would read as "the rule was applied" to whoever wrote it. The aggregate's
   // own rule lives in the aggregate (`avg: { fact, use }`), which is a different
   // question about a possibly different key.
+  if (seriesLimit !== undefined) {
+    throw new Error(
+      `selector.group: \`seriesLimit\` caps the SERIES dimension of a two-dimension \`by\`, ` +
+      `and by: ${JSON.stringify(by)} has one dimension. Use \`limit\` to cap a single bucket, ` +
+      `or cross-tabulate: by: [${JSON.stringify(by)}, '<second dimension>'].`)
+  }
   if (bucketUse !== undefined && factKey == null) {
     throw new Error(
       `selector.group: \`use\` only applies to a \`fact:<key>\` bucket (it picks WHICH of a passport's ` +
@@ -934,6 +949,178 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
 }
 
 /**
+ * Two dimensions in one query: `by: ['month', 'attr:location']`.
+ *
+ * The first dimension is the BUCKET (the x-axis), the second is the SERIES — one per
+ * value. That order is the one the question is asked in ("revenue per studio per
+ * month" reads right-to-left in SQL and left-to-right here), and it is fixed rather
+ * than inferred, because a chart drawn with the axes swapped is not a smaller mistake
+ * than a wrong number.
+ *
+ * Emits the same envelope as crossTabByAnchor — { multi: true, series: [{ name,
+ * points }], aggregate } — because the chart layer already renders it. `sizes` is
+ * omitted: there, the two series ARE two cohorts and each needs its own denominator;
+ * here every series is the same cohort sliced a second way, so one `cohortSize` covers
+ * them and a per-series "size" would invite dividing a slice by itself.
+ *
+ * `limit` applies to the BUCKET dimension, decided across all series together — the
+ * same rule the anchor cross-tab uses, and for the same reason: taking the top N ROWS
+ * gives a ragged table where one series has three points and another has one, and a
+ * chart drawn from it silently omits the comparison it exists to make.
+ */
+async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse } = {}) {
+  if (by.length !== 2) {
+    throw new Error(
+      `selector.group: \`by\` takes one dimension, or exactly two to cross-tabulate ` +
+      `(the first is the x-axis, the second becomes one series per value) — got ${by.length}: ` +
+      `${JSON.stringify(by)}.`)
+  }
+  const [xBy, seriesBy] = by
+  for (const one of by) {
+    if (typeof one !== 'string' || !one) {
+      throw new Error(`selector.group: each \`by\` dimension must be a string — got ${JSON.stringify(one)}`)
+    }
+  }
+  if (xBy === seriesBy) {
+    throw new Error(`selector.group: both \`by\` dimensions are "${xBy}" — a cross-tab needs two different ones`)
+  }
+
+  const { filters, agg, bounds } = split(spec, GROUP_AGGS)
+  const now = at ? new Date(at) : new Date()
+  if (filters.window?.missingAnchor === 'bucket') {
+    // Both want to own the series dimension, and one query cannot have two.
+    throw new Error(
+      'selector.group: `missingAnchor: "bucket"` already splits the result into one series ' +
+      'per cohort, so it cannot be combined with a two-dimension `by`. Use a single `by`, ' +
+      'or drop missingAnchor and cross-tabulate the two dimensions you want.')
+  }
+
+  const xFact = factKeyOf(xBy)
+  const sFact = factKeyOf(seriesBy)
+  if (band != null && xFact == null) {
+    throw new Error('selector.group: `band` only applies to a `fact:<key>` bucket (it bands a numeric fact into ranges)')
+  }
+  if (bucketUse !== undefined && xFact == null && sFact == null) {
+    throw new Error(
+      `selector.group: \`use\` only applies to a \`fact:<key>\` bucket — neither dimension of ` +
+      `${JSON.stringify(by)} is one.`)
+  }
+  // Two fact dimensions would each want their own join alias AND their own `use`, and
+  // one `use` cannot serve both — the same reason the bucket rule and the aggregate
+  // rule are separate.
+  if (xFact != null && sFact != null) {
+    throw new Error(
+      'selector.group: a cross-tab takes at most one `fact:<key>` dimension — two would ' +
+      'need a `use` rule each, and there is one `use`. Put the second fact in a filter, ' +
+      'or ask for it as a separate query.')
+  }
+
+  const xBucket = bucketSql(xBy, band, xFact != null && computed.isComputed(xFact))
+  const sBucket = bucketSql(seriesBy, undefined, sFact != null && computed.isComputed(sFact))
+  const value = aggSql(agg, bounds)
+  const factKey = xFact ?? sFact
+
+  const build = () => {
+    let q = base(db, needsSession(filters, xBy) || needsSession(filters, seriesBy))
+    if (factKey != null) q = joinFact(db, q, factKey, now, 'f', bucketUse)
+    return applyFilters(db, q, filters, { at, scope, now })
+  }
+
+  // Aggregating a FACT stays two-level, for the reason the single-dimension path
+  // documents: exposures are many-per-passport, so aggregating the joined fact
+  // directly weights every customer by how many events they have.
+  const grouped = (cols) => {
+    if (!bounds.fact) {
+      const keys = cols.filter(c => c.as !== 'value')
+      return build().select(...cols.map(c => db.raw(`${c.sql} as ${c.as}`, c.binds)))
+        .groupByRaw(keys.map((_, i) => i + 1).join(', '))
+    }
+    let inner = base(db, needsSession(filters, xBy) || needsSession(filters, seriesBy))
+    if (factKey != null) inner = joinFact(db, inner, factKey, now, 'f', bucketUse)
+    inner = joinFact(db, inner, bounds.fact, now, 'af', bounds.use)
+    const afCol = computed.isComputed(bounds.fact) ? 'af.value::text' : `af.value #>> '{}'`
+    inner = applyFilters(db, inner, filters, { at, scope, now }).distinct(
+      'e.passport_id',
+      ...cols.filter(c => c.as !== 'value').map(c => db.raw(`${c.sql} as ${c.as}`, c.binds)),
+      db.raw(`case when (${afCol}) ~ ? then (${afCol})::numeric end as v`, [NUMERIC_TEXT]),
+    )
+    const keys = cols.filter(c => c.as !== 'value').map(c => c.as)
+    return db.from(inner.as('d'))
+      .select(...keys, db.raw(`${value.sql} as value`, value.bindings))
+      .groupBy(...keys)
+  }
+
+  const X = { sql: xBucket.sql, binds: xBucket.binds, as: 'bucket' }
+  const S = { sql: sBucket.sql, binds: sBucket.binds, as: 'series' }
+  const VALUE = { sql: value.sql, binds: value.bindings, as: 'value' }
+
+  // Which x-buckets survive, decided across all series together.
+  let keep = null
+  if (limit != null) {
+    const top = await grouped([X, VALUE]).orderByRaw('2 desc nulls last').limit(limit)
+    keep = top.map(r => r.bucket)
+    if (!keep.length) return { multi: true, series: [], aggregate: agg }
+  }
+
+  // The SERIES dimension needs its own cap. `limit` bounds the x-axis, and on live data
+  // `['month', 'attr:location']` with limit 3 returned 3 months and 123 series — a
+  // chart nobody can read and a payload nobody asked for. Defaulted rather than
+  // required, because an unbounded second dimension is never what someone wants and
+  // discovering that from an unusable response is a poor way to learn it.
+  //
+  // Chosen the same way as the buckets: top-N by value across the whole result, decided
+  // in SQL so the rows for the losers are never fetched. DEFAULT_SERIES matches the
+  // cap splitBy has always used for the same reason.
+  const seriesCap = seriesLimit ?? DEFAULT_SERIES
+  const topSeries = await grouped([S, VALUE]).orderByRaw('2 desc nulls last').limit(seriesCap + 1)
+  if (!topSeries.length) return { multi: true, series: [], aggregate: agg }
+  const truncated = topSeries.length > seriesCap
+  const keepSeries = topSeries.slice(0, seriesCap).map(r => r.series)
+
+  let q = grouped([S, X, VALUE]).orderByRaw('1, 2')
+  {
+    // Same null handling as the buckets: a null series name is "no value for this
+    // dimension", a real group that `= any()` cannot match.
+    const named = keepSeries.filter(k => k != null)
+    const parts = [], binds = []
+    if (named.length) { parts.push(`${sBucket.sql} = any(?)`); binds.push(...sBucket.binds, named) }
+    if (keepSeries.some(k => k == null)) { parts.push(`${sBucket.sql} is null`); binds.push(...sBucket.binds) }
+    if (parts.length) q = q.whereRaw(`(${parts.join(' or ')})`, binds)
+  }
+  if (keep) {
+    // A null bucket is a real bucket — "no value for this dimension" — and `= any()`
+    // never matches null, so it needs its own arm or the guardrail drops the one
+    // bucket that says "we don't know".
+    const col = bounds.fact ? { sql: 'bucket', binds: [] } : xBucket
+    const named = keep.filter(k => k != null)
+    const parts = [], binds = []
+    if (named.length) { parts.push(`${col.sql} = any(?)`); binds.push(...col.binds, named) }
+    if (keep.some(k => k == null)) { parts.push(`${col.sql} is null`); binds.push(...col.binds) }
+    q = q.whereRaw(`(${parts.join(' or ')})`, binds)
+  }
+
+  const bySeries = new Map()
+  for (const r of await q) {
+    const name = r.series == null ? null : String(r.series)
+    if (!bySeries.has(name)) bySeries.set(name, [])
+    bySeries.get(name).push({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) })
+  }
+  const series = [...bySeries].map(([name, points]) => ({ name, points }))
+
+  // Said out loud. A capped result that looks complete is the failure mode this engine
+  // keeps producing, and "123 locations, showing 6" is the difference between a chart
+  // and a lie.
+  const out = { multi: true, series, aggregate: agg }
+  if (truncated) out.seriesTruncated = { shown: series.length, cap: seriesCap, dimension: seriesBy }
+
+  if (!cohortSize) return out
+  // ONE denominator for the whole result: every series is the same cohort sliced a
+  // second way, not a cohort of its own.
+  const [{ n }] = await build().select(db.raw('count(distinct e.passport_id)::int as n'))
+  return { ...out, cohortSize: n }
+}
+
+/**
  * One series per cohort — anchored vs never-anchored — each bucketed by `by`.
  *
  * Emitted in the same shape the cohort projection already uses (and the chart layer
@@ -950,6 +1137,10 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
  * before fetching them, which is cheaper than transferring every bucket to sort in
  * memory and is what makes the guardrail still a guardrail.
  */
+// The default series cap for a two-dimension `by`. Matches the analytics layer's
+// splitBy cap: more than a handful of overlaid series is unreadable either way.
+const DEFAULT_SERIES = 6
+
 const ANCHORED_BUCKET = '__anchored__'
 
 async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, at, scope, now, limit, factKey, bucketUse }) {
