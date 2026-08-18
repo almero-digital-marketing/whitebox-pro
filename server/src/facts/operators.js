@@ -116,7 +116,7 @@ const lteBy = ordered(c => c <= 0)
 //   { booking_location: { held: 'София - Лозенец' } }        ever, not just latest
 //   { booking_location: { held: { in: [...], last: '90d' } } }
 //   { booking_location: { distinct: { gte: 2 } } }           uses two or more studios
-const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
+export const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
 
 // The lookback window a temporal operator requires, named so a missing one can say
 // WHICH key is missing from WHICH operator. `bad window "undefined"` gave the value

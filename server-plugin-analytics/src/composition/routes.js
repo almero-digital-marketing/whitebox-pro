@@ -112,7 +112,7 @@ const PROJECTION_FOR = { stat: 'count', table: 'people' }
 // outlives this call — the chart renderer reads `stack` off it (analytics_chart)
 // and the console reads `target` (WidgetCard's goal line). Neither reaches
 // resolution, and an allowlist built from what runQuery touches would 400 both.
-const QUERY_KEYS = new Set([
+export const QUERY_KEYS = new Set([
   'selector', 'scope', 'group', 'projection', 'passport', 'limit', 'asOf',
   'breakdownFact', 'distribution', 'scatter', 'cohort', 'funnel', 'named',
   'series', 'splitBy', 'question', 'last', 'from',

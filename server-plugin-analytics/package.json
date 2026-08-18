@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server-plugin-analytics",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "Analytics HTTP surface for whitebox — recall, population, timeline, ask (LLM synthesis), context registry inspection.",
   "type": "module",
   "main": "src/index.js",

@@ -25,9 +25,9 @@ const EXPOSURES = 'whitebox_awareness_exposures'
 // arithmetic happens in JS against a real date.
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
 const SESSIONS = 'whitebox_sessions'
-const FILTER_KEYS = ['content', 'source', 'channel', 'direction', 'last', 'since', 'until', 'window', 'session', 'attrs']
-const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
-const GROUP_AGGS = [
+export const FILTER_KEYS = ['content', 'source', 'channel', 'direction', 'last', 'since', 'until', 'window', 'session', 'attrs']
+export const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
+export const GROUP_AGGS = [
   'count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum',
   'avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest',
 ]
@@ -36,11 +36,11 @@ const GROUP_AGGS = [
 // is interpolated: `dwell_ms` is the only numeric measure on an exposure, and `ts`
 // is deliberately absent — "avg of a timestamp" is a question about buckets, not
 // values, and `by` already answers it.
-const AGG_COLS = ['dwell_ms']
+export const AGG_COLS = ['dwell_ms']
 
 // The session columns reachable via exposures.session_id → whitebox_sessions. A
 // FIXED ALLOWLIST — safe to reference a column by name; values are always bound.
-const SESSION_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer']
+export const SESSION_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer']
 function sessionCol(col) {
   if (!SESSION_COLS.includes(col)) throw new Error(`selector.metric: unknown session column "${col}" (allowed: ${SESSION_COLS.join('/')})`)
   return col
@@ -108,7 +108,7 @@ const USE_SQL = {
   min: 'value asc, observed_at asc, id asc',
 }
 // `last` has no entry because it needs no sort — it is the row the projection holds.
-const USE_RULES = ['last', ...Object.keys(USE_SQL)]
+export const USE_RULES = ['last', ...Object.keys(USE_SQL)]
 
 /**
  * Join a passport's value for `key` as `<alias>.value`.
@@ -258,7 +258,7 @@ const canonUrl = (u) => String(u).split('?')[0].split('#')[0]
 //     value, the same rule every other fact read uses), 'first', 'min', 'max'.
 //     For an "…_at" milestone that got corrected, 'min' is the earliest date ever
 //     claimed and 'last' is the one the CRM currently stands behind.
-const ANCHOR_USE = ['last', 'first', 'min', 'max']
+export const ANCHOR_USE = ['last', 'first', 'min', 'max']
 // What to do with passports whose anchor fact is not set. `exclude` drops them
 // (SQL's own answer to comparing against null); `only` returns just them; `include`
 // treats "no anchor" as "no boundary"; `bucket` keeps them AND labels them, so one
@@ -268,9 +268,9 @@ const ANCHOR_USE = ['last', 'first', 'min', 'max']
 // non-converters don't" needs both sides, and the no-anchor side is usually the
 // bigger one — on live data 494 of 911 video watchers have never booked. Dropping
 // them silently answers a narrower question than the one asked.
-const MISSING = ['exclude', 'include', 'only', 'bucket']
+export const MISSING = ['exclude', 'include', 'only', 'bucket']
 const NO_ANCHOR_BUCKET = '__no_anchor__'
-const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missingAnchor']
+export const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missingAnchor']
 const TIME_HINT =
   "`window` anchors events on a FACT — { after: { fact: 'first_booked_at' } }. " +
   'To bound events by TIME, use the metric keys beside it: `last` for relative ' +
@@ -469,14 +469,98 @@ function applyFilters(db, q, { content, source, channel, direction, last, since,
   }
 
   // Open per-event dims in `meta` jsonb — key AND value are bind params (injection-safe).
-  for (const [key, cond] of Object.entries(attrs || {})) {
-    const lhs = db.raw('e.meta ->> ?', [key])
-    if (Array.isArray(cond)) q = q.whereIn(lhs, cond.map(String))
-    else if (cond && typeof cond === 'object') {
-      if (cond.present === true) q = q.whereRaw('jsonb_exists(e.meta, ?)', [key])   // not `meta ? k` — `?` collides with knex binds
-      else if (Array.isArray(cond.in)) q = q.whereIn(lhs, cond.in.map(String))
-      else throw new Error(`selector.metric: attr "${key}" needs a value, { in: [...] }, or { present: true }`)
-    } else q = q.where(lhs, String(cond))
+  for (const [key, cond] of Object.entries(attrs || {})) q = applyAttr(db, q, key, cond)
+  return q
+}
+
+// One attribute of one event, tested.
+//
+// This accepted three things — a value, `{ in: [...] }`, `{ present: true }` — while a
+// FACT accepted fourteen. So `attrs: { event: 'booking' }` was equality and nothing else:
+// no range, no negation, no "attribute between X and Y". "Who increased their visits" was
+// trivial and "bookings over 100 lv" was inexpressible.
+//
+// That asymmetry got worse when the six booking_* facts became booking EVENTS. cost, paid
+// and first were per-booking data modelled as customer facts, so moving them was right —
+// but it moved them from the surface with fourteen operators to the one with three. The
+// model became honest and less answerable in the same change.
+//
+// The operator NAMES are deliberately the fact ones (facts/operators.js), because a
+// caller should not have to learn two vocabularies for "greater than".
+export const ATTR_OPS = ['eq', 'ne', 'in', 'gt', 'gte', 'lt', 'lte', 'contains', 'startsWith', 'endsWith', 'present']
+
+// A jsonb text value read as a NUMBER, or NULL when it is not one — the same guarded cast
+// the numeric aggregates use, so "is this a number" has one definition. A stray "n/a" in
+// one event contributes nothing instead of aborting the query with invalid-input-syntax.
+const attrNum = (key) => ({
+  sql: `case when (e.meta ->> ?) ~ ? then (e.meta ->> ?)::numeric end`,
+  binds: [key, NUMERIC_TEXT, key],
+})
+
+// LIKE metacharacters in the BOUND are literal — someone searching for a location with a
+// `_` in it means that character, not "any character".
+const likeEscape = (v) => String(v).replace(/([\\%_])/g, '\\$1')
+
+function applyAttr(db, q, key, cond) {
+  const lhs = db.raw('e.meta ->> ?', [key])
+  const textCol = `(e.meta ->> ?)`
+
+  // Sugar, unchanged: a bare value is equality, an array is `in`.
+  if (cond === null || cond === undefined) {
+    throw new Error(`selector.metric: attr "${key}" has no condition — use a value, an array, or { ${ATTR_OPS.join(' / ')} }`)
+  }
+  if (Array.isArray(cond)) return q.whereIn(lhs, cond.map(String))
+  if (typeof cond !== 'object') return q.where(lhs, String(cond))
+
+  const ops = Object.keys(cond)
+  const unknown = ops.filter(o => !ATTR_OPS.includes(o))
+  if (unknown.length) {
+    throw new Error(
+      `selector.metric: attr "${key}" has no operator "${unknown[0]}" — one of ${ATTR_OPS.join(', ')}. ` +
+      `A bare value is \`eq\`, an array is \`in\`. Several operators AND together, which is how a ` +
+      `range is written: { gte: 100, lte: 500 }.`)
+  }
+  if (!ops.length) {
+    throw new Error(`selector.metric: attr "${key}" has an empty condition — use { ${ATTR_OPS.join(' / ')} }`)
+  }
+
+  for (const op of ops) {
+    const bound = cond[op]
+    switch (op) {
+      case 'present':
+        // `jsonb_exists`, not `meta ? k` — the `?` operator collides with knex binds.
+        q = bound === false
+          ? q.whereRaw('not jsonb_exists(e.meta, ?)', [key])
+          : q.whereRaw('jsonb_exists(e.meta, ?)', [key])
+        break
+      case 'eq': q = q.where(lhs, String(bound)); break
+      // Requires the attribute to be PRESENT. A row that never carried it is not "not
+      // Sofia", it is unknown — and in SQL `null <> 'Sofia'` is null, so it would drop out
+      // anyway. Stated explicitly rather than left to three-valued logic to decide.
+      case 'ne':
+        q = q.whereRaw(`jsonb_exists(e.meta, ?) and ${textCol} <> ?`, [key, key, String(bound)])
+        break
+      case 'in':
+        if (!Array.isArray(bound)) throw new Error(`selector.metric: attr "${key}" \`in\` takes an array`)
+        q = q.whereIn(lhs, bound.map(String))
+        break
+      case 'gt': case 'gte': case 'lt': case 'lte': {
+        const sqlOp = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[op]
+        // A NUMBER compares numerically, anything else as text. Same rule facts follow
+        // (operators.js cmp): "100" and 100 must not order differently, and an ISO date
+        // sorts correctly as text, so both useful cases work without a type declaration.
+        if (typeof bound === 'number') {
+          const n = attrNum(key)
+          q = q.whereRaw(`${n.sql} ${sqlOp} ?`, [...n.binds, bound])
+        } else {
+          q = q.where(lhs, sqlOp, String(bound))
+        }
+        break
+      }
+      case 'contains':   q = q.whereRaw(`${textCol} like ? escape '\\'`, [key, `%${likeEscape(bound)}%`]); break
+      case 'startsWith': q = q.whereRaw(`${textCol} like ? escape '\\'`, [key, `${likeEscape(bound)}%`]); break
+      case 'endsWith':   q = q.whereRaw(`${textCol} like ? escape '\\'`, [key, `%${likeEscape(bound)}`]); break
+    }
   }
   return q
 }
@@ -661,8 +745,8 @@ export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
 }
 
 // ── the chart (group) — total aggregate bucketed by time grain or dimension ──
-const TIME_FMT = { hour: 'YYYY-MM-DD"T"HH24:00', day: 'YYYY-MM-DD', week: 'IYYY"-W"IW', month: 'YYYY-MM' }
-const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.source', content: 'e.content_id' }
+export const TIME_FMT = { hour: 'YYYY-MM-DD"T"HH24:00', day: 'YYYY-MM-DD', week: 'IYYY"-W"IW', month: 'YYYY-MM' }
+export const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.source', content: 'e.content_id' }
 
 // "Which content do people consume" is a first-class question for pages, video,
 // email and SMS, and it was not expressible: `content_url` was not a bucket at all,
@@ -1159,8 +1243,8 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
 // studio, and 125 of them is a real network, not an accident. Bounded anyway, because
 // the guardrail exists to stop an open dimension returning thousands of rows nobody
 // asked for.
-const DEFAULT_SERIES = 6
-const MAX_SERIES = 200
+export const DEFAULT_SERIES = 6
+export const MAX_SERIES = 200
 
 const ANCHORED_BUCKET = '__anchored__'
 

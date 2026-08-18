@@ -27,6 +27,13 @@
 //   sum(amount, event = 'purchase') >= 100
 //   email is present
 
+import {
+  FILTER_KEYS, GATE_AGGS as ENGINE_GATE_AGGS, GROUP_AGGS as ENGINE_GROUP_AGGS,
+  AGG_COLS, SESSION_COLS as ENGINE_SESSION_COLS, ATTR_OPS, WINDOW_KEYS as ENGINE_WINDOW_KEYS,
+  MISSING as ENGINE_MISSING, USE_RULES, DEFAULT_SERIES, MAX_SERIES, TIME_FMT, DIM_COL,
+} from './metric.js'
+import { DURATION_HINT, TEMPORAL_OPS } from '../facts/operators.js'
+
 // Mirrors the engine rather than inventing. Fact ops come from facts/store; the
 // aggregates and their filter keys from metric.js, where `bounds` is
 // destructured as { field, gte, lte } — which is why an aggregate compares only
@@ -91,8 +98,13 @@ const AGGS = [...new Set([...GATE_AGGS, ...GROUP_AGGS])]
 const METRIC_COLS = ['channel', 'direction', 'source', 'content']
 const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'since', 'until', 'window', 'session', 'attrs'])
 const ANCHOR_USE = ['last', 'first', 'min', 'max']
-const MISSING = ['exclude', 'include', 'only']
-const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missing']
+// NOT re-declared here. These two were local copies and both had drifted from the
+// engine — `missing` against its `missingAnchor`, and a MISSING list without `bucket` —
+// so the cohort cross-tab passed a live preview (analytics_resolve does not validate) and
+// was rejected the moment anyone tried to SAVE it as a widget. Imported from metric.js
+// instead, which is the only way the two cannot disagree.
+const MISSING = ENGINE_MISSING
+const WINDOW_KEYS = ENGINE_WINDOW_KEYS
 // Fixed spans only. `window.offset`/`within` are converted to SECONDS for
 // make_interval by metric.js offsetSecs, and a calendar month has no seconds count —
 // so M/y are valid for `last` (see WINDOW) and not here. Accepting them would pass
@@ -396,6 +408,8 @@ export function validate(filter, { grouped = false } = {}) {
     const errors = []
     const err = (path, message) => errors.push({ path, message })
 
+    // SESSION columns: still a value, an array, `in`, or `present`. A typed column with a
+    // small vocabulary, and nothing has asked for more.
     const walkCond = (path, cond, what) => {
         if (cond && typeof cond === 'object' && !Array.isArray(cond)) {
             const keys = Object.keys(cond)
@@ -403,6 +417,23 @@ export function validate(filter, { grouped = false } = {}) {
                 err(path, `${what} takes a value, { in: [...] } or { present: true }`)
             } else if (keys[0] === 'in' && !Array.isArray(cond.in)) err(path, '`in` takes an array')
         }
+    }
+
+    // ATTRS take the fact operator set now, so they cannot share the check above — and the
+    // difference is not cosmetic. Sharing it is what would have rejected every range and
+    // every negation the engine just learned, the same way this file rejected `contains`
+    // and the value aggregates before. ATTR_OPS is imported from the engine, not restated.
+    const walkAttrCond = (path, cond) => {
+        if (!cond || typeof cond !== 'object' || Array.isArray(cond)) return   // a value / an array is sugar
+        const keys = Object.keys(cond)
+        if (!keys.length) return err(path, 'an attr filter has an empty condition')
+        const unknown = keys.filter(k => !ATTR_OPS.includes(k))
+        if (unknown.length) {
+            return err(path, `an attr filter has no operator "${unknown[0]}" — one of ${ATTR_OPS.join(', ')}. ` +
+                `A bare value is \`eq\`, an array is \`in\`. Several operators AND together: { gte: 100, lte: 500 }.`)
+        }
+        if ('in' in cond && !Array.isArray(cond.in)) err(path, '`in` takes an array')
+        if ('present' in cond && typeof cond.present !== 'boolean') err(path, '`present` takes true or false')
     }
 
     const walk = (node, path) => {
@@ -522,8 +553,8 @@ export function validate(filter, { grouped = false } = {}) {
                     if (w.within != null && w.between != null) {
                         err(`${path}.metric.window`, '`within` bounds the far side of a before/after window; `between` already has two bounds')
                     }
-                    if (w.missing != null && !MISSING.includes(w.missing)) {
-                        err(`${path}.metric.window.missing`, `one of ${MISSING.join(', ')} — "exclude" drops passports with no anchor, "only" returns just them (the never-reached-it comparison group)`)
+                    if (w.missingAnchor != null && !MISSING.includes(w.missingAnchor)) {
+                        err(`${path}.metric.window.missingAnchor`, `one of ${MISSING.join(', ')} — "exclude" drops passports with no anchor, "only" returns just them (the never-reached-it comparison group), "bucket" cross-tabulates both cohorts as separate series`)
                     }
                     for (const k of ['offset', 'within']) {
                         if (w[k] != null && !OFFSET.test(String(w[k]))) err(`${path}.metric.window.${k}`, `bad offset ${JSON.stringify(w[k])} — use 7d, -7d, 24h or 2w (M/y apply to \`last\`, not to an anchor offset)`)
@@ -555,7 +586,7 @@ export function validate(filter, { grouped = false } = {}) {
                 if (!SESSION_COLS.includes(col)) err(`${path}.metric.session`, `unknown column "${col}" — one of ${SESSION_COLS.join(', ')}`)
                 else walkCond(`${path}.metric.session.${col}`, v, 'a session filter')
             }
-            for (const [k, v] of Object.entries(m.attrs || {})) walkCond(`${path}.metric.attrs.${k}`, v, 'an attr filter')
+            for (const [k, v] of Object.entries(m.attrs || {})) walkAttrCond(`${path}.metric.attrs.${k}`, v)
             return
         }
 
@@ -564,4 +595,143 @@ export function validate(filter, { grouped = false } = {}) {
 
     if (filter != null) walk(filter, 'filter')
     return errors
+}
+
+/**
+ * The GRAMMAR, machine-readable — every operator, aggregate, bucket and shape the engine
+ * accepts, and the three places one word means three things.
+ *
+ * This exists because the only way to learn the language was to get it wrong. The schema
+ * tool returns the VOCABULARY (which fact keys exist, which event actions, which
+ * channels) and `describeQuery` runs query → prose. Nothing ran the other way, so a
+ * caller composing a query discovered the grammar from error messages — a good safety net
+ * and a poor textbook. Improving the errors, which is what kept happening, made the net
+ * finer without ever producing the textbook.
+ *
+ * GENERATED from the engine's own exported constants, never hand-written. A
+ * hand-maintained copy would be a fourth place the grammar lives — after the engine, this
+ * validator, and the compose prompt — and the other three have drifted from each other
+ * repeatedly: `contains` matched in the engine and was rejected here, the value
+ * aggregates shipped and were unreachable, `band`/`cohortSize`/`use` could not cross the
+ * HTTP boundary. A document that can be wrong about the grammar is worse than none.
+ */
+export function grammar() {
+  return {
+    filter: {
+      combinators: { all: 'AND', any: 'OR', not: 'negation' },
+      clauses: {
+        fact: 'what someone IS — one value per person per key, from whitebox_facts',
+        metric: 'what someone DID — an aggregate over events, from whitebox_awareness_exposures',
+      },
+      note: 'all/any/not each take a FILTER, not a clause, so they nest. A leaf is exactly one fact or one metric.',
+    },
+
+    fact: {
+      shape: '{ fact: { <key>: { <op>: value, … } } }',
+      keysPerClause: 1,
+      operators: {
+        value: [...Object.values(FACT_OPS), 'in'],
+        text: FACT_TEXT_OPS,
+        presence: ['present'],
+        relativeDate: ['next', 'last', 'before'],
+        temporal: TEMPORAL_OPS,
+      },
+      controlKeys: FACT_CONTROL_KEYS,
+      use: {
+        values: ANCHOR_USE,
+        meaning: 'WHICH of a passport\'s values the operators apply to. last/first pick by observed_at; max/min by VALUE.',
+        precedence: 'query use > deployment declaration > last',
+        note: 'A control key, not an operator — it needs an operator beside it.',
+      },
+      note: 'Several operators on one key AND together, which is how a range is written: { gte: 200, lte: 400 }.',
+    },
+
+    metric: {
+      shape: '{ metric: { <filters…>, <aggregate>: { <bounds> } } }',
+      filterKeys: FILTER_KEYS,
+      aggregates: {
+        gate: ENGINE_GATE_AGGS,
+        grouped: ENGINE_GROUP_AGGS,
+        note: 'Which set applies depends on how the clause is EVALUATED: without `group` it is a per-passport gate and NEEDS a gte/lte bound; with `group` it is a total per bucket and bounds are ignored.',
+      },
+      aggregateSources: {
+        field: 'a meta attribute on the event',
+        column: AGG_COLS,
+        fact: 'a FACT, deduplicated to one row per (passport, bucket) before aggregating',
+        note: 'One of the three, never two. Non-numeric and absent values contribute nothing rather than zero.',
+      },
+      attrs: {
+        shape: '{ attrs: { <key>: { <op>: value } } }',
+        operators: ATTR_OPS,
+        sugar: { 'a bare value': 'eq', 'an array': 'in' },
+        numeric: 'gt/gte/lt/lte compare NUMERICALLY when the bound is a number, and as text otherwise (so an ISO date works).',
+        note: 'Several operators AND together: { gte: 100, lte: 500 }. `ne` requires the attribute to be present — a row that never carried it is unknown, not "not X".',
+      },
+      session: {
+        columns: ENGINE_SESSION_COLS,
+        operators: ['a bare value', 'an array', 'in', 'present'],
+      },
+      time: {
+        relative: { key: 'last', example: "{ last: '6M' }" },
+        absolute: { keys: ['since', 'until'], example: "{ since: '2026-02-16', until: '2026-08-18' }" },
+        durations: DURATION_HINT,
+        note: 'h/d/w are fixed spans; M/y are CALENDAR spans, clamped on short months. `m` is refused — it means minutes in most grammars.',
+      },
+      window: {
+        keys: ENGINE_WINDOW_KEYS,
+        anchor: "{ fact: '<key>', use?: '<rule>' }",
+        missingAnchor: ENGINE_MISSING,
+        note: 'window anchors events on a FACT\'S VALUE — each person\'s own boundary. It takes NO dates and NO durations of its own; a time range is `last`/`since`/`until` above. offset/within are fixed spans only (seconds-based), so M/y do not apply there.',
+      },
+    },
+
+    group: {
+      keys: ['by', 'limit', 'band', 'cohortSize', 'use', 'seriesLimit'],
+      buckets: {
+        time: Object.keys(TIME_FMT),
+        column: [...Object.keys(DIM_COL), 'content_url', 'content_hash'],
+        prefixed: { 'session:<utm>': ENGINE_SESSION_COLS, 'attr:<key>': 'any meta attribute', 'fact:<key>': 'any fact key' },
+      },
+      crossTab: {
+        shape: "by: ['<x-axis>', '<series>']",
+        dimensions: 2,
+        limits: { limit: 'caps the x-axis (first) dimension', seriesLimit: `caps the series (second) dimension — default ${DEFAULT_SERIES}, max ${MAX_SERIES}` },
+        returns: '{ multi: true, series: [{ name, points: [{ bucket, value }] }], aggregate }',
+        note: 'At most one dimension may be a fact:<key>. Cannot combine with missingAnchor: "bucket", which already owns the series dimension.',
+      },
+      use: { values: USE_RULES, appliesTo: 'a fact:<key> bucket only' },
+    },
+
+    projections: {
+      people: '{ passports: [{ id, … }] }',
+      count: '{ count: n }',
+      knowledge: 'the grouped series — requires `group`',
+    },
+
+    // THE OVERLOADED WORDS. Not a style note: each of these cost real time to work out
+    // from errors, and none of them can be renamed without breaking stored widgets.
+    sameWordThreeMeanings: {
+      last: [
+        { where: 'metric.last', means: 'a relative TIME WINDOW over events', example: "{ metric: { last: '6M', count: {} } }" },
+        { where: 'fact.<key>.last', means: 'a relative-date OPERATOR — the value falls in the last N', example: "{ fact: { last_order_at: { last: '30d' } } }" },
+        { where: 'use: "last"', means: 'pick the value with the newest observed_at', example: "{ fact: { ltv: { gte: 1, use: 'last' } } }" },
+        { where: 'a temporal operator\'s window', means: 'the lookback for changed/increased/held', example: "{ fact: { visits: { increased: { last: '7d' } } } }" },
+      ],
+      limitVsSeriesLimit: [
+        { key: 'limit', bounds: 'the buckets — the x-axis on a cross-tab' },
+        { key: 'seriesLimit', bounds: 'the series — the SECOND dimension of a cross-tab only' },
+      ],
+      note: 'The engine reads these by POSITION, not by name, so which meaning applies is decided by where the word sits.',
+    },
+
+    mistakes: [
+      { wrote: "window: { between: ['<date>', '<date>'] }", means: 'nothing — window anchors on a fact', want: 'since / until' },
+      { wrote: "window: { last: '6M' }", means: 'nothing — not a window key', want: 'last, on the metric' },
+      { wrote: "last: '6m'", means: 'nothing — m is minutes elsewhere', want: '6M' },
+      { wrote: "{ increased: '7d' }", means: 'nothing — no window key', want: '{ increased: { last: "7d" } }' },
+      { wrote: 'pick: "min"', means: 'no such operator', want: 'use' },
+      { wrote: 'a fact filter plus a lifetime sum', means: "those people's ALL-TIME total", want: 'a time bound on the metric' },
+      { wrote: 'a gate aggregate with no bound', means: 'matches nobody', want: '{ gte: 1 }' },
+    ],
+  }
 }

@@ -5,6 +5,49 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.30.0 · analytics 0.17.0
+
+### `attrs` take the fact operator set
+
+`eq · ne · in · gt · gte · lt · lte · contains · startsWith · endsWith · present`, where
+before there were three: a value, `{in: […]}`, `{present: true}`. So an event attribute
+supported equality and nothing else — no range, no negation — while a fact supported
+fourteen operators including change detection. "Who increased their visits" was trivial
+and "bookings over 100 lv" was inexpressible.
+
+The asymmetry got worse in 2.24.0, when the six `booking_*` facts became booking EVENTS.
+`cost`/`paid`/`first` were per-booking data wrongly modelled as customer facts, so moving
+them was right — but it moved them from the surface with fourteen operators to the one
+with three. The model became more honest and less answerable in the same change.
+
+`gt/gte/lt/lte` compare numerically when the bound is a number and as text otherwise, so
+an ISO date works. Several operators AND together. `ne` requires the attribute to be
+present — a booking with no `location` is unknown, not "not Варна".
+
+### `analytics_grammar` — the grammar, as a call
+
+`analytics_schema` gives the vocabulary (which fact keys, which event actions, which
+channels); nothing gave the syntax, and `analytics_describe_query` runs query → prose. So
+the grammar could only be learned by writing something wrong and reading the error. Every
+improvement to those errors made the guessing cheaper without removing it.
+
+Generated from the engine's exported constants, so it cannot describe a language the
+engine does not speak. It also names the overloaded words, none of which can be renamed
+without breaking stored widgets: `last` means four different things depending on where it
+sits, and `limit`/`seriesLimit` bound different dimensions.
+
+### Fixed — two drifts the grammar work exposed on its first run
+
+· The validator listed `missing` where the engine reads `missingAnchor`, and its mode list
+  had no `bucket`. `analytics_resolve` does not validate, so the anchor cross-tab
+  previewed correctly and was refused the moment anyone tried to SAVE it as a widget.
+  Both constants are now imported from the engine instead of restated.
+· The attrs check would have rejected every new operator above. Fourth instance of this
+  validator being stricter than the engine, after the temporal operators, the value
+  aggregates and `contains`.
+
+---
+
 ## whitebox-pro-server-plugin-analytics 0.16.1
 
 ### Fixed — malformed JSON was answered with the whole population

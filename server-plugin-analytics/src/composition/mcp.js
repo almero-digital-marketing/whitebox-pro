@@ -13,7 +13,8 @@
 import { z } from 'zod'
 import * as store from './store.js'
 import * as compose from './compose.js'
-import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf, anchorKeysOf, factUsesOf} from './routes.js'
+import { grammar } from 'whitebox-pro-server/selector-dsl'
+import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf, anchorKeysOf, factUsesOf, QUERY_KEYS} from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
 import { renderChart } from './chart-render.js'
 
@@ -112,7 +113,45 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
     return report
   })
   read('analytics_schema', 'The queryable vocabulary — fact keys (+ sample values), event actions, event attributes, campaigns, sources, channels. Ground a query in real keys before composing one.', { refresh: z.boolean().optional() }, ({ refresh }) => compose.discoverSchema({ refresh }))
-  read('analytics_suggest_questions', 'Suggested starter/follow-up questions for a report (the compose box "Try one:" chips) — grounded in its existing widgets, its name, or just the data vocabulary if neither.', { report_id: z.string().optional() }, async ({ report_id }) => {
+// THE GRAMMAR, not the vocabulary.
+  //
+  // analytics_schema answers "which fact keys and event actions exist here"; this answers
+  // "what can I write". The two were never the same question, and only the first had a
+  // tool — so the grammar was learned by composing a query, reading the error, and trying
+  // again. Every improvement to those errors made the guessing cheaper without ever
+  // removing it.
+  //
+  // Generated from the engine's own constants (selector/dsl.js grammar()), so it cannot
+  // describe a language the engine does not speak. Writing it found two live drifts on its
+  // first run: `missingAnchor` was rejected by the validator that guards saving, and
+  // `attrs` had three operators where a fact had fourteen.
+  read('analytics_grammar',
+    'The QUERY GRAMMAR — every operator, aggregate, bucket, window key and response shape, with the overloaded words spelled out (`last` means four different things depending on where it sits) and the common mistakes paired with what to write instead. Complements analytics_schema, which gives the vocabulary (real fact keys, event actions, channels) rather than the syntax. Generated from the engine constants, so it cannot drift from what the engine accepts.',
+    {},
+    () => ({
+      ...grammar(),
+      composition: {
+        note: 'This layer wraps the core selector above. `selector` holds everything documented there.',
+        keys: [...QUERY_KEYS].sort(),
+        kinds: [...KINDS],
+        shapes: {
+          breakdownFact: '{ key: "<factKey>", values?: [...] } — split a cohort by a fact\'s values',
+          splitBy: '{ key: "<factKey>", values: [...] } — the SAME measure as one series per fact value (max 6). NOT a second dimension; that is group.by: [x, series]',
+          series: '[{ name, query }] — genuinely different queries overlaid (max 6)',
+          distribution: '{ source: "fact"|"event", key, bins? }',
+          scatter: '{ x, y, colorBy? } — numeric facts, one dot per person',
+          funnel: '{ steps: [{ name, select, within? }] }',
+          question: 'a grounded generative answer — last resort, qualitative only',
+        },
+        response: {
+          shape: '{ data, applied, warnings }',
+          always: true,
+          note: 'The result is ALWAYS under `data`, never at the root. `applied` names the value rule each fact was read under; `warnings` is empty unless a fact is ambiguous and undeclared, or is a window anchor.',
+        },
+      },
+    }))
+
+  read('analytics_suggest_questions',  'Suggested starter/follow-up questions for a report (the compose box "Try one:" chips) — grounded in its existing widgets, its name, or just the data vocabulary if neither.', { report_id: z.string().optional() }, async ({ report_id }) => {
     let name = '', widgets = []
     if (report_id) {
       const report = await store.getReport(report_id)

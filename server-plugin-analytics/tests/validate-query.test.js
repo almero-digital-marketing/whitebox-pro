@@ -131,6 +131,60 @@ describe('validateQuery — malformed queries are named precisely', () => {
     expect(badOffset.message).toMatch(/M\/y apply to `last`, not to an anchor offset/)
   })
 
+
+  // ATTRS took three operators while a FACT took fourteen, and this validator enforced the
+  // three. So the range/negation/substring operators the engine just learned would have
+  // been rejected on the way in — the fourth instance of this file being stricter than the
+  // engine, after the temporal operators, the value aggregates and `contains`.
+  it('accepts the attr operators the engine matches', () => {
+    const ok = (attrs) => validateQuery({
+      selector: { filter: { metric: { attrs, count: {} } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })
+    expect(ok({ paid: { gte: 100 } })).toEqual([])
+    expect(ok({ paid: { gte: 100, lte: 500 } })).toEqual([])        // a range ANDs
+    expect(ok({ location: { ne: 'Варна' } })).toEqual([])
+    expect(ok({ location: { contains: 'Пловдив' } })).toEqual([])
+    expect(ok({ paid: { present: false } })).toEqual([])
+    expect(ok({ event: 'booking' })).toEqual([])                     // sugar still fine
+    expect(ok({ online: ['true', 'false'] })).toEqual([])
+
+    const [bad] = ok({ paid: { roughly: 100 } })
+    expect(bad.message).toMatch(/no operator "roughly"/)
+    expect(bad.message).toMatch(/gte: 100, lte: 500/)                // says how to write a range
+    const [badIn] = ok({ paid: { in: 100 } })
+    expect(badIn.message).toMatch(/`in` takes an array/)
+  })
+
+  it('leaves `session` on its narrower set', () => {
+    // Sessions are typed columns with a small vocabulary; nothing has asked for ranges
+    // there, and widening both from one shared check is what would have hidden the
+    // difference.
+    const [err] = validateQuery({
+      selector: { filter: { metric: { session: { utm_source: { gte: 1 } }, count: {} } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })
+    expect(err.message).toMatch(/a session filter takes a value/)
+  })
+
+  // The validator's window keys had DRIFTED from the engine's: it listed `missing` where
+  // the engine reads `missingAnchor`, and its mode list had no `bucket`. analytics_resolve
+  // does not validate, so the anchor cross-tab previewed fine and was refused the moment
+  // anyone tried to SAVE it as a widget.
+  it('accepts missingAnchor, including the cross-tab mode', () => {
+    const w = (window) => validateQuery({
+      selector: { filter: { metric: { source: 'video', count: {}, window } } },
+      projection: 'knowledge', group: { by: 'content_url' },
+    })
+    for (const mode of ['exclude', 'include', 'only', 'bucket']) {
+      expect(w({ after: { fact: 'first_booked_at' }, missingAnchor: mode })).toEqual([])
+    }
+    const [stale] = w({ after: { fact: 'k' }, missing: 'only' })
+    expect(stale.message).toMatch(/unknown key "missing"/)
+    const [bad] = w({ after: { fact: 'k' }, missingAnchor: 'maybe' })
+    expect(bad.message).toMatch(/exclude, include, only, bucket/)
+  })
+
   it('accepts `use` on a fact predicate, and checks the rule', () => {
     expect(validateQuery({
       selector: { filter: { fact: { first_booked_at: { gte: '2026-01-01', use: 'min' } } } },

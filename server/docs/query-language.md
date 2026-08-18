@@ -164,9 +164,32 @@ source may carry its own `use`.
 | key | matches |
 |---|---|
 | `channel` · `direction` · `source` | exposure columns; `=`, array, `{in}`, `{present}` |
-| `attrs: {…}` | the `meta` jsonb — `{event: 'booking'}`, `{present: true}` |
+| `attrs: {…}` | the `meta` jsonb — the **fact operator set** (below) |
 | `session: {…}` | UTM columns via the session join — `utm_source`, `utm_campaign`, `utm_medium`, `utm_term`, `utm_content`, `referrer` |
 | `content` | **deprecated** substring on the opaque `content_id` |
+
+### `attrs` — the same operators a fact takes
+
+```json
+{"attrs": {"event": "booking", "paid": {"gte": 100, "lte": 500}}}
+{"attrs": {"location": {"contains": "Пловдив"}}}
+{"attrs": {"location": {"ne": "Варна"}}}
+{"attrs": {"paid": {"present": false}}}
+```
+
+`eq` · `ne` · `in` · `gt` · `gte` · `lt` · `lte` · `contains` · `startsWith` ·
+`endsWith` · `present`. A bare value is `eq`, an array is `in`, and several operators AND
+together — which is how a range is written.
+
+`gt`/`gte`/`lt`/`lte` compare **numerically** when the bound is a number and as text
+otherwise, so an ISO date works too. A row that does not carry the attribute contributes
+nothing rather than a zero, and `ne` requires the attribute to be **present** — a booking
+with no `location` is not "not Варна", it is unknown.
+
+> Until 2.30.0 this took only a value, `{in: […]}` and `{present: true}`, while a fact
+> took fourteen operators. "Bookings over 100 lv" was therefore inexpressible — and got
+> worse when `cost`/`paid`/`first` moved off customer facts onto booking events, which was
+> the right model on a less answerable surface.
 
 ### Bounding events in TIME
 
@@ -441,7 +464,27 @@ increases it.
 
 ---
 
-## 11. The mistakes this language invites
+## 11. `analytics_grammar` — the grammar, as a call
+
+`analytics_schema` returns the **vocabulary**: which fact keys exist here, which event
+actions, which channels, which campaigns. `analytics_grammar` returns the **syntax** —
+every operator, aggregate, bucket, window key and response shape, generated from the
+engine's own constants so it cannot describe a language the engine does not speak.
+
+It also names the words that mean several things, because none of them can be renamed
+without breaking stored widgets:
+
+| `last` | means |
+|---|---|
+| `metric.last` | a relative time window over events |
+| `fact.<key>.last` | a relative-date operator — the value falls in the last N |
+| `use: "last"` | pick the value with the newest `observed_at` |
+| a temporal operator's `last` | the lookback for `changed`/`increased`/`held` |
+
+And `limit` bounds the buckets while `seriesLimit` bounds the series — the second
+dimension of a cross-tab only.
+
+## 12. The mistakes this language invites
 
 | you wrote | it means | you wanted |
 |---|---|---|
