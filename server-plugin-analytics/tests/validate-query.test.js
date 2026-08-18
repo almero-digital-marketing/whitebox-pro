@@ -101,6 +101,36 @@ describe('validateQuery — malformed queries are named precisely', () => {
     expect(err.message).toMatch(/`contains` takes a string/)
   })
 
+
+  // The validator must accept exactly the durations the engine parses. `last` gained
+  // calendar units (6M/1y); `window.offset`/`within` did NOT, because the engine
+  // converts those to SECONDS for make_interval and a month has no seconds count.
+  // Widening both would have made the validator LOOSER than the engine — the mirror
+  // of the bug that hid `contains` and the value aggregates.
+  it('accepts calendar durations for `last` and refuses them for an anchor offset', () => {
+    expect(validateQuery({
+      selector: { filter: { metric: { attrs: { event: 'booking' }, last: '6M', sum: { field: 'paid' } } } },
+      projection: 'knowledge', group: { by: 'attr:location' },
+    })).toEqual([])
+    expect(validateQuery({
+      selector: { filter: { metric: { attrs: { event: 'booking' }, last: '1y', count: {} } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })).toEqual([])
+
+    const [badLast] = validateQuery({
+      selector: { filter: { metric: { attrs: { event: 'booking' }, last: '6m', count: {} } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })
+    expect(badLast.message).toMatch(/6M or 1y/)
+
+    const [badOffset] = validateQuery({
+      selector: { filter: { metric: { attrs: { event: 'booking' }, count: {},
+        window: { after: { fact: 'first_booked_at' }, offset: '6M' } } } },
+      projection: 'knowledge', group: { by: 'month' },
+    })
+    expect(badOffset.message).toMatch(/M\/y apply to `last`, not to an anchor offset/)
+  })
+
   it('accepts `use` on a fact predicate, and checks the rule', () => {
     expect(validateQuery({
       selector: { filter: { fact: { first_booked_at: { gte: '2026-01-01', use: 'min' } } } },

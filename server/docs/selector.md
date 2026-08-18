@@ -143,6 +143,23 @@ where `<agg>` is `count` · `distinct_sessions` · `sum_dwell_ms` · `recency_da
 { metric: { attrs: { event: "pricing_view" }, last: "7d", count: { gte: 2 } } }          // ≥ 2 pricing views this week
 ```
 
+> **Bounding events in TIME** — `last` (relative), `since` / `until` (absolute).
+> These are metric keys, siblings of the aggregate:
+>
+> ```js
+> { metric: { attrs: { event: "booking" }, last: "6M", sum: { field: "paid" } } }
+> { metric: { attrs: { event: "booking" }, since: "2026-02-16", until: "2026-08-18", sum: { field: "paid" } } }
+> ```
+>
+> With `group.by` this answers "revenue per studio for the last six months" —
+> `last` bounds the time, `by: "attr:location"` splits the studios. Durations are
+> `7d` · `24h` · `2w` · `6M` (months) · `1y`; `M`/`y` are calendar spans (§ facts).
+>
+> **Not to be confused with `window`** (§ below), which anchors events relative to a
+> *fact's value* (`{ after: { fact: "first_booked_at" } }`). `window` takes no dates
+> and no durations of its own — a date handed to it is a time bound, and time bounds
+> are the three keys above.
+>
 > **`sum` is currency-naive** — it adds raw `meta.value`. Mixed-currency bases must
 > filter to one currency (or normalize upstream); the metric won't do FX.
 >

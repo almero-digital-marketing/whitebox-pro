@@ -310,6 +310,70 @@ describe('selector group: `use` on a fact aggregate and a fact bucket', () => {
   })
 })
 
+// Bounding events in TIME. `last`/`since`/`until` always did this; what did not exist
+// was a month unit, and what actively misled was every error message around them.
+// `window: { between: [dateA, dateB] }` answered "window anchor must be { fact }" and
+// `window: { last: '6M' }` answered "window has no last" — neither mentioning that the
+// keys for a time range sit one level up. The reported consequence was that "revenue
+// per studio for the last 6 months" looked inexpressible, when it was one key away.
+describe('selector group: bounding events in time', () => {
+  const paid = async (spec) => selector.resolve(
+    { filter: { metric: { content: 'purchase', ...spec, sum: { field: 'value' } } } },
+    { group: { by: 'channel' } })
+
+  beforeEach(async () => {
+    const p = await newPassport()
+    await expose(p, { channel: 'web', ts: '2026-08-17', value: 10 })   // yesterday
+    await expose(p, { channel: 'web', ts: '2026-05-01', value: 100 })  // ~3.5 months back
+    await expose(p, { channel: 'web', ts: '2025-01-01', value: 1000 }) // over a year back
+  })
+
+  it('accepts a calendar month unit, which is what a half-year is written in', async () => {
+    const at = { asOf: '2026-08-18' }
+    const only = async (spec, opts) => (await selector.resolve(
+      { filter: { metric: { content: 'purchase', ...spec, sum: { field: 'value' } } } },
+      { group: { by: 'channel' }, ...opts }))[0]?.value
+    expect(await only({ last: '7d' }, at)).toBe(10)
+    expect(await only({ last: '6M' }, at)).toBe(110)      // yesterday + May
+    expect(await only({ last: '1y' }, at)).toBe(110)
+    expect(await only({ last: '2y' }, at)).toBe(1110)     // everything
+  })
+
+  it('accepts absolute bounds, and both together', async () => {
+    const only = async (spec) => (await selector.resolve(
+      { filter: { metric: { content: 'purchase', ...spec, sum: { field: 'value' } } } },
+      { group: { by: 'channel' }, asOf: '2026-08-18' }))[0]?.value
+    expect(await only({ since: '2026-01-01' })).toBe(110)
+    expect(await only({ since: '2026-01-01', until: '2026-06-01' })).toBe(100)
+    expect(await only({ until: '2025-06-01' })).toBe(1000)
+  })
+
+  it('points at `last`/`since`/`until` when a DATE is handed to `window`', async () => {
+    // The error that cost the reporter the afternoon: it described what `window` is
+    // and never said where a time bound lives.
+    await expect(paid({ window: { between: ['2026-02-16', '2026-08-18'] } }))
+      .rejects.toThrow(/bound events by TIME.*`last` for relative.*`since`\/`until` for absolute/s)
+    await expect(paid({ window: { after: '2026-02-16' } }))
+      .rejects.toThrow(/bound events by TIME/)
+  })
+
+  it('tells `window: { last }` to move up a level, and shows the move', async () => {
+    await expect(paid({ window: { last: '6M' } }))
+      .rejects.toThrow(/`last` is a METRIC key, not a window one — move it up/)
+  })
+
+  it('names the unit when the duration is unparseable', async () => {
+    await expect(paid({ last: '6m' })).rejects.toThrow(/bad duration "6m" for `last`/)
+    await expect(paid({ last: 'six months' })).rejects.toThrow(/bad duration "six months"/)
+  })
+
+  it('still anchors on a fact, which is what `window` is for', async () => {
+    // The pointer must not have broken the feature it points away from.
+    const r = await paid({ window: { after: { fact: 'signed_up_at' } } })
+    expect(Array.isArray(r)).toBe(true)
+  })
+})
+
 describe('selector group: content buckets', () => {
   const withUrl = async (passport_id, { ts, url }) => {
     await db('whitebox_awareness_exposures').insert({

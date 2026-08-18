@@ -16,10 +16,15 @@
 import { whereScope } from '../db.js'
 import * as computed from '../facts/computed.js'
 import { useFor as declaredUseFor } from '../facts/index.js'
+import { shift, DURATION_HINT } from '../facts/operators.js'
 
 const EXPOSURES = 'whitebox_awareness_exposures'
-const SESSIONS = 'whitebox_sessions'
+// Fixed spans only, and deliberately so: `recency_days` counts whole days, and
+// offsetSecs converts an offset to SECONDS for make_interval. A calendar month has
+// no seconds count, so M/y are confined to the lookback grammar (shift), where the
+// arithmetic happens in JS against a real date.
 const MS = { h: 3600e3, d: 86400e3, w: 604800e3 }
+const SESSIONS = 'whitebox_sessions'
 const FILTER_KEYS = ['content', 'source', 'channel', 'direction', 'last', 'since', 'until', 'window', 'session', 'attrs']
 const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency_days']
 const GROUP_AGGS = [
@@ -41,10 +46,18 @@ function sessionCol(col) {
   return col
 }
 
-function windowMs(w) {
-  const m = /^(\d+)\s*(h|d|w)$/.exec(String(w ?? '').trim())
-  if (!m) throw new Error(`selector.metric: bad window "${w}" (use 7d, 24h, 2w)`)
-  return Number(m[1]) * MS[m[2]]
+// `last: '6M'` was rejected because this grammar was milliseconds-only and a month
+// is not a fixed number of them. It now shares facts/operators.js's parser, which
+// does calendar arithmetic for M/y — so "the last 6 months" means the same day six
+// months ago in a metric window and in a fact predicate, rather than 182.6 days in
+// one and something else in the other.
+function lookback(w, now) {
+  try {
+    return shift(now, w, -1, 'last')
+  } catch {
+    throw new Error(
+      `selector.metric: bad duration ${JSON.stringify(w)} for \`last\` (use ${DURATION_HINT})`)
+  }
 }
 
 // Split a spec into { filters, agg, bounds }, validating the aggregate against the
@@ -258,10 +271,20 @@ const ANCHOR_USE = ['last', 'first', 'min', 'max']
 const MISSING = ['exclude', 'include', 'only', 'bucket']
 const NO_ANCHOR_BUCKET = '__no_anchor__'
 const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missingAnchor']
+const TIME_HINT =
+  "`window` anchors events on a FACT — { after: { fact: 'first_booked_at' } }. " +
+  'To bound events by TIME, use the metric keys beside it: `last` for relative ' +
+  "({ last: '6M' }) or `since`/`until` for absolute " +
+  "({ since: '2026-02-16', until: '2026-08-18' })"
 
 function anchorSql(db, spec, alias) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
-    throw new Error(`selector.metric: window anchor must be { fact: '<key>' } — got ${JSON.stringify(spec)}`)
+    // A date here is not a typo, it is someone reaching for a time bound and finding
+    // the only window key that exists. Saying what `window` is without saying where
+    // time bounds live is what made "revenue for the last 6 months" look
+    // inexpressible when `last: '6M'` was always the answer.
+    throw new Error(
+      `selector.metric: ${TIME_HINT}. Got ${JSON.stringify(spec)}.`)
   }
   // Same precedence as a fact clause: the anchor's own `use` beats the key's
   // declaration, which beats 'last'. Without this a declared `first_booked_at: min`
@@ -305,7 +328,18 @@ function offsetSecs(v, key) {
 function applyWindow(db, q, win, now) {
   if (typeof win !== 'object' || Array.isArray(win)) throw new Error('selector.metric: `window` must be an object')
   const unknown = Object.keys(win).filter(k => !WINDOW_KEYS.includes(k))
-  if (unknown.length) throw new Error(`selector.metric: window has no "${unknown[0]}" (use ${WINDOW_KEYS.join('/')})`)
+  if (unknown.length) {
+    // `window: { last: '6M' }` lands here, and it is the single most likely thing to
+    // be written by someone wanting a time range — so it gets the pointer rather
+    // than a bare list of anchor keys.
+    const timeKey = ['last', 'since', 'until'].includes(unknown[0])
+    throw new Error(
+      `selector.metric: \`window\` has no "${unknown[0]}" (anchor keys: ${WINDOW_KEYS.join('/')})` +
+      (timeKey
+        ? `. \`${unknown[0]}\` is a METRIC key, not a window one — move it up: ` +
+          `{ ${unknown[0]}: ${JSON.stringify(win[unknown[0]])}, sum: { field: 'paid' } }`
+        : ''))
+  }
 
   const { before, after, between, offset, within, missingAnchor = 'exclude' } = win
   const missing = missingAnchor
@@ -398,7 +432,7 @@ function applyFilters(db, q, { content, source, channel, direction, last, since,
   if (direction) q = whereLabel(q, 'e.direction', direction)
   if (win) q = applyWindow(db, q, win, now)
   if (at) q = q.where('e.ts', '<=', now)                                    // as-of: ignore the future
-  if (last) q = q.where('e.ts', '>=', new Date(now.getTime() - windowMs(last)))   // lookback window
+  if (last) q = q.where('e.ts', '>=', lookback(last, now))                        // lookback window
 
   // Absolute window, beside the relative one. `last: '30d'` answers "in the last
   // month" and moves with the clock; `since: '2026-02-16'` answers "since the

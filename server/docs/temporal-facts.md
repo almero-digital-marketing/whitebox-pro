@@ -176,6 +176,14 @@ History unlocks predicates about *movement*, not just state:
 ({gte?,lte?} — how many DIFFERENT values were held). Their `last` is the lookback
 window — see the direction note above.)
 
+> **Every temporal op needs `{ last: … }`.** The window is a key inside the operator,
+> not the operator's value: `{ increased: { last: '7d' } }`, never `{ increased: '7d' }`.
+>
+> **Durations** are `7d` · `24h` · `2w` · `6M` (months) · `1y`. `M` and `y` are
+> CALENDAR spans — `6M` is the same day-of-month six months ago, clamped for short
+> months (31 August − 6M = 28 February), not 182 fixed days. `m` is rejected rather
+> than guessed at, since it means minutes in most other grammars.
+
 Against `p1` on 2026‑06‑20: `plan_tier transition→cancelled last 30d` ✅ (Jun‑15).
 
 ## 5. Writing — core primitive + sources

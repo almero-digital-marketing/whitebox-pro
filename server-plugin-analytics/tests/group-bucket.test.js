@@ -20,14 +20,21 @@ import * as store from '../src/composition/store.js'
 // returned `{ series: [], total: 0 }`: an empty chart, no error, nothing to
 // distinguish "unsupported" from "no data".
 describe('runQuery: which group buckets reach the engine', () => {
-  const deps = ({ factKeys = ['first_booked_at', 'visits_total'] } = {}) => {
+  const deps = ({ factKeys = ['first_booked_at', 'visits_total'], declared = [] } = {}) => {
     // Projection-aware: cohortScope() asks for `people` and reads `.passports`,
     // while the grouped call returns a series.
     const resolve = vi.fn(async (_sel, opts) => (opts?.projection === 'people'
       ? { passports: [{ id: 'a' }, { id: 'b' }] }
       : [{ bucket: 'x', value: 1 }]))
     return {
-      deps: { selector: { resolve }, awareness: {}, facts: { usedKeys: vi.fn(async () => factKeys) } },
+      deps: {
+        selector: { resolve },
+        awareness: {},
+        facts: {
+          usedKeys: vi.fn(async () => factKeys),
+          declaredKeys: vi.fn(() => declared.map(key => ({ key }))),
+        },
+      },
       resolve,
     }
   }
@@ -63,6 +70,56 @@ describe('runQuery: which group buckets reach the engine', () => {
     await expect(runQuery(d, q('nope'), 'breakdown')).rejects.toMatchObject({ status: 400 })
   })
 
+
+  // Explicit spellings were EXEMPT from the vocabulary check, on the reasoning that a
+  // caller naming a fact meant it. Meaning it is not the same as being right: when the
+  // six booking_* keys were deleted on 2026-08-18, every dashboard widget breaking down
+  // by booking_location kept rendering {series:[],total:0} — a real answer, to a key
+  // that no longer exists.
+  it('names an unknown key given as breakdownFact, instead of an empty series', async () => {
+    const { deps: d } = deps()
+    const query = {
+      selector: { filter: { metric: { count: {}, source: 'video' } } },
+      breakdownFact: { key: 'booking_location' },
+    }
+    await expect(runQuery(d, query, 'breakdown')).rejects.toThrow(/unknown fact key "booking_location"/)
+  })
+
+  it('names an unknown key given as fact:<key> too', async () => {
+    const { deps: d } = deps()
+    await expect(runQuery(d, q('fact:booking_cost'), 'breakdown'))
+      .rejects.toThrow(/unknown fact key "booking_cost"/)
+    await expect(runQuery(d, q('fact:booking_cost'), 'breakdown'))
+      .rejects.toMatchObject({ status: 400 })
+  })
+
+  it('lists the keys that DO exist, so the fix is in the message', async () => {
+    const { deps: d } = deps({ factKeys: ['ltv_paid', 'visits_total'] })
+    await expect(runQuery(d, q('fact:booking_cost'), 'breakdown'))
+      .rejects.toThrow(/Known facts: ltv_paid, visits_total/)
+  })
+
+  it('still accepts an explicit key that EXISTS', async () => {
+    const { deps: d } = deps()
+    const query = {
+      selector: { filter: { metric: { count: {}, source: 'video' } } },
+      breakdownFact: { key: 'visits_total' },
+    }
+    await expect(runQuery(d, query, 'breakdown')).resolves.toBeDefined()
+  })
+
+  it('leaves an existing key with no matching rows as a legitimate empty series', async () => {
+    // usedKeys() is the keys present in the LOG, so a real key that matches nobody in
+    // this cohort is a true zero and must not become an error.
+    const { deps: d } = deps()
+    store.factBreakdown.mockResolvedValueOnce({ series: [], total: 0 })
+    const query = {
+      selector: { filter: { metric: { count: {}, source: 'video' } } },
+      breakdownFact: { key: 'first_booked_at' },
+    }
+    await expect(runQuery(d, query, 'breakdown')).resolves.toBeDefined()
+  })
+
   it('still treats a bare token that IS a fact key as a fact breakdown', async () => {
     // The fallback exists to rescue the compose model, which emits a fact key as
     // the bucket in several shapes. That has to keep working.
@@ -71,12 +128,21 @@ describe('runQuery: which group buckets reach the engine', () => {
     expect(store.factBreakdown).toHaveBeenCalledWith('visits_total', expect.anything(), expect.anything())
   })
 
-  it('and an explicit fact: prefix, without consulting the vocabulary', async () => {
-    // `fact:` is unambiguous, so an unrecorded key is a legitimate empty result
-    // rather than a mistake — nobody having a value yet is an answer.
-    const { deps: d } = deps({ factKeys: [] })
+  it('lets a DECLARED key with no rows yet be a legitimate empty result', async () => {
+    // This used to skip the vocabulary check for `fact:` entirely, reasoning that the
+    // prefix is unambiguous so an unrecorded key must be a real zero. The reasoning
+    // holds for a key the deployment has DECLARED and nobody has written yet — and it
+    // also let through every typo and every key that had been deleted. Declarations
+    // separate the two, so both cases can be right.
+    const { deps: d } = deps({ factKeys: [], declared: ['brand_new_key'] })
     const out = await runQuery(d, q('fact:brand_new_key'), 'breakdown')
     expect(out).toEqual({ series: [], total: 0 })
+  })
+
+  it('errors on a fact: key that is neither written nor declared', async () => {
+    const { deps: d } = deps({ factKeys: [] })
+    await expect(runQuery(d, q('fact:brand_new_key'), 'breakdown'))
+      .rejects.toThrow(/unknown fact key "brand_new_key"/)
   })
 
   it('does not fail the query when the fact vocabulary is unavailable', async () => {

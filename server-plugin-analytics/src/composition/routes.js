@@ -285,18 +285,47 @@ export async function runQuery(deps, query = {}, kind) {
     const scope = await cohortScope()
     if (emptyCohort(scope)) return { series: [], total: 0 }
     const key = q.breakdownFact?.key || factGroup
-    // The bare-token fallback exists to rescue the compose model, which emits a
-    // fact key as the bucket in several shapes. It also swallowed every typo and
-    // every unlisted core bucket: an unknown key has no rows, and no rows renders
-    // as a legitimately empty chart. If the key is not in the fact vocabulary,
-    // say so and name what IS accepted.
-    if (factGroup && !q.breakdownFact && !explicitFact) {
+    // An unknown key has no rows, and no rows renders as a legitimately empty chart —
+    // so a typo, a renamed key and a DELETED key all come back as {series:[],total:0},
+    // indistinguishable from "nobody matched". Same silent-empty class as the
+    // group.by:"content_url" case.
+    //
+    // Checked for EVERY spelling of a fact bucket, not just the bare-token fallback.
+    // It was guarded by `!q.breakdownFact && !explicitFact` on the reasoning that a
+    // caller naming a fact explicitly meant it — but meaning it is not the same as
+    // being right, and those two spellings are the ones dashboards actually store.
+    // The six booking_* keys were removed on 2026-08-18, so every widget still
+    // breaking down by them was reading an empty chart as a real answer.
+    //
+    // A key that EXISTS but matches nothing still returns an empty series: usedKeys()
+    // is the keys present in the log, so a real key with no matching rows is a
+    // legitimate zero and only a key nobody has ever written is an error.
+    {
+      // The vocabulary is what has been WRITTEN plus what the deployment DECLARES.
+      // usedKeys() alone cannot tell a typo from a key that is declared and simply has
+      // no rows yet, and that ambiguity is why the explicit spellings were exempted
+      // from this check in the first place. With declarations in it the rule is exact:
+      //
+      //   declared, no rows yet  → empty series (nobody has a value yet IS an answer)
+      //   never declared, no rows → error (a typo, or a key that has been removed)
+      //
+      // The six booking_* keys were deliberately undeclared and were deleted on
+      // 2026-08-18, so they land in the second case — which is the reported bug.
       let known = null
-      try { known = (await deps.facts?.usedKeys?.()) ?? null } catch { known = null }
+      try {
+        const used = (await deps.facts?.usedKeys?.()) ?? null
+        if (Array.isArray(used)) {
+          const declared = (deps.facts?.declaredKeys?.() ?? []).map(d => d.key ?? d)
+          known = [...new Set([...used, ...declared])]
+        }
+      } catch { known = null }
       if (Array.isArray(known) && !known.includes(key)) {
+        const named = !!q.breakdownFact || explicitFact
         const e = new Error(
-          `unknown group bucket "${key}" — not a fact key and not a core bucket ` +
-          `(${[...CORE_BUCKETS].join('/')}, session:<utm>, attr:<key>, fact:<key>). ` +
+          (named
+            ? `unknown fact key "${key}" — nothing has ever been recorded under it. `
+            : `unknown group bucket "${key}" — not a fact key and not a core bucket ` +
+              `(${[...CORE_BUCKETS].join('/')}, session:<utm>, attr:<key>, fact:<key>). `) +
           `Known facts: ${known.slice(0, 12).join(', ')}${known.length > 12 ? ', …' : ''}`)
         e.status = 400
         throw e

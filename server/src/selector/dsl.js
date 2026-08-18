@@ -93,9 +93,14 @@ const METRIC_KEYS = new Set([...METRIC_COLS, 'last', 'since', 'until', 'window',
 const ANCHOR_USE = ['last', 'first', 'min', 'max']
 const MISSING = ['exclude', 'include', 'only']
 const WINDOW_KEYS = ['before', 'after', 'between', 'offset', 'within', 'missing']
+// Fixed spans only. `window.offset`/`within` are converted to SECONDS for
+// make_interval by metric.js offsetSecs, and a calendar month has no seconds count —
+// so M/y are valid for `last` (see WINDOW) and not here. Accepting them would pass
+// the validator and fail in the engine.
 const OFFSET = /^-?\d+\s*[hdw]$/
 const SESSION_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer']
-const WINDOW = /^\d+\s*[hdw]$/
+// M = months, y = years — CALENDAR spans, parsed by facts/operators.js shift().
+const WINDOW = /^\d+\s*(?:[hdw]|M|y)$/
 
 export class QuerySyntaxError extends Error {
     constructor(message, pos) {
@@ -252,7 +257,7 @@ export function parse(src) {
                 const w = peek()
                 if (!at('window') && !at('string')) throw new QuerySyntaxError('Expected a window like 30d, 24h or 2w', w.pos)
                 p++
-                if (!WINDOW.test(String(w.value))) throw new QuerySyntaxError(`Bad window ${JSON.stringify(w.value)} — use 30d, 24h or 2w`, w.pos)
+                if (!WINDOW.test(String(w.value))) throw new QuerySyntaxError(`Bad window ${JSON.stringify(w.value)} — use 30d, 24h, 2w, 6M or 1y`, w.pos)
                 metric.last = String(w.value)
                 return
             }
@@ -521,7 +526,7 @@ export function validate(filter, { grouped = false } = {}) {
                         err(`${path}.metric.window.missing`, `one of ${MISSING.join(', ')} — "exclude" drops passports with no anchor, "only" returns just them (the never-reached-it comparison group)`)
                     }
                     for (const k of ['offset', 'within']) {
-                        if (w[k] != null && !OFFSET.test(String(w[k]))) err(`${path}.metric.window.${k}`, `bad offset ${JSON.stringify(w[k])} — use 7d, -7d, 24h or 2w`)
+                        if (w[k] != null && !OFFSET.test(String(w[k]))) err(`${path}.metric.window.${k}`, `bad offset ${JSON.stringify(w[k])} — use 7d, -7d, 24h or 2w (M/y apply to \`last\`, not to an anchor offset)`)
                     }
                     const anchors = w.between != null ? (Array.isArray(w.between) ? w.between : [w.between]) : [w.before ?? w.after]
                     if (w.between != null && (!Array.isArray(w.between) || w.between.length !== 2)) {
@@ -545,7 +550,7 @@ export function validate(filter, { grouped = false } = {}) {
                     }
                 }
             }
-            if (m.last != null && !WINDOW.test(String(m.last))) err(`${path}.metric.last`, `bad window ${JSON.stringify(m.last)} — use 30d, 24h or 2w`)
+            if (m.last != null && !WINDOW.test(String(m.last))) err(`${path}.metric.last`, `bad window ${JSON.stringify(m.last)} — use 30d, 24h, 2w, 6M or 1y`)
             for (const [col, v] of Object.entries(m.session || {})) {
                 if (!SESSION_COLS.includes(col)) err(`${path}.metric.session`, `unknown column "${col}" — one of ${SESSION_COLS.join(', ')}`)
                 else walkCond(`${path}.metric.session.${col}`, v, 'a session filter')

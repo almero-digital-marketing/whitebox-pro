@@ -324,7 +324,7 @@ describe('selector: fact-anchored window', () => {
     await fixture()
     await expect(selector.resolve(
       video({ window: { ...BEFORE, missing: 'only' }, count: {} }), { group: { by: 'source' } }))
-      .rejects.toThrow(/window has no "missing"/)
+      .rejects.toThrow(/`window` has no "missing"/)
   })
 
   it('between two anchors', async () => {
@@ -400,10 +400,10 @@ describe('selector: the whole question, end to end', () => {
     await fixture()
     const bad = async (w) => selector.resolve(video({ window: w, count: {} }), { group: { by: 'source' } })
     await expect(bad({ before: { fact: 'x' }, after: { fact: 'y' } })).rejects.toThrow(/exactly one of before\/after\/between/)
-    await expect(bad({ before: 'first_booked_at' })).rejects.toThrow(/must be \{ fact/)
+    await expect(bad({ before: 'first_booked_at' })).rejects.toThrow(/anchors events on a FACT/)
     await expect(bad({ before: { fact: 'x' }, missingAnchor: 'maybe' })).rejects.toThrow(/exclude\/include\/only\/bucket/)
     await expect(bad({ before: { fact: 'x' }, offset: '7 days' })).rejects.toThrow(/bad `offset`/)
-    await expect(bad({ before: { fact: 'x' }, use: 'min' })).rejects.toThrow(/window has no "use"/)
-    await expect(bad({ nope: 1 })).rejects.toThrow(/window has no "nope"/)
+    await expect(bad({ before: { fact: 'x' }, use: 'min' })).rejects.toThrow(/`window` has no "use"/)
+    await expect(bad({ nope: 1 })).rejects.toThrow(/`window` has no "nope"/)
   })
 })

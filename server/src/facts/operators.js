@@ -3,14 +3,50 @@
 // transition operators against a key's ordered history. The store feeds these;
 // the selector's `filter.fact` is defined by them. See docs/temporal-facts.md.
 
-const UNIT = { h: 3600e3, d: 86400e3, w: 604800e3 }
+// h/d/w are FIXED spans, so they are plain milliseconds. M/y are CALENDAR spans:
+// "the last 6 months" means the same day-of-month six months ago, not 182.6 fixed
+// days. Folding them into one millisecond table would make `6M` quietly mean
+// something no calendar agrees with, and a report labelled "6 months" would not
+// match the same period in any other tool. Kept in ONE place and exported, because
+// selector/metric.js parses the same grammar for `last` — two parsers would drift,
+// which is how `contains` ended up matching in the engine and rejected by the
+// validator.
+const FIXED = { h: 3600e3, d: 86400e3, w: 604800e3 }
+const DURATION = /^(\d+)\s*(h|d|w|M|y)$/
+export const DURATION_HINT = '7d, 24h, 2w, 6M (months) or 1y'
 
-// Parse a relative window like "7d", "24h", "2w" → milliseconds.
-function ms(window) {
-  const m = /^(\d+)\s*(h|d|w)$/.exec(String(window ?? '').trim())
-  if (!m) throw new Error(`facts: bad window "${window}" (use e.g. 7d, 24h, 2w)`)
-  return Number(m[1]) * UNIT[m[2]]
+// A misspelling worth naming rather than rejecting generically: `m` is the obvious
+// thing to type for months and, in every other duration grammar, means minutes.
+function badDuration(spec, what) {
+  const s = String(spec ?? '').trim()
+  const extra = /^\d+\s*m$/.test(s) ? ' — `m` is ambiguous; use M for months' : ''
+  return `facts: bad duration ${JSON.stringify(spec)} for \`${what}\` (use ${DURATION_HINT})${extra}`
 }
+
+/**
+ * `now` moved by a duration: back for a lookback (sign -1), forward for `next`.
+ *
+ * Calendar units use setMonth/setFullYear and CLAMP on overflow, so 31 August
+ * minus 6 months is 28 February rather than 3 March. That is what Postgres's
+ * interval arithmetic does, and the two have to agree — a fact predicate
+ * evaluated in JS and a metric window evaluated in SQL answering different
+ * questions about "the last 6 months" is the same class of split-brain bug as a
+ * bucket and a filter disagreeing about which value a key means.
+ */
+export function shift(now, spec, sign = -1, what = 'window') {
+  const m = DURATION.exec(String(spec ?? '').trim())
+  if (!m) throw new Error(badDuration(spec, what))
+  const n = Number(m[1]) * sign
+  const unit = m[2]
+  if (FIXED[unit]) return new Date(now.getTime() + n * FIXED[unit])
+  const d = new Date(now)
+  const day = d.getDate()
+  if (unit === 'M') d.setMonth(d.getMonth() + n)
+  else d.setFullYear(d.getFullYear() + n)
+  if (d.getDate() !== day) d.setDate(0)          // overflowed a short month — clamp
+  return d
+}
+
 
 // Numbers compare numerically; ISO-date-ish strings as time; else lexically.
 function toTime(v) {
@@ -82,6 +118,20 @@ const lteBy = ordered(c => c <= 0)
 //   { booking_location: { distinct: { gte: 2 } } }           uses two or more studios
 const TEMPORAL_OPS = ['changed', 'transition', 'decreased', 'increased', 'held', 'distinct']
 
+// The lookback window a temporal operator requires, named so a missing one can say
+// WHICH key is missing from WHICH operator. `bad window "undefined"` gave the value
+// format and nothing else, and took eight attempts to decode.
+function windowOf(op, spec) {
+  const w = (spec && typeof spec === 'object' && !Array.isArray(spec)) ? spec.last : undefined
+  if (w === undefined) {
+    const got = spec === undefined ? 'nothing' : JSON.stringify(spec)
+    throw new Error(
+      `facts: \`${op}\` needs a lookback window — write { ${op}: { last: "7d" } } ` +
+      `(${DURATION_HINT}). Got ${got}.`)
+  }
+  return w
+}
+
 // A predicate needs the history (not just the current value) iff it uses a
 // temporal operator.
 export function isTemporal(predicate) {
@@ -145,9 +195,9 @@ export function matchValue(value, predicate, now = new Date()) {
       case 'lte': ok = lteBy(value, bound); break
       // Directional date windows — each states which way time points, so the
       // window is unambiguous without knowing the value.
-      case 'next':   ok = t != null && t >= nowMs && t <= nowMs + ms(bound); break    // upcoming, e.g. renews in the next 30d
-      case 'last':   ok = t != null && t >= nowMs - ms(bound) && t <= nowMs; break     // recent, e.g. ordered in the last 30d
-      case 'before': ok = t != null && t < nowMs - ms(bound); break                    // older than, e.g. last order > 60d ago
+      case 'next':   ok = t != null && t >= nowMs && t <= shift(now, bound, +1, 'next').getTime(); break   // upcoming, e.g. renews in the next 30d
+      case 'last':   ok = t != null && t >= shift(now, bound, -1, 'last').getTime() && t <= nowMs; break   // recent, e.g. ordered in the last 30d
+      case 'before': ok = t != null && t < shift(now, bound, -1, 'before').getTime(); break                 // older than, e.g. last order > 60d ago
       // ONE name per operator. `present` rather than `exists` because that is what
       // it is called everywhere else in this query language — session filters,
       // attrs filters, and the `source` filter all take `{ present: true|false }`
@@ -176,19 +226,22 @@ export function matchValue(value, predicate, now = new Date()) {
 export function matchTemporal(history, predicate, now = new Date()) {
   const nowMs = now.getTime()
   const p = predicate || {}
-  const inWin = (r, w) => new Date(r.observed_at).getTime() >= nowMs - ms(w)
+  // Takes the whole spec and the operator NAME, so a missing window can say which
+  // key is missing from which operator instead of reporting the value "undefined".
+  const inWin = (r, spec, op) =>
+    new Date(r.observed_at).getTime() >= shift(now, windowOf(op, spec), -1, op).getTime()
 
   for (const [op, spec] of Object.entries(p)) {
     let ok
     switch (op) {
       case 'changed':
-        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && r.value !== history[i - 1].value)
+        ok = history.some((r, i) => i > 0 && inWin(r, spec, op) && r.value !== history[i - 1].value)
         break
       case 'transition':
         // A transition needs a prior, different value — the initial observation
         // of a value is not a transition into it.
         ok = history.some((r, i) => {
-          if (i === 0 || !inWin(r, spec.last)) return false
+          if (i === 0 || !inWin(r, spec, op)) return false
           const prev = history[i - 1].value
           if (prev === r.value) return false                        // not a change
           if (spec.to !== undefined && r.value !== spec.to) return false
@@ -197,12 +250,20 @@ export function matchTemporal(history, predicate, now = new Date()) {
         })
         break
       case 'decreased':
-        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && ltBy(r.value, history[i - 1].value))
+        ok = history.some((r, i) => i > 0 && inWin(r, spec, op) && ltBy(r.value, history[i - 1].value))
         break
       case 'increased':
-        ok = history.some((r, i) => i > 0 && inWin(r, spec.last) && gtBy(r.value, history[i - 1].value))
+        ok = history.some((r, i) => i > 0 && inWin(r, spec, op) && gtBy(r.value, history[i - 1].value))
         break
-      default: throw new Error(`facts: unknown temporal operator "${op}"`)
+      // Implemented once, in temporalMatchedAt: it answers "when did this become
+      // true", and "is it true" is that answer being non-null. Without these two
+      // cases `{ tier: { held: 'pro' } }` selected a population fine and threw
+      // "unknown temporal operator" when tested against a single passport.
+      case 'held': case 'distinct':
+        ok = temporalMatchedAt(history, { [op]: spec }, now) != null
+        break
+      default: throw new Error(
+        `facts: unknown temporal operator "${op}" (one of ${TEMPORAL_OPS.join('/')})`)
     }
     if (!ok) return false
   }
@@ -217,7 +278,10 @@ export function matchTemporal(history, predicate, now = new Date()) {
 export function temporalMatchedAt(history, predicate, now = new Date()) {
   const nowMs = now.getTime()
   const p = predicate || {}
-  const inWin = (r, w) => new Date(r.observed_at).getTime() >= nowMs - ms(w)
+  // Takes the whole spec and the operator NAME, so a missing window can say which
+  // key is missing from which operator instead of reporting the value "undefined".
+  const inWin = (r, spec, op) =>
+    new Date(r.observed_at).getTime() >= shift(now, windowOf(op, spec), -1, op).getTime()
 
   let composite = null
   for (const [op, spec] of Object.entries(p)) {
@@ -230,7 +294,7 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
       const seen = new Set()
       let reachedAt = null
       for (const r of history) {
-        if (last && !inWin(r, last)) continue
+        if (last && !inWin(r, { last }, op)) continue
         if (r.value === undefined || r.value === null) continue
         seen.add(JSON.stringify(r.value))                    // by VALUE — objects included
         if (gte != null && reachedAt == null && seen.size >= gte) reachedAt = new Date(r.observed_at).getTime()
@@ -251,10 +315,10 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
       let ok = false
       switch (op) {
         case 'changed':
-          ok = i > 0 && inWin(r, spec.last) && r.value !== history[i - 1].value
+          ok = i > 0 && inWin(r, spec, op) && r.value !== history[i - 1].value
           break
         case 'transition': {
-          if (i === 0 || !inWin(r, spec.last)) break
+          if (i === 0 || !inWin(r, spec, op)) break
           const prev = history[i - 1].value
           if (prev === r.value) break
           if (spec.to !== undefined && r.value !== spec.to) break
@@ -263,10 +327,10 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
           break
         }
         case 'decreased':
-          ok = i > 0 && inWin(r, spec.last) && ltBy(r.value, history[i - 1].value)
+          ok = i > 0 && inWin(r, spec, op) && ltBy(r.value, history[i - 1].value)
           break
         case 'increased':
-          ok = i > 0 && inWin(r, spec.last) && gtBy(r.value, history[i - 1].value)
+          ok = i > 0 && inWin(r, spec, op) && gtBy(r.value, history[i - 1].value)
           break
         case 'held': {
           // The value comparators, applied to a historical row instead of the
@@ -274,7 +338,7 @@ export function temporalMatchedAt(history, predicate, now = new Date()) {
           // cannot drift from them. A bare value or array is sugar for eq/in.
           const raw = (spec && typeof spec === 'object' && !Array.isArray(spec)) ? spec : (Array.isArray(spec) ? { in: spec } : { eq: spec })
           const { last, ...valuePred } = raw
-          if (last && !inWin(r, last)) break
+          if (last && !inWin(r, { last }, op)) break
           ok = matchValue(r.value, Object.keys(valuePred).length ? valuePred : { present: true }, now)
           break
         }
