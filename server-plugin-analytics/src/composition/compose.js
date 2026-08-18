@@ -184,6 +184,7 @@ Query shapes:
         (revenue: "sum":{"field":"value"}; grain "by" is day|week|month)
 - breakdown (split a measure by a dimension): {"selector":{"filter":{"metric":{<event filters>,"distinct_passports":{}}}},"group":{"by":"<dim>"}}
         <dim>: "channel" | "session:utm_campaign" | "session:utm_source" | "attr:<key>";  OR split a FACT: {"breakdownFact":{"key":"<factKey>","values":[...]}}
+        TWO dimensions at once (a cross-tab): {"group":{"by":["month","attr:location"],"limit":12,"seriesLimit":40}} — the FIRST is the x-axis, the SECOND becomes one series per value. "limit" caps the x-axis, "seriesLimit" the series (default 6, max 200 — raise it when the second dimension is wide, e.g. 125 studios). Use for "X per Y per month" instead of one query per period.
 - donut (SAME query as breakdown — use when the ask is "share of / proportion / mix / split of total"): identical shape to breakdown.
 - radar (SAME query as breakdown — use for a "profile / shape / across dimensions" comparison, e.g. engagement across channels): identical shape to breakdown. Best with 3+ buckets on a comparable scale (counts/people).
 - distribution (a histogram — "how is X distributed / spread", "by how many"): {"distribution":{"source":"fact"|"event","key":"<factKey or event>"}}

@@ -260,7 +260,7 @@ never booked don't" actually has.
 | `band` | band a numeric `fact:<key>` into ranges (`band: 5` → 20-24, 25-29) |
 | `cohortSize` | also return the denominator, so a reach % needs no second call |
 | `use` | which value a `fact:<key>` bucket means |
-| `seriesLimit` | cap the SERIES dimension of a two-dimension `by` (default 6) |
+| `seriesLimit` | cap the SERIES dimension of a two-dimension `by` — default **6**, max **200** |
 
 ### The dimensions
 
@@ -290,8 +290,13 @@ than a wrong number. `limit` bounds the x-axis; `seriesLimit` bounds the series 
 defaults to 6, and when it truncates the response says so:
 
 ```json
-{"seriesTruncated": {"shown": 6, "cap": 6, "dimension": "attr:location"}}
+{"seriesTruncated": {"shown": 6, "cap": 6, "dimension": "attr:location",
+                     "raise": "group.seriesLimit (up to 200) — `limit` bounds the other dimension"}}
 ```
+
+`limit` and `seriesLimit` are independent: `limit` trims the x-axis, `seriesLimit` the
+series. Lowering `limit` does not reduce the number of series, and the default of 6 is
+sized for a chart — a pivot over 125 studios wants `seriesLimit: 125`.
 
 At most one dimension may be a `fact:<key>` — two would each need their own `use` rule
 and there is one. Cannot be combined with `missingAnchor: "bucket"`, which already owns
@@ -348,21 +353,17 @@ When a query rests on a fact that holds conflicting values for the people it res
                "max_values_for_one_passport": 24, "remedy": "declare it — …"}]}
 ```
 
-Without warnings the result is returned bare, exactly as before.
+**The envelope is unconditional** — `applied` and `warnings` are always present, empty
+when there is nothing to report, and the result is always under `data`. Never at the
+root.
 
-> **Breaking, and not detectable from the request.** When there is something to report,
-> the result moves from the root into `data`. A caller reading `series` / `count` /
-> `sizes` / `multi` off the root gets `undefined` for those queries, and whether a given
-> query warns depends on the DATA, not on the query — so read it defensively:
->
-> ```js
-> const rows = res?.data ?? res
-> const warnings = res?.warnings ?? []
-> ```
+> Earlier versions (0.15.x) wrapped only when a warning existed. That made the shape
+> depend on the DATA rather than the request, so a client could not predict it and had to
+> probe. `res?.data ?? res` straddles both if you need to support both versions.
 >
 > This applies to `analytics_resolve` and `analytics_widget_resolve` only. The REST
-> routes and core `selector.resolve()` never carried warnings and are unchanged. See
-> CHANGELOG.md.
+> routes and core `selector.resolve()` never carried warnings and return results bare.
+> See CHANGELOG.md.
 
 `applied` and `used` report the rule that RAN, following the engine's precedence: a
 query's `use` beats the declaration, which beats `last`. A query that overrides gets its

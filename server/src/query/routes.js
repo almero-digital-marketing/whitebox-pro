@@ -45,7 +45,7 @@ const groupShape = z.object({
   band:       z.number().positive().optional(),                   // banding for a numeric fact:<key> bucket
   cohortSize: z.boolean().optional(),                             // return the denominator beside the series
   use:        z.enum(['last', 'first', 'min', 'max']).optional(),  // WHICH value a fact:<key> bucket means
-  seriesLimit: z.number().int().positive().max(50).optional(),   // caps the SERIES dimension of a two-dimension `by`
+  seriesLimit: z.number().int().positive().max(200).optional(),  // caps the SERIES dimension of a two-dimension `by`
 }).strict()   // §7 — a time grain is chosen by `by`; there is no separate `grain`
 
 const querySchema = z.object({

@@ -53,7 +53,7 @@ export function registerMcp(ctx, { selector }) {
         band:       z.number().positive().optional(),
         cohortSize: z.boolean().optional(),
         use:        z.enum(['last', 'first', 'min', 'max']).optional(),
-        seriesLimit: z.number().int().positive().max(50).optional(),   // caps the SERIES dimension of a two-dimension `by`
+        seriesLimit: z.number().int().positive().max(200).optional(),  // caps the SERIES dimension of a two-dimension `by`
       }).optional(),
     },
     handler: async ({ selector: sel = {}, ...opts }) => json(await selector.resolve(sel, opts)),

@@ -1071,6 +1071,10 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
   // Chosen the same way as the buckets: top-N by value across the whole result, decided
   // in SQL so the rows for the losers are never fetched. DEFAULT_SERIES matches the
   // cap splitBy has always used for the same reason.
+  if (seriesLimit != null && (!Number.isInteger(seriesLimit) || seriesLimit < 1 || seriesLimit > MAX_SERIES)) {
+    throw new Error(
+      `selector.group: \`seriesLimit\` must be a whole number between 1 and ${MAX_SERIES} — got ${JSON.stringify(seriesLimit)}`)
+  }
   const seriesCap = seriesLimit ?? DEFAULT_SERIES
   const topSeries = await grouped([S, VALUE]).orderByRaw('2 desc nulls last').limit(seriesCap + 1)
   if (!topSeries.length) return { multi: true, series: [], aggregate: agg }
@@ -1111,7 +1115,18 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
   // keeps producing, and "123 locations, showing 6" is the difference between a chart
   // and a lie.
   const out = { multi: true, series, aggregate: agg }
-  if (truncated) out.seriesTruncated = { shown: series.length, cap: seriesCap, dimension: seriesBy }
+  if (truncated) {
+    out.seriesTruncated = {
+      shown: series.length,
+      cap: seriesCap,
+      dimension: seriesBy,
+      // NAMED, not just declared. A notice saying "showing 6" without saying how to see
+      // more reads as a hard ceiling — the reporter concluded a 125-studio network could
+      // only ever be seen 6 at a time, when `limit` bounds the x-axis and this bounds the
+      // series independently.
+      raise: `group.seriesLimit (up to ${MAX_SERIES}) — \`limit\` bounds the other dimension`,
+    }
+  }
 
   if (!cohortSize) return out
   // ONE denominator for the whole result: every series is the same cohort sliced a
@@ -1137,9 +1152,15 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
  * before fetching them, which is cheaper than transferring every bucket to sort in
  * memory and is what makes the guardrail still a guardrail.
  */
-// The default series cap for a two-dimension `by`. Matches the analytics layer's
-// splitBy cap: more than a handful of overlaid series is unreadable either way.
+// The default series cap for a two-dimension `by` — sized for a CHART, where more than
+// a handful of overlaid lines is unreadable, matching the analytics layer's splitBy cap.
+//
+// MAX_SERIES is a different question: a pivot or a table legitimately wants every
+// studio, and 125 of them is a real network, not an accident. Bounded anyway, because
+// the guardrail exists to stop an open dimension returning thousands of rows nobody
+// asked for.
 const DEFAULT_SERIES = 6
+const MAX_SERIES = 200
 
 const ANCHORED_BUCKET = '__anchored__'
 

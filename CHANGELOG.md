@@ -5,6 +5,44 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-analytics 0.16.0 · whitebox-pro-server 2.28.0
+
+### BREAKING — the resolve envelope is now UNCONDITIONAL
+
+`analytics_resolve` and `analytics_widget_resolve` always return
+
+```json
+{ "data": …, "applied": {}, "warnings": [] }
+```
+
+0.15.x wrapped only when there was something to report, which was the conservative
+choice and the wrong one: whether a query warns depends on the DATA, not the request, so
+a caller could not tell from its own query which shape it would get. In practice about
+half of queries came back each way and every client had to probe for `data` — code
+reading `data.count` broke on the bare half, and code reading `count` broke on the
+wrapped half. One shape always costs a single break instead of a permanent ambiguity.
+
+`res?.data ?? res` keeps working across both, if you need to straddle versions.
+
+Still unaffected: the REST routes and core `selector.resolve()`, which is what the
+console reads.
+
+### `group.seriesLimit` — raised ceiling, and the truncation notice now names it
+
+The cap on the SERIES dimension of a two-dimension `by` was discoverable only from the
+source. `seriesTruncated` said `{ shown: 6, cap: 6 }` and nothing about how to raise it,
+so a 125-studio network read as permanently visible six at a time — the exact question
+cross-tab was added for. The notice now carries `raise`, naming the knob and the maximum,
+and the ceiling went from 50 to 200 because a pivot or a table legitimately wants every
+studio. The DEFAULT stays 6: that is right for a chart.
+
+`limit` and `seriesLimit` bound different dimensions — `limit` the x-axis, `seriesLimit`
+the series — and lowering `limit` was expected to trim the series too. Both are now in
+the `analytics_resolve` tool description and in the compose prompt, which is where
+whoever writes these queries actually looks.
+
+---
+
 ## whitebox-pro-server-plugin-analytics 0.15.0 · whitebox-pro-server 2.27.0
 
 ### BREAKING — `analytics_resolve` and `analytics_widget_resolve` may return an envelope

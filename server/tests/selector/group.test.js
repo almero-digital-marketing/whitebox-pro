@@ -421,15 +421,44 @@ describe('selector group: cross-tabulating two dimensions', () => {
     })
   })
 
-  it('caps the SERIES dimension and says that it did', async () => {
+  it('caps the SERIES dimension and says that it did, naming the knob', async () => {
     // Without a cap, `['month','attr:location']` returned 123 series on live data:
     // unreadable, and indistinguishable from a complete answer.
     const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
       { group: { by: ['month', 'attr:location'], seriesLimit: 2 } })
     expect(r.series).toHaveLength(2)
-    expect(r.seriesTruncated).toEqual({ shown: 2, cap: 2, dimension: 'attr:location' })
+    expect(r.seriesTruncated).toMatchObject({ shown: 2, cap: 2, dimension: 'attr:location' })
+    // The notice has to say how to see more. Reporting "showing 2" and nothing else was
+    // read as a hard ceiling — a 125-studio network apparently visible 6 at a time.
+    expect(r.seriesTruncated.raise).toMatch(/group\.seriesLimit \(up to 200\)/)
+    expect(r.seriesTruncated.raise).toMatch(/`limit` bounds the other dimension/)
     // Top-N BY VALUE, so the two biggest studios survive, not an arbitrary two.
     expect(Object.keys(byName(r)).sort()).toEqual(['plovdiv', 'sofia'])
+  })
+
+  it('`limit` and `seriesLimit` bound different dimensions, independently', async () => {
+    // The reported confusion: `limit` was expected to cap the series too, so lowering it
+    // changed the months and left the same 6 studios.
+    const at = (opts) => selector.resolve(purchase({ sum: { field: 'value' } }), { group: opts })
+    const few = await at({ by: ['month', 'attr:location'], limit: 1, seriesLimit: 3 })
+    expect(few.series).toHaveLength(3)                       // three studios
+    for (const s of few.series) expect(s.points).toHaveLength(1)   // one month each
+
+    const wide = await at({ by: ['month', 'attr:location'], limit: 2, seriesLimit: 3 })
+    expect(wide.series).toHaveLength(3)                      // unchanged by `limit`
+  })
+
+  it('accepts a seriesLimit far above the default, and refuses an impossible one', async () => {
+    const r = await selector.resolve(purchase({ sum: { field: 'value' } }),
+      { group: { by: ['month', 'attr:location'], seriesLimit: 100 } })
+    expect(r.series).toHaveLength(3)              // all three, nothing truncated
+    expect(r.seriesTruncated).toBeUndefined()
+
+    const bad = (n) => selector.resolve(purchase({ count: {} }),
+      { group: { by: ['month', 'attr:location'], seriesLimit: n } })
+    await expect(bad(0)).rejects.toThrow(/between 1 and 200/)
+    await expect(bad(201)).rejects.toThrow(/between 1 and 200/)
+    await expect(bad(2.5)).rejects.toThrow(/whole number/)
   })
 
   it('says nothing about truncation when nothing was truncated', async () => {

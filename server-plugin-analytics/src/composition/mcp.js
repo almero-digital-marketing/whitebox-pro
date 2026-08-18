@@ -121,20 +121,24 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
 
   // What the caller should be told about the facts an answer rested on.
   //
-  // Attached only when there is a WARNING — i.e. the query leaned on a fact that holds
-  // conflicting values for these people and nobody has declared which one it means, so
-  // `last` won by default and the answer is one of several defensible ones. With no
-  // warning the result is returned exactly as before, so nothing that reads this today
-  // has to change; today there are no warnings, because every ambiguous key on this
-  // deployment is declared.
+  // ALWAYS wrapped: `{ data, applied, warnings }`, with empty values when there is
+  // nothing to report. It used to wrap only when a warning existed, which was the
+  // conservative choice and the wrong one — whether a query warns depends on the DATA,
+  // not on the request, so a client could not tell from its own query which shape it
+  // would get and had to probe for `data` on every call. Roughly half of queries came
+  // back each way. One shape, always, is worth the one-time break.
   //
-  // A declared key produces `applied` instead — a statement of the rule that was used,
-  // with no alarm attached, since the question is settled. It rides along when a
-  // warning is present so the caller can see the whole picture at once.
+  // `applied` is a statement of the rule used for each fact the query rested on, with no
+  // alarm attached; `warnings` is only for the cases nobody has settled (or an anchor,
+  // where a declaration does not settle it). See facts.factNotes.
+  //
+  // The exemptions that keep this cheap survive: a declared non-anchor key costs no
+  // database work, and a query resting on no facts at all costs none either.
+  const EMPTY_NOTES = { applied: {}, warnings: [] }
   const withFactNotes = async (data, query, scope) => {
-    if (!facts?.factNotes) return data
+    if (!facts?.factNotes) return { data, ...EMPTY_NOTES }
     const keys = [...factKeysOf(query || {})]
-    if (!keys.length) return data
+    if (!keys.length) return { data, ...EMPTY_NOTES }
     // Anchors are passed separately: they are warned about even when declared, because a
     // declaration says which value a key means and not where each person's boundary
     // falls. See facts.factNotes.
@@ -146,19 +150,24 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
     const anchors = anchorKeysOf(query || {})
     const uses = factUsesOf(query || {})
     let notes
-    try { notes = await facts.factNotes(keys, { scope, anchors, uses }) } catch { return data }
-    if (!notes?.warnings?.length) return data
-    return { data, applied: notes.applied, warnings: notes.warnings }
+    // A failure here must not take the answer down with it: the notes are commentary on
+    // a result that is already correct.
+    try { notes = await facts.factNotes(keys, { scope, anchors, uses }) } catch { notes = null }
+    return {
+      data,
+      applied: notes?.applied ?? {},
+      warnings: notes?.warnings ?? [],
+    }
   }
 
   // --- resolve (live preview / persisted widgets) ---
   const kindEnum = z.enum([...KINDS])
-  read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys.', { query: z.any(), kind: kindEnum.optional() }, async ({ query, kind }) => {
+  read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys. ALWAYS returns { data, applied, warnings }: `data` is the result, `applied` names which value rule each fact was read under (last/first/min/max), `warnings` is non-empty only when a fact is ambiguous and undecided or is a window anchor. group.by accepts TWO dimensions to cross-tabulate — ["month","attr:location"] — where `limit` caps the first and `seriesLimit` the second (default 6, max 200).', { query: z.any(), kind: kindEnum.optional() }, async ({ query, kind }) => {
     let data = await runQuery(deps, query || {}, kind)
     if (kind === 'table') data = await enrichPeople(data, passports)
     return withFactNotes(data, query)
   })
-  read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data.', { id: z.string() }, async ({ id }) => {
+  read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data. Returns { data, applied, warnings } — see analytics_resolve.', { id: z.string() }, async ({ id }) => {
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
     let data = await runQuery(deps, w.query, w.kind)
