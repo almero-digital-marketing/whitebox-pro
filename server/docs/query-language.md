@@ -141,6 +141,18 @@ the clause is evaluated**, and that is decided by whether `group` is present:
 `distinct_passports` is group-only (a per-passport aggregate cannot gate the passports
 it counts).
 
+**`first_seen` / `last_seen`** answer *when*, not *what* — `min(ts)` and `max(ts)` per
+bucket, returned as ISO instants:
+
+```json
+{"metric": {"attrs": {"event": "booking"}, "first_seen": {}}}   // + group.by: "attr:location"
+```
+
+A studio's opening date is `first_seen` by `attr:location`; a dormant one is `last_seen`.
+They take **no** `field`/`column`/`fact` — the answer is the event time itself, and both
+the engine and the validator refuse a source. For the *value at* the first/last event, use
+`earliest`/`latest`, which order by event time and return a field.
+
 ### Aggregate sources
 
 ```json
@@ -464,7 +476,34 @@ increases it.
 
 ---
 
-## 11. `analytics_grammar` — the grammar, as a call
+## 11. Versioning — pin the contract, not the package
+
+Every resolve response carries which contract answered:
+
+```json
+{"data": …, "applied": {}, "warnings": [],
+ "version": {"contract": 2, "current": 2, "server": "2.31.0", "changelog": "…"}}
+```
+
+Pass `version: <n>` on `analytics_resolve` / `analytics_widget_resolve` to pin it. An
+unknown version is **refused** with a 400 naming what is on offer, rather than rounded to
+the nearest — a client pinning 3 was built against something this deployment does not have,
+and answering with 2 answers a question it did not ask.
+
+| contract | response | status |
+|---|---|---|
+| 1 | the result at the **root**, no envelope | supported (deprecated at analytics 0.16.0) |
+| 2 | `{ data, applied, warnings, version }` | current |
+
+The **package** version is the wrong thing to pin: it moves for an unrelated bug fix. The
+contract moves only when a working query would answer differently or stop working.
+
+What pinning cannot do: bring back data. The `booking_*` facts are deleted, so no contract
+serves a query against them — contract 1 exists because the envelope is the one change that
+stops a client *parsing* a response rather than merely changing a number. `analytics_grammar`
+lists the contracts and what changed in each.
+
+## 12. `analytics_grammar` — the grammar, as a call
 
 `analytics_schema` returns the **vocabulary**: which fact keys exist here, which event
 actions, which channels, which campaigns. `analytics_grammar` returns the **syntax** —
@@ -484,7 +523,7 @@ without breaking stored widgets:
 And `limit` bounds the buckets while `seriesLimit` bounds the series — the second
 dimension of a cross-tab only.
 
-## 12. The mistakes this language invites
+## 13. The mistakes this language invites
 
 | you wrote | it means | you wanted |
 |---|---|---|

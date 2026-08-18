@@ -33,6 +33,7 @@ import {
   MISSING as ENGINE_MISSING, USE_RULES, DEFAULT_SERIES, MAX_SERIES, TIME_FMT, DIM_COL,
 } from './metric.js'
 import { DURATION_HINT, TEMPORAL_OPS } from '../facts/operators.js'
+import { CONTRACT, CONTRACTS } from './contract.js'
 
 // Mirrors the engine rather than inventing. Fact ops come from facts/store; the
 // aggregates and their filter keys from metric.js, where `bounds` is
@@ -85,7 +86,10 @@ const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', 'recency
 // it, because everything except a direct selector.resolve() comes through
 // validate(). Engine tests passed precisely because they bypass this file.
 const VALUE_AGGS = ['avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest']
-const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum', ...VALUE_AGGS]
+// WHEN a bucket first/last saw an event. Grouped only, and they take NO source — the
+// answer is the event time itself, so `field`/`column`/`fact` would all be wrong.
+const TIME_AGGS = ['first_seen', 'last_seen']
+const GROUP_AGGS = ['count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum', ...VALUE_AGGS, ...TIME_AGGS]
 // The notation can write either, so parse and print span both.
 const AGGS = [...new Set([...GATE_AGGS, ...GROUP_AGGS])]
 // Metric filter keys that are their own column. Anything else in an aggregate's
@@ -513,6 +517,16 @@ export function validate(filter, { grouped = false } = {}) {
                 err(`${path}.metric.${agg}`, 'needs a numeric gte or lte — an aggregate with no bound matches nothing')
             }
             if (agg === 'sum' && !bounds.field) err(`${path}.metric.sum`, 'needs a `field`')
+            // first_seen/last_seen answer WHEN, so a source would be a category error —
+            // refused rather than ignored, the rule every other misplaced key here follows.
+            if (TIME_AGGS.includes(agg)) {
+                const given = ['field', 'column', 'fact'].filter((k) => bounds[k] != null)
+                if (given.length) {
+                    err(`${path}.metric.${agg}`,
+                        `takes no source — it returns the event TIME, not a value. Got \`${given[0]}\`. ` +
+                        `For the value AT the first/last event use earliest/latest instead.`)
+                }
+            }
             // Value aggregates read ONE numeric source. Mirrors numericSource() in
             // metric.js — kept here so a bad shape is one error naming all three
             // options, not a 500 from the engine.
@@ -617,6 +631,17 @@ export function validate(filter, { grouped = false } = {}) {
  */
 export function grammar() {
   return {
+    // WHICH ENGINE STATE this grammar describes. Without it a caller holding a cached
+    // grammar cannot tell whether it still applies — and five breaking changes shipped in
+    // a day, so "the grammar I fetched" and "the grammar in force" were routinely
+    // different documents.
+    version: {
+      contract: CONTRACT,
+      supported: Object.keys(CONTRACTS).map(Number),
+      contracts: CONTRACTS,
+      pin: 'pass `version: <n>` on a resolve call to pin it; the response echoes which one answered',
+      changelog: 'CHANGELOG.md in the whitebox-pro repo',
+    },
     filter: {
       combinators: { all: 'AND', any: 'OR', not: 'negation' },
       clauses: {

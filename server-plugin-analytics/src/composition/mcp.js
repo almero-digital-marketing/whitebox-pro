@@ -14,6 +14,7 @@ import { z } from 'zod'
 import * as store from './store.js'
 import * as compose from './compose.js'
 import { grammar } from 'whitebox-pro-server/selector-dsl'
+import { resolveContract, versionInfo, CONTRACT } from 'whitebox-pro-server/selector-contract'
 import { runQuery, enrichPeople, composeReport, widgetSummary, compactForExplain, KINDS, factKeysOf, anchorKeysOf, factUsesOf, QUERY_KEYS} from './routes.js'
 import { CONTACT_KEYS } from './mask.js'
 import { renderChart } from './chart-render.js'
@@ -197,10 +198,22 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
   // The exemptions that keep this cheap survive: a declared non-anchor key costs no
   // database work, and a query resting on no facts at all costs none either.
   const EMPTY_NOTES = { applied: {}, warnings: [] }
-  const withFactNotes = async (data, query, scope) => {
-    if (!facts?.factNotes) return { data, ...EMPTY_NOTES }
+  const serverVersion = ctx?.version || null
+
+  // CONTRACT 1 wanted the result at the root. Honoured, because that is the one breaking
+  // change that stops a client PARSING rather than merely changing a number — and a
+  // compatibility window is worth having for exactly that case. Nothing else can be served
+  // by an old contract: the booking_* facts are deleted, so no version can answer a query
+  // against them, and pretending otherwise would be worse than refusing.
+  const envelope = (data, notes, contract) => {
+    if (contract === 1) return data
+    return { data, applied: notes.applied, warnings: notes.warnings, version: versionInfo(serverVersion, contract) }
+  }
+
+  const withFactNotes = async (data, query, scope, contract = CONTRACT) => {
+    if (!facts?.factNotes) return envelope(data, EMPTY_NOTES, contract)
     const keys = [...factKeysOf(query || {})]
-    if (!keys.length) return { data, ...EMPTY_NOTES }
+    if (!keys.length) return envelope(data, EMPTY_NOTES, contract)
     // Anchors are passed separately: they are warned about even when declared, because a
     // declaration says which value a key means and not where each person's boundary
     // falls. See facts.factNotes.
@@ -215,27 +228,27 @@ export function registerMcp(ctx, { selector, awareness, passports, facts, logger
     // A failure here must not take the answer down with it: the notes are commentary on
     // a result that is already correct.
     try { notes = await facts.factNotes(keys, { scope, anchors, uses }) } catch { notes = null }
-    return {
-      data,
-      applied: notes?.applied ?? {},
-      warnings: notes?.warnings ?? [],
-    }
+    return envelope(data, { applied: notes?.applied ?? {}, warnings: notes?.warnings ?? [] }, contract)
   }
 
   // --- resolve (live preview / persisted widgets) ---
   const kindEnum = z.enum([...KINDS])
-  read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys. ALWAYS returns { data, applied, warnings }: `data` is the result, `applied` names which value rule each fact was read under (last/first/min/max), `warnings` is non-empty only when a fact is ambiguous and undecided or is a window anchor. group.by accepts TWO dimensions to cross-tabulate — ["month","attr:location"] — where `limit` caps the first and `seriesLimit` the second (default 6, max 200).', { query: z.any(), kind: kindEnum.optional() }, async ({ query, kind }) => {
-    let data = await runQuery(deps, query || {}, kind)
-    if (kind === 'table') data = await enrichPeople(data, passports)
-    return withFactNotes(data, query)
-  })
-  read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data. Returns { data, applied, warnings } — see analytics_resolve.', { id: z.string() }, async ({ id }) => {
+  read('analytics_resolve', 'Run an INLINE query def — a live preview, no persistence. Same query-def grammar as a widget (selector / group / funnel / distribution / scatter / cohort / breakdownFact / question / series / splitBy) — see analytics_schema for real keys. ALWAYS returns { data, applied, warnings }: `data` is the result, `applied` names which value rule each fact was read under (last/first/min/max), `warnings` is non-empty only when a fact is ambiguous and undecided or is a window anchor. group.by accepts TWO dimensions to cross-tabulate — ["month","attr:location"] — where `limit` caps the first and `seriesLimit` the second (default 6, max 200). Pass `version: <n>` to pin the API contract (current 2; 1 returns the result at the ROOT with no envelope) — the response echoes which contract answered. analytics_grammar lists the contracts.', { query: z.any(), kind: kindEnum.optional(), version: z.union([z.number(), z.string()]).optional() },
+    async ({ query, kind, version }) => {
+      // Resolved BEFORE the query runs: a caller pinning a version this deployment cannot
+      // serve should be told so instead of receiving an answer shaped for something else.
+      const contract = resolveContract(version)
+      let data = await runQuery(deps, query || {}, kind)
+      if (kind === 'table') data = await enrichPeople(data, passports)
+      return withFactNotes(data, query, undefined, contract)
+    })
+  read('analytics_widget_resolve', 'Run a persisted widget\'s stored query and return fresh data. Returns { data, applied, warnings } — see analytics_resolve.', { id: z.string(), version: z.union([z.number(), z.string()]).optional() }, async ({ id, version }) => {
+    const contract = resolveContract(version)
     const w = await store.getWidget(id)
     if (!w) { const e = new Error('widget not found'); e.status = 404; throw e }
     let data = await runQuery(deps, w.query, w.kind)
     if (w.kind === 'table') data = await enrichPeople(data, passports)
-    data = await withFactNotes(data, w.query)
-    return data
+    return withFactNotes(data, w.query, undefined, contract)
   })
 
   // --- draw (the same two resolves, plus a picture) ---

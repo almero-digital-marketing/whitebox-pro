@@ -516,6 +516,70 @@ describe('selector group: cross-tabulating two dimensions', () => {
   })
 })
 
+// WHEN a bucket first and last saw an event.
+//
+// earliest/latest order BY event time and return a FIELD's value, so "when did this bucket
+// first see anything" had no expression: `column: 'ts'` was refused (AGG_COLS is dwell_ms
+// alone, deliberately — an average of a timestamp is a question about buckets), and every
+// other shape asked for a value to read. A studio's opening date is min(ts) grouped by
+// attr:location and a dormant location is max(ts); both had to be written in raw SQL.
+describe('selector group: first_seen / last_seen', () => {
+  const purchase = (agg) => ({ filter: { metric: { content: 'purchase', ...agg } } })
+
+  beforeEach(async () => {
+    const p = await newPassport()
+    await expose(p, { channel: 'web', ts: '2026-05-01', value: 1 })
+    await expose(p, { channel: 'web', ts: '2026-05-20', value: 2 })
+    await expose(p, { channel: 'email', ts: '2026-06-10', value: 3 })
+  })
+
+  it('returns the event TIME, as an ISO instant', async () => {
+    const first = await selector.resolve(purchase({ first_seen: {} }), { group: { by: 'channel' } })
+    expect(asMap(first)).toEqual({ web: '2026-05-01T00:00:00.000Z', email: '2026-06-10T00:00:00.000Z' })
+    const last = await selector.resolve(purchase({ last_seen: {} }), { group: { by: 'channel' } })
+    expect(asMap(last)).toEqual({ web: '2026-05-20T00:00:00.000Z', email: '2026-06-10T00:00:00.000Z' })
+  })
+
+  it('is NOT coerced through Number(), which would make every value NaN', async () => {
+    const r = await selector.resolve(purchase({ first_seen: {} }), { group: { by: 'channel' } })
+    for (const row of r) {
+      expect(row.value).toEqual(expect.any(String))
+      expect(Number.isNaN(Number(row.value))).toBe(true)   // it IS a timestamp, not a number
+    }
+  })
+
+  it('keeps null for a bucket with nothing in it', async () => {
+    // A bucket where nothing matched has no first event, and the epoch would plot as one.
+    const r = await selector.resolve(
+      { filter: { metric: { content: 'nothing-matches-this', first_seen: {} } } },
+      { group: { by: 'channel' } })
+    expect(r).toEqual([])
+  })
+
+  it('takes NO source — the answer is the time, not a value', async () => {
+    // Refused by the ENGINE as well as the validator. Ignoring the source would answer a
+    // question about time while naming one about money.
+    for (const bad of [{ field: 'value' }, { column: 'dwell_ms' }, { fact: 'ltv' }]) {
+      await expect(selector.resolve(purchase({ first_seen: bad }), { group: { by: 'channel' } }))
+        .rejects.toThrow(/takes no source — it returns the event TIME/)
+    }
+    await expect(selector.resolve(purchase({ last_seen: { field: 'value' } }), { group: { by: 'month' } }))
+      .rejects.toThrow(/For the value AT the first\/last event use earliest\/latest/)
+  })
+
+  it('works on a fact bucket and in a cross-tab', async () => {
+    const p = await newPassport()
+    await expose(p, { channel: 'web', ts: '2026-04-01', value: 9 })
+    await facts.record({ passport_id: p, key: 'tier', value: 'gold', source: 't' })
+    const byFact = await selector.resolve(purchase({ first_seen: {} }), { group: { by: 'fact:tier' } })
+    expect(asMap(byFact).gold).toBe('2026-04-01T00:00:00.000Z')
+
+    const cross = await selector.resolve(purchase({ last_seen: {} }), { group: { by: ['channel', 'fact:tier'] } })
+    expect(cross.multi).toBe(true)
+    for (const s of cross.series) for (const pt of s.points) expect(pt.value).toEqual(expect.any(String))
+  })
+})
+
 describe('selector group: content buckets', () => {
   const withUrl = async (passport_id, { ts, url }) => {
     await db('whitebox_awareness_exposures').insert({

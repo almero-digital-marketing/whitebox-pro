@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <!-- favicon.ico has to exist as a FILE, not only as a rel=icon declaration.
+         A browser reads these tags; many other clients do not. They probe /favicon.ico at
+         the origin and take what they get. This console pointed rel=icon at logo.svg and
+         served no favicon.ico at all, so an MCP client connecting to whitebox.gpoint.bg
+         got a 404, fell back to the registrable domain, and showed gpoint.bg's icon for a
+         WhiteBox server. The mark was never missing — it was only reachable under a name
+         nobody looks for. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />

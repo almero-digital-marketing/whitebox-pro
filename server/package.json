@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-server",
-  "version": "2.30.0",
+  "version": "2.31.0",
   "description": "Whitebox backend core — HTTP server, awareness, passports, sessions, plugin loader. Channels (mail, voip, crm, engagement, analytics) ship as separate whitebox-pro-server-plugin-* packages.",
   "type": "module",
   "main": "src/server.js",
@@ -15,7 +15,8 @@
     "./pagination": "./src/pagination.js",
     "./selector-dsl": "./src/selector/dsl.js",
     "./test-setup/neon": "./tests/setup/neon.js",
-    "./test-manifest": "./tests/support/manifest.js"
+    "./test-manifest": "./tests/support/manifest.js",
+    "./selector-contract": "./src/selector/contract.js"
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",

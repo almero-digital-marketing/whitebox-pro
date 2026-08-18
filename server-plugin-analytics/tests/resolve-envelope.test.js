@@ -12,6 +12,7 @@ vi.mock('../src/composition/store.js', () => ({
 }))
 
 import { registerMcp } from '../src/composition/mcp.js'
+import { CONTRACT } from 'whitebox-pro-server/selector-contract'
 
 // The resolve tools ALWAYS return { data, applied, warnings }.
 //
@@ -51,7 +52,8 @@ describe('analytics_resolve: one response shape, always', () => {
   it('wraps a query that rests on NO facts', async () => {
     const { tools } = harness()
     const r = await run(tools, NO_FACTS)
-    expect(r).toEqual({ data: { count: 87845 }, applied: {}, warnings: [] })
+    expect(r).toMatchObject({ data: { count: 87845 }, applied: {}, warnings: [] })
+    expect(r.version.contract).toBe(CONTRACT)
   })
 
   it('wraps a query with facts and nothing to report', async () => {
@@ -76,7 +78,7 @@ describe('analytics_resolve: one response shape, always', () => {
       selector: { resolve: async () => ({ count: 1 }) },
       awareness: {}, passports: {}, logger: console,      // no `facts`
     })
-    expect(await run(tools, WITH_FACT)).toEqual({ data: { count: 1 }, applied: {}, warnings: [] })
+    expect(await run(tools, WITH_FACT)).toMatchObject({ data: { count: 1 }, applied: {}, warnings: [] })
   })
 
   it('still answers when the notes themselves fail', async () => {
@@ -84,7 +86,8 @@ describe('analytics_resolve: one response shape, always', () => {
     // them must not take the answer down.
     const { tools } = harness({ factNotes: vi.fn(async () => { throw new Error('db gone') }) })
     const r = await run(tools, WITH_FACT)
-    expect(r).toEqual({ data: { count: 87845 }, applied: {}, warnings: [] })
+    expect(r).toMatchObject({ data: { count: 87845 }, applied: {}, warnings: [] })
+    expect(r.version.contract).toBe(CONTRACT)
   })
 
   it('never leaves the result at the root', async () => {
@@ -94,7 +97,9 @@ describe('analytics_resolve: one response shape, always', () => {
     expect(r.count).toBeUndefined()
     expect(r.series).toBeUndefined()
     expect(Array.isArray(r)).toBe(false)
-    expect(Object.keys(r).sort()).toEqual(['applied', 'data', 'warnings'])
+    // `version` joined them: five breaking changes shipped in a day with nothing in the
+    // response saying which state answered.
+    expect(Object.keys(r).sort()).toEqual(['applied', 'data', 'version', 'warnings'])
   })
 
   it('describes the shape and the cross-tab knobs in the tool description', async () => {

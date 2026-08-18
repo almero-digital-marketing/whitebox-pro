@@ -5,6 +5,56 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.31.0 · analytics 0.18.0 · ui 0.14.0
+
+### API versioning — a contract number a caller can pin
+
+Five breaking changes shipped in about a day, every one of them correct, and nothing built
+on the API could pin behaviour across any of them: there was no version in the request, in
+the response, or in the grammar.
+
+Every resolve response now carries `version: { contract, current, server, changelog }`, and
+`version: <n>` is accepted on `analytics_resolve` / `analytics_widget_resolve`. An unknown
+version is REFUSED with a 400 naming what is on offer, not rounded to the nearest — a
+client pinning 3 was built against something this deployment does not have.
+
+The CONTRACT is deliberately not the package version, which moves for an unrelated bug fix.
+It moves only when a working query would answer differently or stop working:
+
+  1 — the result at the ROOT, no envelope (deprecated at analytics 0.16.0, still served)
+  2 — { data, applied, warnings, version } (current)
+
+Honest about the limit: pinning cannot bring back data. The booking_* facts are deleted, so
+no contract can serve a query against them, and the anchor default and strict parsing are
+not separable from the current engine. Contract 1 exists because the envelope is the one
+change that stops a client PARSING a response rather than merely changing a number — that
+is where a compatibility window earns its keep. `analytics_grammar` lists every contract
+with what changed in it.
+
+### `first_seen` / `last_seen` — when a bucket first and last saw an event
+
+`min(ts)` and `max(ts)` per bucket, as ISO instants. `earliest`/`latest` order BY event time
+and return a FIELD's value, so "when did this bucket first see anything" had no expression:
+`column: 'ts'` was refused and every other shape asked for a value to read. A studio's
+opening date is `first_seen` by `attr:location`; a dormant location is `last_seen`. Both had
+to be written in raw SQL.
+
+Named separately rather than by widening earliest/latest, because those mean "the value AT
+the first event" and these mean "the time OF it" — one word for both is how `last` came to
+mean four things. They take no source, refused by the engine AND the validator: ignoring one
+would answer a question about time while naming one about money.
+
+### Fixed — the console served no favicon, so clients showed GPoint's icon
+
+`whitebox.gpoint.bg` declared `rel=icon` pointing at `logo.svg` and served no
+`/favicon.ico`. A browser reads the tag; many clients do not — they probe `/favicon.ico` at
+the origin, got a 404, fell back to the registrable domain, and showed `gpoint.bg`'s icon
+for a WhiteBox server. The mark was never missing, only unreachable under a name anyone
+looks for. The console now ships `favicon.ico` (16/32/48), `favicon.svg` and
+`apple-touch-icon.png`, rendered from the existing logo.
+
+---
+
 ## whitebox-pro-server 2.30.0 · analytics 0.17.0
 
 ### `attrs` take the fact operator set

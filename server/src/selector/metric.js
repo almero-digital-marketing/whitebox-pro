@@ -30,7 +30,17 @@ export const GATE_AGGS = ['count', 'distinct_sessions', 'sum_dwell_ms', 'sum', '
 export const GROUP_AGGS = [
   'count', 'distinct_sessions', 'distinct_passports', 'sum_dwell_ms', 'sum',
   'avg', 'min', 'max', 'median', 'percentile', 'earliest', 'latest',
+  'first_seen', 'last_seen',
 ]
+// Aggregates whose value is an INSTANT, not a number. `Number(timestamp)` is NaN, so the
+// series mapping has to know which is which — and a bucket silently reporting NaN would be
+// exactly the confident-wrong-number this engine keeps producing.
+export const TIME_AGGS = ['first_seen', 'last_seen']
+
+// `null` is preserved by both: a bucket where nothing matched has no answer, and 0 or
+// the epoch would plot as a real value.
+const toNumber = (v) => (v == null ? null : Number(v))
+const toIso = (v) => (v == null ? null : new Date(v).toISOString())
 
 // The numeric column an aggregate may read directly. An allowlist because the name
 // is interpolated: `dwell_ms` is the only numeric measure on an exposure, and `ts`
@@ -922,6 +932,29 @@ function aggSql(agg, bounds = {}) {
       const dir = agg === 'earliest' ? 'asc' : 'desc'
       return { sql: `(array_agg(${src.sql} order by e.ts ${dir}))[1]`, bindings: src.binds }
     }
+    // WHEN, not what. earliest/latest order BY event time and return a field's value, so
+    // "when did this bucket first see an event" had no expression at all: `column: 'ts'`
+    // was refused (AGG_COLS is dwell_ms only, deliberately — an average of a timestamp is
+    // a question about buckets), and every other shape asked for a value.
+    //
+    // A studio's opening date is min(ts) grouped by attr:location, and a dormant location
+    // is max(ts) — both had to be done in raw SQL. Named separately rather than by
+    // widening earliest/latest, because those two mean "the value AT the earliest event"
+    // and this means "the time OF it"; one word for both is how `last` came to mean four
+    // things.
+    case 'first_seen': case 'last_seen': {
+      // Refused here as well as in the validator. Ignoring a source would make the engine
+      // LOOSER than the validator — the mirror of the drift that hid `contains` and the
+      // value aggregates, and just as dishonest: `{ first_seen: { field: 'paid' } }` would
+      // quietly answer a question about time while naming one about money.
+      const given = ['field', 'column', 'fact'].filter(k => bounds[k] != null)
+      if (given.length) {
+        throw new Error(
+          `selector.group: \`${agg}\` takes no source — it returns the event TIME, not a value. ` +
+          `Got \`${given[0]}\`. For the value AT the first/last event use earliest/latest.`)
+      }
+      return { sql: agg === 'first_seen' ? 'min(e.ts)' : 'max(e.ts)', bindings: [] }
+    }
     default: throw new Error(`selector.group: aggregate "${agg}" not supported for grouping (one of ${GROUP_AGGS.join('/')})`)
   }
 }
@@ -1013,7 +1046,8 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
       .select('bucket', db.raw(`${value.sql} as value`, value.bindings))
       .groupBy('bucket')
     outer = (limit != null) ? outer.orderByRaw('2 desc nulls last').limit(limit) : outer.orderBy('bucket')
-    return (await outer).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
+    const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
+    return (await outer).map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
   }
 
   let q = base(db, needsSession(filters, by))
@@ -1028,7 +1062,8 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   // `value: null` is preserved deliberately. Number(null) is 0, and an avg/median of
   // a bucket where nothing carried the field would then plot as a real zero — the
   // same class of confident-wrong-number this engine keeps being bitten by.
-  const series = (await q).map(r => ({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) }))
+  const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
+  const series = (await q).map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
   return cohortSize ? withCohortSize(db, series, agg, filters, { at, scope, now }) : series
 }
 
@@ -1187,11 +1222,12 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
     q = q.whereRaw(`(${parts.join(' or ')})`, binds)
   }
 
+  const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
   const bySeries = new Map()
   for (const r of await q) {
     const name = r.series == null ? null : String(r.series)
     if (!bySeries.has(name)) bySeries.set(name, [])
-    bySeries.get(name).push({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) })
+    bySeries.get(name).push({ bucket: r.bucket, value: asValue(r.value) })
   }
   const series = [...bySeries].map(([name, points]) => ({ name, points }))
 
@@ -1314,10 +1350,11 @@ async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, a
     q = q.whereRaw(`(${parts.join(' or ')})`, binds)
   }
 
+  const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
   const byCohort = new Map()
   for (const r of await q) {
     if (!byCohort.has(r.cohort)) byCohort.set(r.cohort, [])
-    byCohort.get(r.cohort).push({ bucket: r.bucket, value: r.value == null ? null : Number(r.value) })
+    byCohort.get(r.cohort).push({ bucket: r.bucket, value: asValue(r.value) })
   }
 
   // Sizes come from the same filtered set, per cohort, so the denominators and the
