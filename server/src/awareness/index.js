@@ -38,10 +38,14 @@ let redactPii
 let urlKeep
 let notify
 let passports
+let sessions
 
 export function init(deps) {
   db = deps.db
   passports = deps.passports
+  // Optional. Injected rather than imported so awareness stays unaware of the sessions
+  // module — it needs one call on it, not a dependency on it.
+  sessions = deps.sessions || null
   logger = deps.logger.child({ component: 'awareness' })
   const cfg = deps.config.awareness || {}
   enabled = cfg.enabled !== false
@@ -103,6 +107,15 @@ export async function record(event) {
   memory.enqueue(exposure.id).catch(err => {
     logger.error({ err, exposureId: exposure.id }, 'Failed to enqueue embedding')
   })
+
+  // Keep the visit alive. Sessions now expire on inactivity, and `/sessions/resolve`
+  // fires once per full page load — so on a single-page app a visitor reading one page
+  // for 40 minutes would come back to a NEW session and have their visit split in two.
+  // Their events are the evidence they are still here.
+  //
+  // Not awaited: this is bookkeeping on a write that has already succeeded, and it must
+  // never be the reason recording an exposure fails. touch() swallows its own errors.
+  if (exposure.session_id) sessions?.touch?.(exposure.session_id)
 
   notify('awareness.recorded', {
     type: 'awareness.recorded',

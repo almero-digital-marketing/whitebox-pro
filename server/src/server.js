@@ -79,7 +79,7 @@ async function start() {
   const { notify: coreNotify } = createNotify({ events, webhooks, eventRegistry })
 
   await passports.init({ db: db.get(), lock, config, notify: coreNotify })
-  await sessions.init({ db: db.get(), passports, notify: coreNotify })
+  await sessions.init({ db: db.get(), passports, notify: coreNotify, config })
   await ai.init({ config })
 
   let template = null
@@ -102,6 +102,9 @@ async function start() {
   context.init({ logger })
   awareness.init({
     db: db.get(), queue, ai, events, webhooks, config, logger, context, passports, eventRegistry,
+    // So an exposure carrying a session_id keeps that visit alive — sessions expire on
+    // inactivity now, and in an SPA the resolve call happens once per page LOAD.
+    sessions,
   })
   await awareness.migrate()
   logger.info('Awareness ready')

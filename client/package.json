@@ -1,6 +1,6 @@
 {
   "name": "whitebox-pro-client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Whitebox browser client core — transport, identity, event emitter, plugin host. Channels (mail, voip, engagement, conversions, consent) ship as separate whitebox-pro-client-plugin-* packages.",
   "type": "module",
   "main": "./dist/index.cjs",

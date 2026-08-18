@@ -7,7 +7,21 @@ const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm
 let db
 let passports
 let notify
+let idleMs
 const resolveHooks = []
+
+// How long a session survives without activity. 30 minutes is the analytics
+// convention, and the number matters less than having one at all: `end()` was never
+// called anywhere in this codebase and there was no sweep, so `ended_at IS NULL`
+// matched every row ever written. Measured on production before this change: 159,588
+// sessions, 0 ended, 158,089 passports — one eternal session per person.
+//
+// Two things followed from that. A "visit" was not a visit, it was a lifetime. And
+// findActive always found something, so resolve() always took the existing-session
+// branch and threw the incoming UTMs away: 117,957 passports carried attribution from
+// their FIRST session and 340 from any later one, meaning a returning visitor's ad
+// click was recorded nowhere.
+const DEFAULT_IDLE_MINUTES = 30
 
 // Register a callback to run on every /sessions/resolve, merging its returned
 // object into the response. Lets a plugin piggyback data onto the one request
@@ -24,6 +38,11 @@ export function onResolve(fn) {
 export async function init(options) {
   db = options.db
   passports = options.passports
+  const minutes = Number(options.config?.sessions?.idleMinutes ?? DEFAULT_IDLE_MINUTES)
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new Error(`sessions: config.sessions.idleMinutes must be a positive number of minutes — got ${JSON.stringify(options.config?.sessions?.idleMinutes)}`)
+  }
+  idleMs = minutes * 60_000
   // Optional: a deployment without it just doesn't emit lifecycle events.
   notify = options.notify || null
   resolveHooks.length = 0   // fresh boot ⇒ no hooks registered yet; plugins re-add theirs during their own init
@@ -39,6 +58,7 @@ export async function init(options) {
       t.string('utm_content', 128)
       t.string('referrer', 1024)
       t.timestamp('started_at').notNullable().defaultTo(db.fn.now())
+      t.timestamp('last_activity_at').notNullable().defaultTo(db.fn.now())
       t.timestamp('ended_at')
       t.index('passport_id')
     })
@@ -48,6 +68,32 @@ export async function init(options) {
     await db.schema.alterTable(TABLE, t => t.string('referrer', 1024))
     logger.info('Sessions table: added referrer column')
   }
+
+  // Backfilled from started_at, not from now(): a session's activity cannot be later
+  // than the request that is adding the column, and dating them all to the deploy would
+  // make every historical session look freshly active and suppress the idle rule for one
+  // whole window.
+  if (!(await db.schema.hasColumn(TABLE, 'last_activity_at'))) {
+    await db.schema.alterTable(TABLE, t => t.timestamp('last_activity_at').defaultTo(db.fn.now()))
+    await db(TABLE).whereNull('last_activity_at').update({ last_activity_at: db.ref('started_at') })
+    logger.info('Sessions table: added last_activity_at column')
+  }
+}
+
+// Mark a session as still in use. Called on every resolve and by awareness when it
+// records an exposure carrying a session_id — otherwise a visitor reading one page for
+// 40 minutes would be handed a new session on their next click, splitting one visit in
+// two, which is the opposite failure to the one being fixed.
+//
+// Fire-and-forget by design: this is bookkeeping on a request that has already done its
+// real work, and it must never be the reason a page view fails.
+export async function touch(sessionId) {
+  if (!sessionId) return
+  try {
+    await db(TABLE).where({ id: sessionId }).whereNull('ended_at').update({ last_activity_at: new Date() })
+  } catch (err) {
+    logger.warn({ err, sessionId }, 'sessions.touch failed')
+  }
 }
 
 // Open a visit. The caller is expected to have a passport already — see
@@ -56,7 +102,10 @@ export async function init(options) {
 // /sessions/resolve route, which identifies first.
 export async function start(passportId, utms = {}) {
   const resolvedId = passportId ? await passports.resolve(passportId) : null
-  const data = { passport_id: resolvedId }
+  // Set here, not left to a column default: the default exists on a freshly CREATED
+  // table but not on one the ALTER above added the column to, and a NULL fails every
+  // comparison — so findActive matched nothing and every resolve opened a new session.
+  const data = { passport_id: resolvedId, last_activity_at: new Date() }
   for (const field of UTM_FIELDS) {
     if (utms[field]) data[field] = utms[field]
   }
@@ -87,8 +136,32 @@ export async function end(sessionId) {
 export async function findActive(passportId) {
   const resolvedId = passportId ? await passports.resolve(passportId) : null
   if (!resolvedId) return null
-  const session = await db(TABLE).where({ passport_id: resolvedId }).whereNull('ended_at').orderBy('started_at', 'desc').first()
+  // IDLE-BOUNDED. Without the last_activity_at floor this returned the first session the
+  // passport ever opened, forever — see DEFAULT_IDLE_MINUTES. Ordered by activity rather
+  // than start, because after a supersede the newest session is the live one.
+  const session = await db(TABLE)
+    .where({ passport_id: resolvedId })
+    .whereNull('ended_at')
+    // coalesce: a row written before last_activity_at existed has none, and reading
+    // that as "never active" would silently retire every historical session.
+    .whereRaw('coalesce(last_activity_at, started_at) > ?', [new Date(Date.now() - idleMs)])
+    .orderByRaw('coalesce(last_activity_at, started_at) desc')
+    .first()
   return session
+}
+
+// Do these UTMs describe a different campaign than the session already carries?
+//
+// Only fields the caller actually SENT are compared. A direct visit mid-session sends
+// none, and treating "no campaign" as a change would start a new session on every
+// ordinary page load — which would be a worse bug than the one being fixed. A visitor
+// who clicks a second ad from the same campaign stays in one session; a different
+// source, medium or campaign is a new visit by any definition of attribution.
+export function isNewCampaign(session, utms = {}) {
+  if (!session) return false
+  const sent = UTM_FIELDS.filter(f => utms[f] != null && utms[f] !== '')
+  if (!sent.length) return false
+  return sent.some(f => String(utms[f]) !== String(session[f] ?? ''))
 }
 
 // How many visits this person has made, and when the first one was.
@@ -142,7 +215,18 @@ export async function findById(id) {
 export async function resolve(passportId, utms = {}) {
   if (!passportId) return null
   const session = await findActive(passportId).catch(() => null)
-  return session || await start(passportId, utms).catch(() => null)
+  // A CAMPAIGN CHANGE opens a new visit. This used to return the existing session and
+  // discard `utms` outright, so a returning visitor's ad click was attributed to
+  // whatever brought them the first time — or to nothing.
+  if (session && isNewCampaign(session, utms)) {
+    await end(session.id).catch(() => null)
+    return await start(passportId, utms).catch(() => null)
+  }
+  if (session) {
+    await touch(session.id)
+    return session
+  }
+  return await start(passportId, utms).catch(() => null)
 }
 
 export function register(app) {
@@ -158,7 +242,15 @@ export function register(app) {
       }
       const resolvedPassport = await passports.identify(passportId || null)
       let session = await findActive(resolvedPassport).catch(() => null)
-      if (!session) session = await start(resolvedPassport, utms)
+      // Same two rules as resolve(), and deliberately not a second copy of them: this
+      // route and resolve() disagreeing about when a visit begins is how attribution
+      // ends up depending on which entry point a caller happened to use.
+      if (session && isNewCampaign(session, utms)) {
+        await end(session.id).catch(() => null)
+        session = null
+      }
+      if (session) await touch(session.id)
+      else session = await start(resolvedPassport, utms)
 
       const extra = {}
       for (const hook of resolveHooks) {

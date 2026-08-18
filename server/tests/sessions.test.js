@@ -206,3 +206,152 @@ describe('historyFor() — the visit count', () => {
     expect((await sessions.historyFor(absorbed)).sessions).toBe(1)
   })
 })
+
+// WHEN A VISIT ENDS, and when a new one begins.
+//
+// Neither question had an answer. `end()` was never called anywhere in the monorepo and
+// there was no sweep, so `ended_at IS NULL` matched every row ever written and
+// findActive always found the first session the passport ever opened. Measured on
+// production before this: 159,588 sessions, 0 ended, 158,089 passports.
+//
+// Two consequences, and the second is the one that cost money. A "visit" was a lifetime.
+// And because resolve() returned the existing session and discarded the UTMs it was
+// handed, a returning visitor's ad click was attributed to whatever brought them the
+// first time — 117,957 passports carried attribution from their FIRST session and 340
+// from any later one.
+describe('sessions: when a visit ends', () => {
+  const idle = (mins) => sessions.init({ db, passports, config: { sessions: { idleMinutes: mins } } })
+  const ageSession = (id, minutes) => db('whitebox_sessions').where({ id })
+    .update({ last_activity_at: new Date(Date.now() - minutes * 60_000) })
+
+  it('reuses a session that is still active', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords' })
+    expect((await sessions.resolve(p, {})).id).toBe(first.id)
+  })
+
+  it('starts a new one once the idle window has passed', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords' })
+    await ageSession(first.id, 31)
+    const next = await sessions.resolve(p, {})
+    expect(next.id).not.toBe(first.id)
+  })
+
+  it('counts ACTIVITY, not start time — a long visit is one visit', async () => {
+    // The failure this avoids: /sessions/resolve fires once per full page load, so on an
+    // SPA a visitor reading one page for 40 minutes would come back to a new session and
+    // have their single visit split in two. Their events are the evidence they are here.
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, {})
+    await db('whitebox_sessions').where({ id: first.id })
+      .update({ started_at: new Date(Date.now() - 90 * 60_000) })   // began 90 min ago
+    await sessions.touch(first.id)                                   // but active just now
+    expect((await sessions.resolve(p, {})).id).toBe(first.id)
+  })
+
+  it('touching is what resolve does, so browsing keeps the visit open', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, {})
+    await ageSession(first.id, 20)
+    await sessions.resolve(p, {})                                    // 20 min in, still fine
+    await ageSession(first.id, 20)                                   // …would be 40 from the START
+    expect((await sessions.resolve(p, {})).id).toBe(first.id)         // but only 20 since activity
+  })
+
+  it('refuses a nonsensical idle window at boot rather than at request time', async () => {
+    await expect(sessions.init({ db, passports, config: { sessions: { idleMinutes: 0 } } }))
+      .rejects.toThrow(/positive number of minutes/)
+    await expect(sessions.init({ db, passports, config: { sessions: { idleMinutes: 'half an hour' } } }))
+      .rejects.toThrow(/positive number of minutes/)
+    await idle(30)
+  })
+})
+
+describe('sessions: a new campaign is a new visit', () => {
+  const idle = (mins) => sessions.init({ db, passports, config: { sessions: { idleMinutes: mins } } })
+
+  it('starts a new session when the campaign changes mid-window', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords', utm_campaign: 'spring' })
+    const next = await sessions.resolve(p, { utm_source: 'facebook', utm_campaign: 'summer' })
+    expect(next.id).not.toBe(first.id)
+    expect(next.utm_source).toBe('facebook')
+    // …and the superseded one is closed, so it stops being "active" forever.
+    const closed = await db('whitebox_sessions').where({ id: first.id }).first()
+    expect(closed.ended_at).not.toBeNull()
+    expect(closed.utm_source).toBe('adwords')     // its own attribution is untouched
+  })
+
+  it('keeps one session when the same campaign is seen again', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords', utm_campaign: 'spring' })
+    const same = await sessions.resolve(p, { utm_source: 'adwords', utm_campaign: 'spring' })
+    expect(same.id).toBe(first.id)
+  })
+
+  it('does NOT start a new session for a direct visit mid-session', async () => {
+    // The rule compares only the fields the caller SENT. Treating "no campaign" as a
+    // change would mint a session on every ordinary page load — a worse bug than the one
+    // being fixed, and one that would quietly multiply every session-based number.
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords' })
+    expect((await sessions.resolve(p, {})).id).toBe(first.id)
+    expect((await sessions.resolve(p, { referrer: 'https://google.com' })).id).toBe(first.id)
+  })
+
+  it('treats a partial overlap as a change', async () => {
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, { utm_source: 'adwords', utm_campaign: 'spring' })
+    // same source, different campaign — a different ad, so a different visit
+    const next = await sessions.resolve(p, { utm_source: 'adwords', utm_campaign: 'winter' })
+    expect(next.id).not.toBe(first.id)
+    expect(next.utm_campaign).toBe('winter')
+  })
+
+  it('attributes a first campaign onto a session that had none', async () => {
+    // A visitor who arrived direct and then clicked an ad in the same window: the session
+    // has no utm_source, the click has one, so the click gets its own attributed session
+    // rather than being folded into an unattributed one.
+    await idle(30)
+    const p = await newPassport()
+    const first = await sessions.start(p, {})
+    const next = await sessions.resolve(p, { utm_source: 'adwords' })
+    expect(next.id).not.toBe(first.id)
+    expect(next.utm_source).toBe('adwords')
+  })
+
+  it('applies the same rules through the HTTP route', async () => {
+    // resolve() and the route are two entry points to one question. They used to hold
+    // separate copies of the logic, which is how they would come to disagree.
+    await idle(30)
+    const p = await newPassport()
+    const opened = await fetch(`${base}/sessions/resolve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passport_id: p, utms: { utm_source: 'adwords' } }),
+    }).then(r => r.json())
+
+    const same = await fetch(`${base}/sessions/resolve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passport_id: p }),
+    }).then(r => r.json())
+    expect(same.sessionId).toBe(opened.sessionId)
+
+    const switched = await fetch(`${base}/sessions/resolve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passport_id: p, utms: { utm_source: 'tiktok' } }),
+    }).then(r => r.json())
+    expect(switched.sessionId).not.toBe(opened.sessionId)
+
+    const row = await db('whitebox_sessions').where({ id: switched.sessionId }).first()
+    expect(row.utm_source).toBe('tiktok')
+  })
+})
