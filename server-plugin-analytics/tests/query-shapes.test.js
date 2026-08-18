@@ -9,7 +9,7 @@ vi.mock('../src/composition/store.js', () => ({
   namesByPassports: vi.fn(async () => ({})),
 }))
 
-import { runQuery, factKeysOf, anchorKeysOf } from '../src/composition/routes.js'
+import { runQuery, factKeysOf, anchorKeysOf, factUsesOf } from '../src/composition/routes.js'
 
 // A key being in the allowlist is not the same as it being usable. Unknown keys were
 // rejected from the start; a KNOWN key carrying the wrong shape was not, and the
@@ -125,7 +125,11 @@ describe('factKeysOf', () => {
 // are warned about even when declared — a declaration says which value a key means, not
 // where each person's window boundary lands.
 describe('anchorKeysOf', () => {
-  const keys = (q) => [...anchorKeysOf(q)].sort()
+  // A Map now, key → the anchor's own `use` (null when it named none): the rule has to
+  // travel with the key, or `applied`/`used` report the declaration for a query that
+  // overrode it — which is what they did.
+  const keys = (q) => [...anchorKeysOf(q).keys()].sort()
+  const uses = (q) => Object.fromEntries(anchorKeysOf(q))
 
   it('finds only the window anchors, not other fact references', () => {
     expect(keys({ selector: { filter: { all: [
@@ -148,8 +152,69 @@ describe('anchorKeysOf', () => {
     })).toEqual(['churned_at', 'first_visit_at'])
   })
 
+
+  it('carries the anchor\'s own `use` alongside the key', () => {
+    expect(uses({ selector: { filter: { metric: {
+      count: {}, window: { before: { fact: 'first_booked_at', use: 'max' } } } } } }))
+      .toEqual({ first_booked_at: 'max' })
+    // No `use` written → null, meaning "the declaration decides", not "last".
+    expect(uses({ selector: { filter: { metric: {
+      count: {}, window: { before: { fact: 'first_booked_at' } } } } } }))
+      .toEqual({ first_booked_at: null })
+  })
+
+  it('prefers the occurrence that NAMED a rule when a key is anchored twice', () => {
+    // One query, two anchors on the same key, only one of them explicit. Reporting the
+    // silent one would lose the override.
+    expect(uses({ selector: { filter: { any: [
+      { metric: { count: {}, window: { before: { fact: 'k' } } } },
+      { metric: { count: {}, window: { after: { fact: 'k', use: 'first' } } } },
+    ] } } })).toEqual({ k: 'first' })
+  })
+
   it('finds nothing when the query anchors on nothing', () => {
     expect(keys({ selector: { filter: { fact: { tier: { eq: 'gold' } } } }, group: { by: 'fact:tier' } })).toEqual([])
     expect(keys({})).toEqual([])
+  })
+})
+
+// Every place a query can override which value a fact key means. The engine's precedence
+// is query `use` > declaration > `last`, and `applied`/`used` have to follow it — they
+// read the declaration instead, so a call asking for `max` was told `min` on the
+// response's own authority.
+describe('factUsesOf', () => {
+  const uses = (q) => Object.fromEntries(factUsesOf(q))
+
+  it('reads a fact predicate', () => {
+    expect(uses({ selector: { filter: { fact: { first_booked_at: { gte: 'x', use: 'min' } } } } }))
+      .toEqual({ first_booked_at: 'min' })
+  })
+
+  it('reads an aggregate over a fact', () => {
+    expect(uses({ selector: { filter: { metric: { avg: { fact: 'ltv_paid', use: 'max' } } } } }))
+      .toEqual({ ltv_paid: 'max' })
+  })
+
+  it('reads a window anchor', () => {
+    expect(uses({ selector: { filter: { metric: {
+      count: {}, window: { between: [{ fact: 'a', use: 'first' }, { fact: 'b' }] } } } } }))
+      .toEqual({ a: 'first' })     // b named none, so nothing to report for it
+  })
+
+  it('reads group.use, but only for the fact: dimensions', () => {
+    expect(uses({ group: { by: ['month', 'fact:tier'], use: 'max' } })).toEqual({ tier: 'max' })
+    expect(uses({ group: { by: 'attr:location', use: 'max' } })).toEqual({})
+  })
+
+  it('recurses through combinators, scope and series', () => {
+    expect(uses({
+      scope: { filter: { not: { fact: { churned: { present: true, use: 'last' } } } } },
+      series: [{ name: 'A', query: { selector: { filter: { fact: { tier: { eq: 'g', use: 'first' } } } } } }],
+    })).toEqual({ churned: 'last', tier: 'first' })
+  })
+
+  it('reports nothing when the query overrides nothing', () => {
+    expect(uses({ selector: { filter: { fact: { tier: { eq: 'gold' } } } } })).toEqual({})
+    expect(uses({})).toEqual({})
   })
 })

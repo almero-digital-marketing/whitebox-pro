@@ -350,6 +350,26 @@ When a query rests on a fact that holds conflicting values for the people it res
 
 Without warnings the result is returned bare, exactly as before.
 
+> **Breaking, and not detectable from the request.** When there is something to report,
+> the result moves from the root into `data`. A caller reading `series` / `count` /
+> `sizes` / `multi` off the root gets `undefined` for those queries, and whether a given
+> query warns depends on the DATA, not on the query — so read it defensively:
+>
+> ```js
+> const rows = res?.data ?? res
+> const warnings = res?.warnings ?? []
+> ```
+>
+> This applies to `analytics_resolve` and `analytics_widget_resolve` only. The REST
+> routes and core `selector.resolve()` never carried warnings and are unchanged. See
+> CHANGELOG.md.
+
+`applied` and `used` report the rule that RAN, following the engine's precedence: a
+query's `use` beats the declaration, which beats `last`. A query that overrides gets its
+override echoed, and the anchor remedy names the declaration it displaced — these fields
+exist to be trusted about which semantics produced a number, so reporting the declared
+rule for an overridden call would be worse than reporting nothing.
+
 There are two codes, and the difference is which question a declaration closes:
 
 | code | fires when | why |

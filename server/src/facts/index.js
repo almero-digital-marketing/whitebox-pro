@@ -169,9 +169,19 @@ export const allAmbiguous = () => store.ambiguousKeys({ undeclaredOnly: false })
  * ambiguous keys on this deployment are declared — which is the point. It is a
  * tripwire for the next key someone adds without deciding what it means.
  */
-export async function factNotes(keys, { scope, anchors } = {}) {
+export async function factNotes(keys, { scope, anchors, uses } = {}) {
   const wanted = [...new Set([].concat(keys ?? []).filter(k => typeof k === 'string' && k))]
   if (!wanted.length) return { applied: {}, warnings: [] }
+
+  // What the QUERY asked for, per key, where it asked. The engine's precedence is
+  // query `use` > declaration > `last`, and these fields exist so a caller can trust
+  // which semantics produced a number — so they have to resolve in that same order.
+  //
+  // They did not: both read the declaration directly, so every non-default call was
+  // told the wrong rule on the response's own authority. `{ use: 'max' }` returned the
+  // max and reported `min`, which is worse than reporting nothing at all.
+  const asked = uses instanceof Map ? uses : new Map(Object.entries(uses ?? {}))
+  const resolve = (key, override) => override ?? asked.get(key) ?? useFor(key) ?? 'last'
 
   // Keys used as a WINDOW ANCHOR are held to a stricter rule: they are checked for
   // ambiguity whether or not they are declared.
@@ -182,16 +192,24 @@ export async function factNotes(keys, { scope, anchors } = {}) {
   // silently contains a different set of events depending on which was picked. Someone
   // comparing before-booking against after-booking behaviour is entitled to know the line
   // was drawn among candidates, even when the rule for drawing it is written down.
-  const anchorSet = new Set([].concat(anchors ?? []).filter(k => typeof k === 'string' && k))
+  // Anchors arrive as key → the anchor's own `use` (null when it named none), or as a
+  // plain list from callers that do not track it.
+  const anchorUse = anchors instanceof Map
+    ? anchors
+    : new Map([].concat(anchors ?? []).filter(k => typeof k === 'string' && k).map(k => [k, null]))
 
   const applied = {}
   const toCheck = []
   for (const key of wanted) {
-    const rule = useFor(key)
-    if (rule) applied[key] = rule
+    const declared = useFor(key)
+    const rule = resolve(key, anchorUse.get(key) ?? undefined)
+    // Reported whenever anything decided it — a query override counts as much as a
+    // declaration, and it is the override the caller most needs echoed back.
+    if (declared || asked.has(key) || anchorUse.get(key)) applied[key] = rule
     // Undeclared: nobody chose, so `last` won by default and the caller cannot see it.
-    // Declared AND an anchor: the rule is known, the ambiguity still matters.
-    if (!rule || anchorSet.has(key)) toCheck.push(key)
+    // An anchor: reported whatever the rule is, because a declaration does not settle
+    // where each person's boundary falls.
+    if (!declared || anchorUse.has(key)) toCheck.push(key)
   }
 
   // Everything else stays free: a declared, non-anchor key needs no database work,
@@ -200,8 +218,10 @@ export async function factNotes(keys, { scope, anchors } = {}) {
 
   const rows = await store.ambiguityFor(toCheck, { scope })
   const warnings = rows.map(r => {
-    const isAnchor = anchorSet.has(r.key)
-    const rule = useFor(r.key)
+    const isAnchor = anchorUse.has(r.key)
+    // The rule that RAN, not the one declared — see `resolve` above.
+    const rule = resolve(r.key, anchorUse.get(r.key) ?? undefined)
+    const declared = useFor(r.key)
     return {
       code: isAnchor ? 'ambiguous_anchor_fact' : 'ambiguous_fact_value',
       fact: r.key,
@@ -210,18 +230,27 @@ export async function factNotes(keys, { scope, anchors } = {}) {
       max_values_for_one_passport: r.max_values_for_one_passport,
       // The rule actually applied, so the reader knows which boundary they got rather
       // than only that several existed.
-      used: rule ?? 'last',
+      used: rule,
       // Said in the warning rather than left to a doc. For an undeclared key the fix is
       // a declaration — an override has to be repeated by every caller forever, while a
       // declaration is written once by whoever knows what the key means. For a declared
       // anchor there is nothing to fix: the note exists so the number is read correctly.
-      remedy: rule
-        ? `the window anchored on "${r.key}" using \`${rule}\`; ${r.ambiguous_passports} of these ` +
-          `people hold more than one value, so their boundary is one of several. Nothing is wrong — ` +
-          `read the window as "relative to the ${rule} ${r.key}", and pass use: '…' on the anchor to ask a different one.`
+      remedy: isAnchor
+        ? `the window anchored on "${r.key}" using \`${rule}\`` +
+          // Say where the rule came from, and only that: claiming `last` is the default
+          // while reporting `max` reads as a contradiction to someone who just asked
+          // for max.
+          (declared && declared !== rule ? ` (the query overrode the declared \`${declared}\`)`
+            : declared ? ''
+            : asked.has(r.key) || anchorUse.get(r.key) ? ` (asked for by the query; nothing declares this key)`
+            : ` (nothing declares this key, so \`last\` is the default)`) +
+          `; ${r.ambiguous_passports} of these people hold more than one value, so their boundary is ` +
+          `one of several. Read the window as "relative to the ${rule} ${r.key}", and pass use: '…' ` +
+          `on the anchor to ask a different one.`
         : `declare it — facts.use: { ${r.key}: 'last' | 'first' | 'min' | 'max' } ` +
           `in config, or facts.describe('${r.key}', { use }) from the plugin that writes it. ` +
-          `Until then reads take the latest write.`,
+          `Until then reads take the latest write` +
+          (asked.has(r.key) ? `, though this query asked for \`${rule}\`` : '') + `.`,
     }
   })
   return { applied, warnings }

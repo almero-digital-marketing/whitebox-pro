@@ -287,8 +287,18 @@ export function factKeysOf(q, out = new Set()) {
 // dates, and moving it moves which events fall inside the window, so a caller comparing
 // "what they watched before booking" against "after" should know the line was drawn
 // among candidates even when the rule for drawing it is declared.
-export function anchorKeysOf(q, out = new Set()) {
+export function anchorKeysOf(q, out = new Map()) {
   if (!q || typeof q !== 'object') return out
+  // Map, not Set: the anchor's own `use` has to travel with the key. Reporting the
+  // DECLARED rule for an anchor the caller overrode is worse than reporting nothing —
+  // it asserts, on the response's own authority, that a number came from semantics it
+  // did not come from.
+  const note = (key, use) => {
+    const prev = out.get(key)
+    // First writer wins only if it named a rule: an occurrence with an explicit `use`
+    // is more specific than one without, and one query can anchor twice.
+    if (prev === undefined || (prev === null && use != null)) out.set(key, use ?? null)
+  }
   const walk = (node) => {
     if (!node || typeof node !== 'object') return
     for (const c of ['all', 'any']) if (Array.isArray(node[c])) node[c].forEach(walk)
@@ -297,13 +307,61 @@ export function anchorKeysOf(q, out = new Set()) {
     if (w && typeof w === 'object') {
       for (const side of ['before', 'after', 'between']) {
         for (const one of [].concat(w[side] ?? [])) {
-          if (one && typeof one === 'object' && typeof one.fact === 'string') out.add(one.fact)
+          if (one && typeof one === 'object' && typeof one.fact === 'string') {
+            note(one.fact, typeof one.use === 'string' ? one.use : undefined)
+          }
         }
       }
     }
   }
   for (const side of ['selector', 'scope']) walk(q[side]?.filter)
   if (Array.isArray(q.series)) q.series.forEach(e => anchorKeysOf(e?.query, out))
+  return out
+}
+
+// Every place a query can OVERRIDE which value a fact key means, as key → the rule it
+// asked for. The engine's precedence is query `use` > declaration > `last`, and the
+// provenance fields have to follow the same order or they describe a different query
+// than the one that ran.
+export function factUsesOf(q, out = new Map()) {
+  if (!q || typeof q !== 'object') return out
+  const note = (key, use) => { if (typeof key === 'string' && typeof use === 'string') out.set(key, use) }
+
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    for (const c of ['all', 'any']) if (Array.isArray(node[c])) node[c].forEach(walk)
+    if (node.not) walk(node.not)
+    // A fact predicate: { key: { gte: …, use: 'min' } }
+    if (node.fact && typeof node.fact === 'object') {
+      for (const [key, pred] of Object.entries(node.fact)) {
+        if (pred && typeof pred === 'object' && !Array.isArray(pred)) note(key, pred.use)
+      }
+    }
+    const m = node.metric
+    if (m && typeof m === 'object') {
+      // An aggregate over a fact: { avg: { fact: 'ltv', use: 'max' } }
+      for (const v of Object.values(m)) {
+        if (v && typeof v === 'object' && typeof v.fact === 'string') note(v.fact, v.use)
+      }
+      const w = m.window
+      if (w && typeof w === 'object') {
+        for (const side of ['before', 'after', 'between']) {
+          for (const one of [].concat(w[side] ?? [])) {
+            if (one && typeof one === 'object') note(one.fact, one.use)
+          }
+        }
+      }
+    }
+  }
+  for (const side of ['selector', 'scope']) walk(q[side]?.filter)
+
+  // A `fact:<key>` bucket takes its rule from group.use.
+  if (typeof q.group?.use === 'string') {
+    for (const one of [].concat(q.group?.by ?? [])) {
+      if (typeof one === 'string' && one.startsWith('fact:')) note(one.slice(5), q.group.use)
+    }
+  }
+  if (Array.isArray(q.series)) q.series.forEach(e => factUsesOf(e?.query, out))
   return out
 }
 
