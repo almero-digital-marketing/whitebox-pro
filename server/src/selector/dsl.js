@@ -30,7 +30,7 @@
 import {
   FILTER_KEYS, GATE_AGGS as ENGINE_GATE_AGGS, GROUP_AGGS as ENGINE_GROUP_AGGS,
   AGG_COLS, SESSION_COLS as ENGINE_SESSION_COLS, ATTR_OPS, WINDOW_KEYS as ENGINE_WINDOW_KEYS,
-  MISSING as ENGINE_MISSING, USE_RULES, DEFAULT_SERIES, MAX_SERIES, TIME_FMT, DIM_COL,
+  MISSING as ENGINE_MISSING, USE_RULES, DEFAULT_SERIES, MAX_SERIES, TIME_FMT, DIM_COL, ORDERS,
 } from './metric.js'
 import { DURATION_HINT, TEMPORAL_OPS } from '../facts/operators.js'
 import { CONTRACT, CONTRACTS } from './contract.js'
@@ -725,6 +725,16 @@ export function grammar() {
         note: 'At most one dimension may be a fact:<key>. Cannot combine with missingAnchor: "bucket", which already owns the series dimension.',
       },
       use: { values: USE_RULES, appliesTo: 'a fact:<key> bucket only' },
+      order: {
+        values: ORDERS,
+        default: 'bucket for a TIME grain (hour/day/week/month), value for anything else',
+        meaning: '`bucket` reads chronologically and, with `limit`, takes the most RECENT N. ' +
+                 '`value` ranks by the aggregate and takes the highest N.',
+        note: 'A time grain used to rank by value whenever `limit` was set, so by: "week" with ' +
+              'limit: 8 returned the eight BUSIEST weeks in value order — not the last eight, ' +
+              'and not contiguous. Use order: "value" deliberately for a ranking like ' +
+              '"the five busiest months"; a series wants the default.',
+      },
     },
 
     projections: {

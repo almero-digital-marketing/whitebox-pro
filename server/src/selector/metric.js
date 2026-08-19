@@ -755,6 +755,13 @@ export async function evaluateTimed(db, spec, { at, scope, anchors } = {}) {
 }
 
 // ── the chart (group) — total aggregate bucketed by time grain or dimension ──
+// Is this bucket a point in TIME? The four grains sort lexically as they sort
+// chronologically — 'YYYY-MM-DD', 'IYYY"-W"IW', 'YYYY-MM' are all zero-padded — so
+// ordering by the formatted bucket is ordering by time, with no extra column.
+export const isTimeGrain = (by) => typeof by === 'string' && Object.hasOwn(TIME_FMT, by)
+
+export const ORDERS = ['bucket', 'value']
+
 export const TIME_FMT = { hour: 'YYYY-MM-DD"T"HH24:00', day: 'YYYY-MM-DD', week: 'IYYY"-W"IW', month: 'YYYY-MM' }
 export const DIM_COL = { channel: 'e.channel', direction: 'e.direction', source: 'e.source', content: 'e.content_id' }
 
@@ -963,7 +970,7 @@ function aggSql(agg, bounds = {}) {
 // Default: ordered by bucket (chronological for time grains). `limit` is the
 // HIGH-CARDINALITY GUARDRAIL — an open key (attr:<key>, session:<utm>) can have
 // thousands of buckets, so `limit` returns the top-N by value (desc) instead.
-export async function group(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse } = {}) {
+export async function group(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, order, use: bucketUse } = {}) {
   if (!by) throw new Error('selector.group: needs `by` (a time grain, column, session:<utm>, attr:<key>, or fact:<key>)')
   // TWO dimensions: `by: ['month', 'attr:location']` — the first is the x-axis, the
   // second becomes one series per value. "Revenue per studio per month" needed one
@@ -973,7 +980,7 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   // Delegated to its own function rather than threaded through this one: the output is
   // a different SHAPE ({ multi, series }), and every branch below returns a flat
   // [{bucket, value}].
-  if (Array.isArray(by)) return crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse })
+  if (Array.isArray(by)) return crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, order, use: bucketUse })
   const { filters, agg, bounds } = split(spec, GROUP_AGGS)
   const now = at ? new Date(at) : new Date()
   const factKey = factKeyOf(by)
@@ -985,6 +992,12 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   // silently would read as "the rule was applied" to whoever wrote it. The aggregate's
   // own rule lives in the aggregate (`avg: { fact, use }`), which is a different
   // question about a possibly different key.
+  if (order !== undefined && !ORDERS.includes(order)) {
+    throw new Error(
+      `selector.group: \`order\` must be ${ORDERS.join(' or ')} — got ${JSON.stringify(order)}. ` +
+      `\`bucket\` is chronological for a time grain (and the default there); \`value\` ranks by the ` +
+      `aggregate, which is the default for a categorical dimension.`)
+  }
   if (seriesLimit !== undefined) {
     throw new Error(
       `selector.group: \`seriesLimit\` caps the SERIES dimension of a two-dimension \`by\`, ` +
@@ -1029,6 +1042,10 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   // aggregates that. A passport legitimately appears in several buckets — active in
   // three months, they contribute their value to each of the three — but exactly once
   // per bucket, which is the reading anybody asking for "avg by month" means.
+  // Decided once, before either branch: the fact-aggregate path and the single-level path
+  // must not disagree about what `limit` means on a time grain.
+  const ranked = (order ?? (isTimeGrain(by) ? 'bucket' : 'value')) === 'value'
+
   if (bounds.fact) {
     let inner = base(db, needsSession(filters, by))
     if (factKey != null) inner = joinFact(db, inner, factKey, now, 'f', bucketUse)   // the BUCKET fact
@@ -1045,9 +1062,15 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
     let outer = db.from(inner.as('d'))
       .select('bucket', db.raw(`${value.sql} as value`, value.bindings))
       .groupBy('bucket')
-    outer = (limit != null) ? outer.orderByRaw('2 desc nulls last').limit(limit) : outer.orderBy('bucket')
+    // Same rule as the single-level path below: a time grain takes the most RECENT N and
+    // reads chronologically; a categorical dimension ranks by value.
+    outer = (limit != null)
+      ? outer.orderByRaw(ranked ? '2 desc nulls last' : '1 desc').limit(limit)
+      : outer.orderByRaw(ranked ? '2 desc nulls last' : '1')
     const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
-    return (await outer).map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
+    let factRows = await outer
+    if (limit != null && !ranked) factRows = factRows.reverse()
+    return factRows.map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
   }
 
   let q = base(db, needsSession(filters, by))
@@ -1055,15 +1078,32 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
   q = applyFilters(db, q, filters, { at, scope, now })
     .select(db.raw(`${bucket.sql} as bucket`, bucket.binds), db.raw(`${value.sql} as value`, value.bindings))
     .groupByRaw('1')                                          // group by the bucket (output position)
+  // ORDER, and with `limit` also WHICH buckets survive. These are the same decision:
+  // taking the top N by value and then plotting them as a series is what produced
+  // `by: 'week', limit: 8` returning the eight BUSIEST weeks — W16, W23, W17, W19, W22,
+  // W09, W18, W24 — in value order. Not the last eight, not contiguous, and drawn as a
+  // line it connects periods that are not adjacent.
+  //
+  // So a time grain defaults to `bucket`: the most RECENT N, returned chronologically,
+  // which is what "the last 8 weeks" means. A categorical dimension defaults to `value`,
+  // because there top-N by value IS the guardrail — 449 content urls have no natural order
+  // and the interesting ones are the big ones.
+  //
+  // `order` is explicit rather than implied, so "the five busiest months" stays expressible
+  // — it is a ranking, not a series, and the caller says which they want.
   q = (limit != null)
-    ? q.orderByRaw('2 desc').limit(limit)                     // top-N by value (the guardrail)
-    : q.orderByRaw('1')                                       // by bucket (chronological for time grains)
+    ? q.orderByRaw(ranked ? '2 desc' : '1 desc').limit(limit)
+    : q.orderByRaw(ranked ? '2 desc' : '1')
 
   // `value: null` is preserved deliberately. Number(null) is 0, and an avg/median of
   // a bucket where nothing carried the field would then plot as a real zero — the
   // same class of confident-wrong-number this engine keeps being bitten by.
   const asValue = TIME_AGGS.includes(agg) ? toIso : toNumber
-  const series = (await q).map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
+  let rows = await q
+  // `limit` with a bucket order takes the most recent N, so the rows arrive newest-first.
+  // A series is read left to right.
+  if (limit != null && !ranked) rows = rows.reverse()
+  const series = rows.map(r => ({ bucket: r.bucket, value: asValue(r.value) }))
   return cohortSize ? withCohortSize(db, series, agg, filters, { at, scope, now }) : series
 }
 
@@ -1087,7 +1127,7 @@ export async function group(db, spec, { by, at, scope, limit, band, cohortSize, 
  * gives a ragged table where one series has three points and another has one, and a
  * chart drawn from it silently omits the comparison it exists to make.
  */
-async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, use: bucketUse } = {}) {
+async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, cohortSize, seriesLimit, order, use: bucketUse } = {}) {
   if (by.length !== 2) {
     throw new Error(
       `selector.group: \`by\` takes one dimension, or exactly two to cross-tabulate ` +
@@ -1176,7 +1216,12 @@ async function crossTabByDimensions(db, spec, { by, at, scope, limit, band, coho
   // Which x-buckets survive, decided across all series together.
   let keep = null
   if (limit != null) {
-    const top = await grouped([X, VALUE]).orderByRaw('2 desc nulls last').limit(limit)
+    // A time x-axis takes the most RECENT N, not the highest-valued N — the same fix as the
+    // single-dimension path. Ranking a time axis by value gives a chart whose points are
+    // not adjacent in time, which is not a series.
+    const rankX = (order ?? (isTimeGrain(xBy) ? 'bucket' : 'value')) === 'value'
+    const top = await grouped([X, VALUE])
+      .orderByRaw(rankX ? '2 desc nulls last' : '1 desc').limit(limit)
     keep = top.map(r => r.bucket)
     if (!keep.length) return { multi: true, series: [], aggregate: agg }
   }
@@ -1330,7 +1375,10 @@ async function crossTabByAnchor(db, { filters, agg, bounds, bucket, value, by, a
   // Which buckets survive the guardrail — decided across both cohorts together.
   let keep = null
   if (limit != null) {
-    const top = await grouped([BUCKET, VALUE]).orderByRaw('2 desc nulls last').limit(limit)
+    // Time grain → the most recent N. See the single-dimension path.
+    const rankBucket = !isTimeGrain(by)
+    const top = await grouped([BUCKET, VALUE])
+      .orderByRaw(rankBucket ? '2 desc nulls last' : '1 desc').limit(limit)
     keep = top.map(r => r.bucket)
     if (!keep.length) return { multi: true, series: [], sizes: [], aggregate: agg }
   }

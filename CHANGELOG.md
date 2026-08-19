@@ -5,6 +5,31 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.31.1 · analytics 0.18.1
+
+### Fixed — a time grain with `limit` returned the BUSIEST buckets, not the most recent
+
+`group.by: "week"` with `limit: 8` returned the eight busiest weeks in value order. On live
+data: W16, W23, W17, W19, W22, W09, W18, W24. Two things wrong at once — the order, and the
+SELECTION. Those weeks are not adjacent, so a line drawn through them joins periods with
+gaps between them and reads as a trend that never happened.
+
+`limit` switched the ordering to value-desc for every bucket type. A time grain now defaults
+to `order: 'bucket'`: the most RECENT n, returned chronologically, which is what "the last
+8 weeks" means. Verified for all four grains — hour, day, week, month — with the limited set
+being exactly the tail of the full series in each.
+
+A categorical dimension is unchanged and still ranks by value, because there top-N by value
+IS the guardrail: 449 content urls have no natural order and the interesting ones are the
+big ones.
+
+`order: 'bucket' | 'value'` is now explicit, so "the five busiest months" stays expressible —
+it is a ranking rather than a series, and the caller says which. Fixed in all four places the
+ordering was decided: the single-level path, the two-level fact-aggregate path, the
+two-dimension cross-tab x-axis, and the anchor cross-tab.
+
+---
+
 ## whitebox-pro-server 2.31.0 · analytics 0.18.0 · ui 0.14.0
 
 ### API versioning — a contract number a caller can pin

@@ -291,11 +291,19 @@ never booked don't" actually has.
 | key | means |
 |---|---|
 | `by` | one dimension, or **exactly two** to cross-tabulate |
-| `limit` | top-N buckets by value — the high-cardinality guardrail |
+| `limit` | how many buckets — the most RECENT N for a time grain, the top N by value otherwise |
+| `order` | `bucket` (chronological) or `value` (ranked). Defaults to `bucket` for a time grain, `value` otherwise |
 | `band` | band a numeric `fact:<key>` into ranges (`band: 5` → 20-24, 25-29) |
 | `cohortSize` | also return the denominator, so a reach % needs no second call |
 | `use` | which value a `fact:<key>` bucket means |
 | `seriesLimit` | cap the SERIES dimension of a two-dimension `by` — default **6**, max **200** |
+
+> **A time grain with `limit` is a series, not a ranking.** `by: "week", limit: 8` returns
+> the last eight consecutive weeks, in order. It used to return the eight *busiest* weeks in
+> value order — not adjacent, so a line drawn through them joined periods with gaps between
+> them. A categorical dimension still ranks by value, because there top-N *is* the guardrail.
+> Ask for `order: "value"` when you want a ranking ("the five busiest months") — that is a
+> different question from a series, and now says so.
 
 ### The dimensions
 

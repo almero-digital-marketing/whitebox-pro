@@ -88,7 +88,7 @@ export async function resolveKnowledge(selector, { scope, passport, asOf, limit 
 // high-cardinality guardrail). The one engine capability charts add.
 // Only these reach metric.group. Anything else a caller puts in `group` was
 // accepted-and-ignored, which is indistinguishable from an answer.
-const GROUP_KEYS = ['by', 'limit', 'band', 'cohortSize', 'use', 'seriesLimit']
+const GROUP_KEYS = ['by', 'limit', 'band', 'cohortSize', 'use', 'seriesLimit', 'order']
 
 // Which aggregate a metric clause names — echoed back beside `cohortSize` so the
 // caller knows what the series values ARE without inferring it from their own query.
@@ -188,7 +188,7 @@ export async function resolveGroup(selector, { group, scope, asOf } = {}) {
 
   return metric.group(rt.db, m, {
     by: group?.by, limit: group?.limit, band: group?.band, cohortSize: group?.cohortSize,
-    use: group?.use, seriesLimit: group?.seriesLimit, at, scope: scopeArr,
+    use: group?.use, seriesLimit: group?.seriesLimit, order: group?.order, at, scope: scopeArr,
   })
 }
 

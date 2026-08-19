@@ -54,6 +54,7 @@ export function registerMcp(ctx, { selector }) {
         cohortSize: z.boolean().optional(),
         use:        z.enum(['last', 'first', 'min', 'max']).optional(),
         seriesLimit: z.number().int().positive().max(200).optional(),  // caps the SERIES dimension of a two-dimension `by`
+        order:      z.enum(['bucket', 'value']).optional(),           // chronological (default for a time grain) or ranked by the aggregate
       }).optional(),
     },
     handler: async ({ selector: sel = {}, ...opts }) => json(await selector.resolve(sel, opts)),

@@ -580,6 +580,87 @@ describe('selector group: first_seen / last_seen', () => {
   })
 })
 
+// A TIME GRAIN with `limit` is a series, not a ranking.
+//
+// `limit` switched the ordering to value-desc for every bucket type, so
+// `by: 'week', limit: 8` returned the eight BUSIEST weeks in value order — W16, W23, W17,
+// W19, W22, W09, W18, W24 on live data. Two things wrong at once: the order, and the
+// SELECTION. Those eight weeks are not adjacent, so a line drawn through them joins periods
+// with gaps between them and reads as a trend that never happened.
+//
+// A categorical dimension keeps ranking by value, because there it IS the guardrail: 449
+// content urls have no natural order and the interesting ones are the big ones. `order` says
+// which, so "the five busiest months" is still expressible — as a ranking, deliberately.
+describe('selector group: ordering a time grain', () => {
+  const purchases2 = { filter: { metric: { content: 'purchase', count: {} } } }
+  const buckets = (r) => r.map(x => x.bucket)
+
+  beforeEach(async () => {
+    // Five months. April is the busiest and February the quietest, so a value ordering and
+    // a chronological one disagree — and the busiest months are not contiguous.
+    const counts = { '2026-01': 2, '2026-02': 1, '2026-03': 3, '2026-04': 5, '2026-05': 4 }
+    for (const [month, n] of Object.entries(counts)) {
+      const p = await newPassport()
+      for (let i = 0; i < n; i++) await expose(p, { ts: `${month}-0${i + 1}` })
+    }
+  })
+
+  it('returns the most RECENT n, in order, when limited', async () => {
+    const r = await selector.resolve(purchases2, { group: { by: 'month', limit: 3 } })
+    expect(buckets(r)).toEqual(['2026-03', '2026-04', '2026-05'])
+  })
+
+  it('is chronological with no limit, as it always was', async () => {
+    const r = await selector.resolve(purchases2, { group: { by: 'month' } })
+    expect(buckets(r)).toEqual(['2026-01', '2026-02', '2026-03', '2026-04', '2026-05'])
+  })
+
+  it('ranks by value only when ASKED, which keeps "the busiest n" expressible', async () => {
+    const r = await selector.resolve(purchases2, { group: { by: 'month', limit: 3, order: 'value' } })
+    expect(buckets(r)).toEqual(['2026-04', '2026-05', '2026-03'])   // 5, 4, 3
+  })
+
+  it('leaves a CATEGORICAL dimension ranked by value', async () => {
+    // The guardrail this ordering exists for. Unchanged.
+    const a = await newPassport()
+    await expose(a, { channel: 'email', ts: '2026-06-01' })
+    await expose(a, { channel: 'email', ts: '2026-06-02' })
+    await expose(a, { channel: 'sms', ts: '2026-06-03' })
+    const r = await selector.resolve(purchases2, { group: { by: 'channel', limit: 2 } })
+    expect(buckets(r)[0]).toBe('web')        // the biggest bucket first
+    expect(r[0].value).toBeGreaterThanOrEqual(r[1].value)
+  })
+
+  it('lets a categorical dimension be ordered by bucket on request', async () => {
+    const r = await selector.resolve(purchases2, { group: { by: 'channel', order: 'bucket' } })
+    expect(buckets(r)).toEqual([...buckets(r)].sort())
+  })
+
+  it('applies to a FACT aggregate over a time grain too', async () => {
+    // The two-level path had its own copy of the ordering and the same defect.
+    const p = await newPassport()
+    await facts.record({ passport_id: p, key: 'ltv', value: 10, source: 't' })
+    for (const ts of ['2026-01-05', '2026-04-05', '2026-05-05']) await expose(p, { ts })
+    const r = await selector.resolve(
+      { filter: { metric: { content: 'purchase', avg: { fact: 'ltv' } } } },
+      { group: { by: 'month', limit: 2 } })
+    expect(buckets(r)).toEqual(['2026-04', '2026-05'])
+  })
+
+  it('applies to the x-axis of a cross-tab', async () => {
+    const r = await selector.resolve(purchases2,
+      { group: { by: ['month', 'channel'], limit: 2, seriesLimit: 1 } })
+    expect(buckets(r.series[0].points)).toEqual(['2026-04', '2026-05'])
+  })
+
+  it('names the two orders when given something else', async () => {
+    await expect(selector.resolve(purchases2, { group: { by: 'month', order: 'chronological' } }))
+      .rejects.toThrow(/`order` must be bucket or value/)
+    await expect(selector.resolve(purchases2, { group: { by: 'month', order: 'desc' } }))
+      .rejects.toThrow(/bucket` is chronological for a time grain/)
+  })
+})
+
 describe('selector group: content buckets', () => {
   const withUrl = async (passport_id, { ts, url }) => {
     await db('whitebox_awareness_exposures').insert({

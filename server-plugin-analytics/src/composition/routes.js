@@ -147,7 +147,7 @@ const QUERY_HINTS = {
 // /query envelope rejects it): a grain only applies to a `fact:<key>` bucket,
 // which is resolved in this layer, and the engine's own time grains are chosen
 // by `by` instead.
-const GROUP_KEYS = new Set(['by', 'limit', 'grain', 'band', 'cohortSize', 'use', 'seriesLimit'])
+const GROUP_KEYS = new Set(['by', 'limit', 'grain', 'band', 'cohortSize', 'use', 'seriesLimit', 'order'])
 
 const GROUP_HINTS = {
   // `group: { by: "day", key: "first_booked_at" }` read as "people by the day of
