@@ -5,6 +5,38 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.32.0
+
+### BREAKING (and a security fix) — the query surface fails CLOSED
+
+`config.query.auth` is now REQUIRED. A deployment without it **will not boot**, where before
+it mounted `/query`, `/preview`, `/ask` and `/funnel` open behind a single startup warning.
+
+`POST /query` is arbitrary selector access over the entire customer base, and `/ask` spends
+model budget. The old code traded that against the risk of a failed boot — "QUERY is an
+always-on core surface, so a missing secret can't be allowed to fail boot" — which is the
+wrong way round: a surface that cannot authenticate should not answer.
+
+Two ways to reach the open state, neither of which looked like a mistake:
+
+  · `auth: { secret: process.env.WB_QUERY_TOKEN }` with the variable unset or mistyped —
+    the shape a real deployment uses, one typo from an open surface.
+  · `auth: 'a-secret-token'` — the string shape the docs teach for every OTHER surface.
+    `.secret` on a string is `undefined`, so a config that READS as configured mounted the
+    whole surface open. This is now the more important half of the fix: that spelling
+    silently disabled auth and now correctly authenticates.
+
+`query.auth` also goes through `resolveAuth` now, so it accepts everything the rest of core
+does — a string, `{ secret }`, a bare middleware, or a composed verifier like
+`jwt({ issuer, audience, scope })`. It was previously the one surface that understood only a
+static token, so console scopes could not apply to it.
+
+**Upgrading:** set `query: { auth: … }`. To run without auth deliberately (development),
+set `query: { auth: false }` — it mounts open and logs what is exposed. The error names the
+accepted shapes and the opt-out.
+
+---
+
 ## whitebox-pro-server 2.31.2
 
 ### Fixed — the server reported a version nobody set

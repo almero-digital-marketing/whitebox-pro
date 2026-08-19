@@ -34,6 +34,7 @@ the factory form is preferred.
 | `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, `url.keep` query-string allowlist, concurrency) |
 | `facts` | no | `{ labels, use }` — human names for fact keys, and what each key MEANS when a passport holds several values; see below |
 | `sessions` | no | `{ idleMinutes }` — how long a visit survives without activity (default `30`); see below |
+| `query` | **yes** | `{ auth }` — gates `/query` · `/preview` · `/ask` · `/funnel`. Refuses to boot without it; `auth: false` to run open in dev |
 | `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
 | `connect` | mounted under a path prefix a proxy preserves | `{ path }` — where socket.io's engine listens — see below |
 | `console` | no | `{ enabled }` — set `false` to install `whitebox-pro-ui` but not serve it |
@@ -316,6 +317,27 @@ server](06-mcp.md#authentication) — no external account required).
 `analytics({ auth: auth0({ … }) })` works exactly like
 `mcp: { auth: auth0({ … }) }` — the normalization (`resolveAuth` in
 `server/src/auth.js`) is the same code either way, not MCP-specific.
+
+### The core query surface
+
+`query.auth` gates `/query`, `/preview`, `/ask` and `/funnel`, and takes the **same shapes
+as everything else** — a secret string, `{ secret }`, a middleware, or a composed verifier:
+
+```js
+query: { auth: process.env.WB_QUERY_TOKEN },              // or jwt({ … })
+```
+
+**It refuses to boot without one.** `POST /query` is arbitrary selector access over every
+customer and `/ask` spends model budget, so a surface that cannot authenticate does not
+answer. To run open in development, say so: `query: { auth: false }` — which logs a warning
+naming exactly what is exposed.
+
+> Until server 2.32.0 this failed OPEN. It read `config.query.auth.secret` directly and,
+> finding nothing, mounted a pass-through behind one startup warning. Two ways in, neither
+> of which looked like a mistake: `{ secret: process.env.WB_QUERY_TOKEN }` with the variable
+> unset or mistyped, and — worse — `auth: 'a-token'`, the string shape documented for every
+> other surface, where `.secret` is `undefined`. A config that read as configured mounted
+> the whole surface open.
 
 Public ingress endpoints (browser-facing: `/sessions/resolve`,
 `/conversions/events`, `/engagement/events`, `/crm/observe`) and provider webhooks
