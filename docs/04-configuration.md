@@ -32,7 +32,8 @@ the factory form is preferred.
 | `webhooks` | no | outbound webhook worker: `{ concurrency, retries, timeout }` |
 | `passports` | no | `{ lifespans: { fingerprint, phone, email } }` in **days** (merge freshness) |
 | `awareness` | no | embedding/redaction tuning (model, chunk size, PII redaction, `url.keep` query-string allowlist, concurrency) |
-| `facts` | no | `{ labels: { <key>: <humanLabel> } }` — human names for fact keys; see below |
+| `facts` | no | `{ labels, use }` — human names for fact keys, and what each key MEANS when a passport holds several values; see below |
+| `sessions` | no | `{ idleMinutes }` — how long a visit survives without activity (default `30`); see below |
 | `trustProxy` | behind a reverse proxy | Express's `trust proxy` setting — see below |
 | `connect` | mounted under a path prefix a proxy preserves | `{ path }` — where socket.io's engine listens — see below |
 | `console` | no | `{ enabled }` — set `false` to install `whitebox-pro-ui` but not serve it |
@@ -94,6 +95,76 @@ registers, and a plugin's `describe()` call only sets a key that's still unset �
 an entry here can never be clobbered by a plugin default, but a plugin default fills
 in anything you haven't named yourself. A fact with no label anywhere still works
 everywhere; it just falls back to showing its raw key.
+
+## Fact semantics — what a key MEANS
+
+A fact is single-valued per passport, so every read that needs one value **picks** one.
+`facts.use` says which:
+
+```js
+facts: {
+  use: {
+    // Definitional: a FIRST cannot move forward, a LAST cannot move back —
+    // whatever order the syncs arrive in, or how many customer records merge.
+    first_booked_at: 'min',
+    last_visit_at:   'max',
+    // Monotonic: visits only accumulate, so the largest count is the true one.
+    visits_total:    'max',
+    // Current state. Declaring `last` is NOT a no-op — it records a decision and
+    // takes the key off the undeclared-ambiguity report.
+    ltv_paid:        'last',
+  },
+},
+```
+
+| rule | picks |
+|---|---|
+| `last` (default) | the newest `observed_at` |
+| `first` | the oldest `observed_at` |
+| `max` / `min` | the largest / smallest VALUE |
+
+Precedence is **query `use` > this declaration > `last`**. Once declared, every filter,
+`fact:` bucket, aggregate and window anchor honours it, so no caller has to repeat it.
+
+**Why it is not academic.** Duplicate source records and passport merges make one passport
+hold several legitimate values. On GPoint, 3,357 passports hold more than one
+`first_booked_at` — 98% of them because one person exists as several CRM customer records,
+each correctly reporting its own first booking. Under the `last` default, "clients acquired
+since 1 January" over-reported by 586 people, because a first booking cannot move forward.
+
+`facts.undeclaredAmbiguous()` lists the keys where the choice is still being made silently;
+a query resting on an undeclared ambiguous key gets a `warnings` entry, and a **window
+anchor** gets one whether or not the key is declared — a declaration says which value a key
+means, not where each person's boundary falls.
+
+The **writer** owns this, not the caller: a plugin declares it with
+`ctx.facts.describe(key, { label, use })`, and config overrides. See
+[query-language.md](../server/docs/query-language.md) for the query-side `use`.
+
+## Sessions
+
+```js
+sessions: {
+  idleMinutes: 30,       // default
+},
+```
+
+How long a visit survives with no activity. A session also ends when a **campaign
+changes** — UTMs that differ from the ones it carries — because a returning visitor
+clicking a fresh ad is on a new visit, and that is not configurable: it is what
+attribution means.
+
+Activity means either a `/sessions/resolve` call or an awareness record carrying that
+`session_id`. The second matters on a single-page app, where resolve fires once per page
+LOAD and a visitor can read one page for longer than the window.
+
+Raise it if your visits are genuinely long (a booking flow with a slow third-party step);
+lower it if you want tighter visit counts. It cannot be zero or negative — that is refused
+at boot rather than at request time.
+
+> Before 2026-08-19 there was no window at all: nothing ever ended a session, so each
+> passport had exactly one for life and a returning visitor's campaign was never recorded.
+> See [Concepts → Sessions](02-concepts.md#sessions).
 
 ## Trust proxy
 

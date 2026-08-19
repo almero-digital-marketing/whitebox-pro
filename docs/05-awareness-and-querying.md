@@ -28,6 +28,13 @@ There are two layers to query with, and you'll mostly want the first:
 
 The selector is the single predicate "who / what," resolved into a **projection**.
 
+> **The full grammar is [query-language.md](../server/docs/query-language.md)** — every
+> operator, aggregate, bucket, window key and response shape, including the words that mean
+> several things (`last` means four different things depending on where it sits). This page
+> is the tour; that one is the reference. Over MCP, `analytics_grammar` returns the same
+> thing generated from the engine's own constants, so it cannot drift from what the engine
+> accepts.
+
 ```js
 selector = { about?, filter?, judge? }   // all three optional
 ```
@@ -38,12 +45,15 @@ selector = { about?, filter?, judge? }   // all three optional
 - **`filter`** — a boolean tree of deterministic clauses, no LLM:
   - `fact` — a typed gate over the **facts** timeline:
     `{ fact: { plan_tier: { eq: "pro" } } }`. Ops: `present` · `eq` · `ne` · `in` ·
-    `gt` · `gte` · `lt` · `lte`, directional dates `next` / `last` / `before`, and
-    temporal `changed` / `transition` / `decreased` / `increased`.
+    `gt` · `gte` · `lt` · `lte` · `contains` · `startsWith` · `endsWith`, directional
+    dates `next` / `last` / `before`, and temporal `changed` / `transition` /
+    `decreased` / `increased` / `held` / `distinct`. Plus `use`, which says WHICH value
+    when a passport holds several.
   - `metric` — a **windowed aggregate** over the awareness event stream:
     `{ metric: { content: "purchase", sum: { field: "value", gte: 500 }, last: "30d" } }`.
-    Aggregates: `count` · `distinct_sessions` · `sum_dwell_ms` · `recency_days` ·
-    `sum`; `last` is the lookback window.
+    Bounded in time by `last` (relative — `30d`, `6M`, `1y`) or `since` / `until`
+    (absolute). Event attributes take the same operator set a fact does, so
+    `{ attrs: { paid: { gte: 100 } } }` is a range over one event, not equality only.
   - Composed with `{ all: […] }` / `{ any: […] }` / `{ not: … }`.
   - The rule of thumb: a *lifetime / current / source-authoritative* attribute is a
     **fact**; an *"in the last N days"* aggregate is a **metric**.
@@ -132,6 +142,20 @@ and `fact:<key>`. `content_url` is canonicalised — query string and fragment
 stripped — so one page is one bucket however the link was shared. An unrecognised
 bucket is a **400 naming the accepted set**; it used to be read as a fact key and
 answered with an empty series.
+
+**Ordering.** A **time grain** reads chronologically, and with `limit` returns the most
+RECENT n — `by: "week", limit: 8` is the last eight consecutive weeks. A **categorical**
+dimension is ranked by value, because there top-N *is* the high-cardinality guardrail.
+`order: "bucket" | "value"` overrides either, so "the five busiest months" is still
+expressible — as a ranking rather than a series.
+
+> Until 2026-08-19 `limit` ranked everything by value, so a weekly series came back as the
+> eight busiest weeks in value order — not adjacent, so a line drawn through them joined
+> periods with gaps between them.
+
+**`group: { by: ["month", "attr:location"] }`** cross-tabulates: the first dimension is the
+x-axis, the second becomes one series per value, capped by `seriesLimit` (default 6, max
+200) with `seriesTruncated` declaring it when it bites.
 
 **`group: { cohortSize: true }`** returns `{ series, cohortSize, aggregate }` instead
 of a bare array, so a reach percentage needs no second call:

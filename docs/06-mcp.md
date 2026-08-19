@@ -226,6 +226,18 @@ means neither happens.
 
 ## Tool catalog
 
+> **Start with `analytics_grammar`.** It returns the query grammar — every operator,
+> aggregate, bucket, window key and response shape — generated from the engine's own
+> constants, so it cannot describe a language the engine does not accept. `analytics_schema`
+> is the companion: it returns the **vocabulary** (which fact keys exist here, which event
+> actions, which channels). Grammar from one, nouns from the other.
+>
+> **`analytics_resolve` always answers `{ data, applied, warnings, version }`** — the result
+> is under `data`, never at the root. `applied` names which value rule each fact was read
+> under, `warnings` is empty unless a fact is ambiguous and undeclared (or is a window
+> anchor), and `version.contract` is the number to pin with `version: <n>` on the request.
+> An unknown version is refused rather than rounded.
+
 The **core QUERY** tools are always present (core exposes the selector engine
 directly); everything else is contributed by the plugins you enable. Naming: the
 core query and analytics tools are the headline `whitebox.*` set; each channel

@@ -46,6 +46,31 @@ passport if needed and returns `{ passportId, sessionId }`. Awareness records ca
 reference the session, so you can attribute a later conversion back to the
 campaign that started the visit.
 
+**A visit ends.** Two things close one and open the next:
+
+| | |
+|---|---|
+| **inactivity** | 30 minutes by default — `sessions.idleMinutes` |
+| **a new campaign** | UTMs that differ from the ones the current session carries |
+
+Activity is what keeps a session alive, not when it started: `/sessions/resolve` fires
+once per full page **load**, so on a single-page app the events themselves are the
+evidence the visitor is still there, and awareness touches the session on every record
+carrying a `session_id`.
+
+A campaign change closes the current session and opens a new one because that is what
+attribution means — a returning visitor clicking a fresh ad is on a new visit. Only the
+UTM fields the caller actually **sends** are compared, so an ordinary page view
+mid-session does not mint a session.
+
+> This was aspirational until 2026-08-19. Nothing ever called `end()` and there was no
+> sweep, so `ended_at IS NULL` matched every row ever written: 159,588 sessions and 0
+> ended across 158,089 passports — one eternal session per person. A "visit" was a
+> lifetime, and because `resolve()` returned that session and discarded the UTMs it was
+> handed, a returning visitor's ad click was attributed to whatever brought them the
+> first time. 117,957 passports carried attribution from their **first** session and 340
+> from any later one.
+
 ## Awareness
 
 **Awareness** is the per-passport semantic memory. Every meaningful touch is one

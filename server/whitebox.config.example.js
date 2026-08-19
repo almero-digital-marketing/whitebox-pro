@@ -121,6 +121,40 @@ export default async (runtime) => ({
     labels: {
       // loyalty_tier: 'Loyalty tier',
     },
+
+    // WHICH value a key means, when a passport holds several.
+    //
+    // A fact is single-valued per passport, so every read picks one — `use` says which,
+    // and without it `last` (the newest write) wins by default. That default is wrong for
+    // any key whose meaning is definitional: a FIRST booking cannot move forward, however
+    // many duplicate customer records or passport merges contribute a date.
+    //
+    //   last (default) | first   → by observed_at
+    //   max | min                → by VALUE
+    //
+    // Declared here it applies everywhere — filters, fact: buckets, aggregates, window
+    // anchors — so no caller repeats it. A query can still override with `use`.
+    //
+    // Declaring `last` is NOT a no-op: it records a decision and takes the key off
+    // facts.undeclaredAmbiguous(), which is the list of keys still choosing silently.
+    // Whoever WRITES a key should declare it, via ctx.facts.describe(key, { use }).
+    use: {
+      // first_booked_at: 'min',   // a first cannot move forward
+      // last_visit_at: 'max',     // a last cannot move back
+      // visits_total: 'max',      // monotonic — the largest count is the true one
+      // ltv_paid: 'last',         // a refund lowers it, so the newest total is true
+    },
+  },
+
+  // How long a VISIT survives without activity. A session also ends when the campaign
+  // changes — UTMs that differ from the ones it carries — which is not configurable,
+  // because that is what attribution means.
+  //
+  // Activity is a /sessions/resolve call OR an awareness record carrying the session_id.
+  // The second matters on a single-page app: resolve fires once per page LOAD, so a
+  // visitor can read one page for longer than the window while plainly still present.
+  sessions: {
+    idleMinutes: 30,
   },
 
   // MCP endpoint + auth. `auth` is a pluggable verifier — here the same

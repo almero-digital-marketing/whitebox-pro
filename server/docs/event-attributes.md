@@ -87,17 +87,35 @@ group: { by: "session:utm_campaign" }                                           
 
 ### 4.1 Filter by attribute (open per-event dims with no typed home)
 
-Add an `attrs` object to the metric spec — an AND of equality / `in` / `present`:
+Add an `attrs` object to the metric spec. Each key takes the **same operator set a fact
+takes**, and several operators on one key AND together:
 
 ```js
 { metric: { attrs: { event: "email_open", campaign: "spring_botox" }, count: { gte: 1 } } }
+{ metric: { attrs: { event: "booking", paid: { gte: 100, lte: 500 } }, count: {} } }
+{ metric: { attrs: { location: { contains: "Пловдив" } }, count: {} } }
 ```
 
 | form | meaning | SQL (bound) |
 |---|---|---|
-| `attrs[k] = v` | equals | `meta ->> ? = ?` |
-| `attrs[k] = { in: [...] }` | one of | `meta ->> ? = ANY(?)` |
-| `attrs[k] = { present: true }` | key exists | `jsonb_exists(meta, ?)` |
+| `attrs[k] = v` | equals (sugar for `eq`) | `meta ->> ? = ?` |
+| `attrs[k] = [...]` | one of (sugar for `in`) | `meta ->> ? = ANY(?)` |
+| `{ eq }` · `{ ne }` | equals / does not | `ne` also requires the key to be PRESENT |
+| `{ in: [...] }` | one of | `meta ->> ? = ANY(?)` |
+| `{ gt } { gte } { lt } { lte }` | ordered comparison | **numeric** when the bound is a number, text otherwise |
+| `{ contains } { startsWith } { endsWith }` | substring | `LIKE` with the bound's metacharacters escaped |
+| `{ present: true \| false }` | key exists / does not | `jsonb_exists(meta, ?)` |
+
+The numeric comparison uses the same guarded cast the aggregates use — a value that is not
+numeric contributes nothing rather than aborting the query — so `"n/a"` in one event cannot
+break a range filter. A row that does not carry the attribute at all is **unknown**, not
+zero: it fails `lt`, and it fails `ne` too, because a booking with no `location` is not "not
+Варна".
+
+> Until server 2.30.0 this was equality / `in` / `present` only, while a fact had fourteen
+> operators. "Bookings over 100 lv" was therefore inexpressible — and got worse when
+> `cost`/`paid`/`first` moved off customer facts onto booking events, which was the right
+> model on a surface with three operators instead of fourteen.
 
 The attribute **key and value are bind parameters** (`meta ->> ?`), never string-inlined → injection-safe (the current `DIM_COL` allowlist exists precisely because time-grain formats are inlined; attrs avoid that by binding). Note: the `present` check uses `jsonb_exists(meta, ?)` rather than the `meta ? key` operator, because Postgres's `?` jsonb operator collides with knex's `?` bind placeholder.
 

@@ -13,7 +13,8 @@ questions about it in natural language, over HTTP or MCP.
 1. A visitor becomes a **passport** — one *person*, holding as many identities
    (emails, phones, logins, fingerprints) as they've been seen by. A strong
    identity appearing on a second passport merges the two.
-2. A **session** is a time-boxed visit (with UTMs/referrer) attached to a passport.
+2. A **session** is a time-boxed visit (with UTMs/referrer) attached to a passport —
+   closed by 30 minutes of inactivity or by a change of campaign.
 3. Every touch is recorded into **awareness**: a row with a `channel`, a
    `direction` (did we reach them, or did they act?), and `text`. The text is
    chunked and embedded so it's semantically searchable. Structured state lives
@@ -54,6 +55,27 @@ WhiteBox internals.
    integrations repo, the link script, and swapping or adding a provider.
 9. **[09 · Deployment](09-deployment.md)** — production setup, webhooks, scaling,
    migrations, and data/GDPR operations.
+
+### The query language, in full
+
+[**query-language.md**](../server/docs/query-language.md) is the complete reference for
+what you can write: every operator, aggregate, bucket, window key and response shape, the
+words that mean several things (`last` means four, depending on where it sits), and a table
+of the mistakes the language invites paired with what to write instead. Chapter 05 is the
+tour; this is the reference.
+
+Over MCP, `analytics_grammar` returns the same thing **generated from the engine's own
+constants**, so it cannot describe a language the engine does not accept — and
+`analytics_schema` is its companion, returning the vocabulary (which fact keys exist here,
+which event actions, which channels) rather than the syntax.
+
+### When behaviour changes
+
+[**CHANGELOG.md**](../CHANGELOG.md) records the notable and especially the **breaking**
+changes, newest first — what moved, why, and what a caller written against the old
+behaviour gets. Worth reading before pinning an API contract or debugging a number that
+changed: the response envelope, the booking data moving from facts to event attributes, and
+the window-anchor default are all in there.
 
 The two contracts a plugin implements so that generic surfaces can render it
 without knowing anything about it — read these before adding a plugin, or before

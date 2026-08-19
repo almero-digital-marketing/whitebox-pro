@@ -64,6 +64,28 @@ await sessions.end(session.id)    // optional, on logout / session close
 
 Use sessions **only for acquisition** — the standard UTM five, the way every ad/email tool already emits them. Don't put product events here. The payoff: "clients by campaign", "reach by source", campaign funnels — all join `whitebox_sessions` automatically when an event carries that `session_id`.
 
+**A visit ends** after 30 minutes without activity (`sessions.idleMinutes`) or when the campaign changes — UTMs that differ from the ones the current session carries. So a returning visitor clicking a fresh ad opens a new session and their new campaign is recorded, rather than the click being folded into the visit that first brought them.
+
+### The trap that costs the most attribution
+
+**Parameters appended after an anchor never reach us.** A URL is positional: the first `#` closes the query string, so everything after it is fragment — however many `?` and `&` it contains. An ad platform that builds a click URL by concatenating a tracking template onto a landing page that already ends in an anchor produces
+
+```
+https://example.com/#club?utm_source=adwords&utm_campaign=BG-Search-Sofia
+                    └──────────── all of this is the fragment ──────────┘
+```
+
+and the parameters are invisible twice over: **a browser never sends a fragment to the server**, and they are not in `location.search` where anything reading UTMs looks.
+
+Measured on live Google Ads traffic: 211,000 clicks in a fortnight produced 46,103 attributed sessions, and **45,963 of those were the one campaign whose landing page had no anchor**. Eighteen others — Search, Display, PMAX, Demand Gen — produced 70 between them. Same account, same template; the difference was a `#`. The giveaway sat inside a single recorded URL: `gclid` before the anchor, because auto-tagging inserts it structurally, and the template's parameters after it.
+
+The browser SDK now recovers UTMs from the fragment as a fallback (the query string wins when both carry a value), so **session** attribution survives. It is a rescue, not a fix:
+
+- a fragment still never reaches server-side ingestion, CAPI, or your access logs
+- anything reading the landing URL server-side still sees nothing
+
+**Fix it at the platform.** In Google Ads, move the parameters out of the tracking template and into the **Final URL suffix** — Google inserts that structurally, before the fragment, exactly as it does `gclid`. Keeping the anchor in the final URL is then harmless.
+
 ---
 
 ## 4. Events — `meta.event` + attributes (the activity stream)
