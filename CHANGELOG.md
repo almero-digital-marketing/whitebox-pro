@@ -5,6 +5,21 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.31.2
+
+### Fixed — the server reported a version nobody set
+
+Two places were guessing. `mcp.init` fell back to a hardcoded `'2.0.0'`, so the MCP server
+announced a number three major versions stale unless a deployment happened to set
+`config.mcp.version`. And `ctx.version` did not exist at all, so the analytics response
+envelope's `version.server` — the field that exists to make a bug report traceable — came
+back `null` on every response, including the versioning work that shipped in 2.31.0.
+
+Both now read the server's own package.json, once. A version that is guessed is worse than
+absent: it invites someone to trust it.
+
+---
+
 ## whitebox-pro-server 2.31.1 · analytics 0.18.1
 
 ### Fixed — a time grain with `limit` returned the BUSIEST buckets, not the most recent

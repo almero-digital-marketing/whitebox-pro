@@ -34,6 +34,19 @@ import * as adminConsole from './console.js'
 import { resolveAuth } from './auth.js'
 import { register as registerHealth } from './health.js'
 import { load as loadPlugins } from './plugins.js'
+import { createRequire } from 'module'
+
+// The server's OWN version, read once from its package.json.
+//
+// Two things were reporting a version nobody set. mcp.init fell back to a hardcoded
+// '2.0.0', so the MCP server announced a number three major versions stale unless a
+// deployment happened to set config.mcp.version. And `ctx.version` did not exist at all,
+// so the analytics envelope's `version.server` — the field that exists to make a bug
+// report traceable — came back null on every response.
+//
+// One source for both. A version that is guessed is worse than absent: it invites someone
+// to trust it.
+const SERVER_VERSION = createRequire(import.meta.url)('../package.json').version
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -141,7 +154,8 @@ async function start() {
   }
 
   const plugins = {}
-  mcp.init({ config: config.mcp, logger })
+  // `version` first so an explicit config.mcp.version still wins.
+  mcp.init({ config: { version: SERVER_VERSION, ...config.mcp }, logger })
 
   // QUERY — the core query surface (REST /query + /preview + /ask, MCP
   // whitebox.query + whitebox.preview) over the selector engine. /ask is the
@@ -152,6 +166,9 @@ async function start() {
 
   await loadPlugins(app, {
     config,
+    // So a plugin can report which server produced an answer — the analytics response
+    // envelope puts it in `version.server`.
+    version: SERVER_VERSION,
     db: db.get(),
     redis: redis.get(),
     queue,
