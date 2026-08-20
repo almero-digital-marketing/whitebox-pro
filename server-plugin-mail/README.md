@@ -403,6 +403,7 @@ mail({
   auth: { secret: '...' },
   outbox: {
     rate: { max: 10, duration: 60000 },
+    concurrency: 5,
     attempts: 5,
     backoffMs: 5000,
     stuckThresholdMs: 10 * 60 * 1000,

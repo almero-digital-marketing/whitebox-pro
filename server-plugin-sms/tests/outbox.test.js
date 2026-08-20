@@ -51,7 +51,7 @@ function makeOutbox() {
   const config = { sms: { defaultCountry: 'BG' } }
   const logger = { error: vi.fn(), warn: vi.fn() }
   outbox.init({ db, q, templates: null, passports: null, sessions, awareness: null, notify, config, logger })
-  return { outbox, db, queue, sessions, notify }
+  return { outbox, db, queue, sessions, notify, q }
 }
 
 describe('outbox.queueSend', () => {
@@ -139,5 +139,21 @@ describe('outbox.status — self-describing health', () => {
     boot()
     const s = await outbox.status({ since: new Date() })
     expect(s.metrics.find(m => m.key === 'delivered').description).toMatch(/not all networks confirm/i)
+  })
+})
+
+
+// Same trap as mail: BullMQ honours defaultJobOptions on a Queue and silently
+// ignores it on a Worker, so misplacing it leaves every send on one attempt.
+describe('sms outbox queue/worker wiring', () => {
+  it('puts defaultJobOptions on the queue, not the worker', async () => {
+    const { q } = makeOutbox()
+
+    const queueOpts = q.createQueue.mock.calls[0][1]
+    expect(queueOpts.defaultJobOptions).toMatchObject({ removeOnComplete: true })
+    expect(queueOpts.defaultJobOptions.attempts).toBeGreaterThan(0)
+    expect(queueOpts.defaultJobOptions.backoff).toMatchObject({ type: 'exponential' })
+
+    expect(q.createWorker.mock.calls[0][2]).not.toHaveProperty('defaultJobOptions')
   })
 })

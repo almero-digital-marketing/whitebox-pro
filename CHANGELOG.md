@@ -5,6 +5,49 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.33.0 + plugin-mail 0.6.3, plugin-sms 0.5.2, plugin-journeys 0.2.1
+
+### Fix — job retries and cleanup never worked anywhere
+
+`defaultJobOptions` is a BullMQ **Queue** option. All four call sites passed it to
+`createWorker`, where BullMQ ignores it without complaint:
+
+- `server/src/webhooks.js`
+- `server-plugin-mail/src/outbox.js`
+- `server-plugin-sms/src/outbox.js`
+- `server-plugin-journeys/src/executor.js`
+
+So across the whole product no queued job ever had `attempts`, `backoff`, or
+`removeOnComplete`. Every job ran on BullMQ's default of **one attempt**, and completed jobs
+accumulated in Redis forever — 19,289 stale job hashes on one deployment's mail queue.
+
+For mail and sms this had a sharper edge than lost retries. The `failed` handler computes
+`terminal = attemptsMade >= (job.opts.attempts ?? attempts)`. With `opts.attempts` undefined
+it compares against the *configured* 5 that BullMQ was never applying, so a transient
+provider error was judged non-terminal, the row was left `queued`, and it fell to the stuck
+reaper — the same silent-loss path fixed in plugin-mail 0.6.2.
+
+`createQueue(name, options)` now forwards options to the Queue. Passing options for a queue
+that already exists logs a warning rather than dropping them silently, since memoization by
+name would otherwise reintroduce exactly this class of bug.
+
+**Behaviour change:** transient job failures now actually retry (5 attempts with exponential
+backoff for mail/sms/journeys, 3 for webhooks) instead of failing on the first error, and
+completed jobs are removed from Redis.
+
+### Fix — a serial mail worker capped throughput below any rate limit
+
+The mail worker set no `concurrency`, so BullMQ defaulted to 1 and sends ran strictly
+serially. Throughput was `1 / send_duration` regardless of `mail.outbox.rate` — measured at
+~15s per send on one deployment, a ceiling of ~4/min against a 60/min limiter. Raising the
+rate there had no effect at all until this was fixed.
+
+New `mail.outbox.concurrency`, default 5. Keep it well under the server's DB pool
+(`max: 10`, shared with every other worker) — each send makes several DB round-trips.
+
+**The plugins' `whitebox-pro-server` peer range moves to `^2.33.0`**: on an older server the
+second `createQueue` argument is silently dropped and the job options go missing again.
+
 ## whitebox-pro-server-plugin-mail 0.6.2
 
 ### Fix — the stuck reaper silently destroyed rate-limited mail

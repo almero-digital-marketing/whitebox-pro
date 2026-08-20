@@ -20,10 +20,20 @@ function init(options) {
   }
 }
 
-function createQueue(name) {
+// `options` reaches the BullMQ Queue — most importantly `defaultJobOptions`,
+// which is where `attempts`, `backoff` and `removeOnComplete` have to live.
+// They are Queue options, not Worker options: BullMQ silently ignores them on
+// a Worker, so passing them there leaves every job on a single attempt with no
+// backoff and completed jobs accumulating in Redis forever.
+function createQueue(name, options = {}) {
   if (!queues[name]) {
-    queues[name] = new Queue(safeName(name), { connection })
+    queues[name] = new Queue(safeName(name), { connection, ...options })
     logger.info('Queue created: %s', safeName(name))
+  } else if (Object.keys(options).length) {
+    // Queues are memoized by name, so a second caller's options would be
+    // dropped without a word — the same silent-default failure this fix is
+    // about. Say so instead.
+    logger.warn('Queue %s already exists; ignoring options from this call', safeName(name))
   }
   return queues[name]
 }

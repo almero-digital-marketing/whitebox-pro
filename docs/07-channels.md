@@ -21,7 +21,7 @@ mail({
   company: 'team@example.com',        // where inbound + form submissions forward
   provider: mailgun({ apiKey, domain, webhookSigningKey }),
   auth: { secret: process.env.WB_MAIL_TOKEN },
-  outbox: { rate: { max: 10, duration: 60000 }, attempts: 5, backoffMs: 5000 },
+  outbox: { rate: { max: 10, duration: 60000 }, concurrency: 5, attempts: 5, backoffMs: 5000 },
 })
 ```
 

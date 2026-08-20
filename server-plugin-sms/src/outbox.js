@@ -42,17 +42,18 @@ export function init(deps) {
   ;({ db, q, templates, passports, sessions, awareness, notify, config, logger } = deps)
   attempts = config.sms?.outbox?.attempts ?? DEFAULT_ATTEMPTS
 
-  outboxQueue = q.createQueue('sms:outbox')
+  outboxQueue = q.createQueue('sms:outbox', {
+    defaultJobOptions: {
+      attempts,
+      backoff: { type: 'exponential', delay: config.sms?.outbox?.backoffMs ?? DEFAULT_BACKOFF_MS },
+      removeOnComplete: true,
+    },
+  })
 
   q.createWorker('sms:outbox', async job => processSingle(job.data.id, job.attemptsMade + 1), {
     limiter: {
       max: config.sms?.outbox?.rate?.max ?? 10,
       duration: config.sms?.outbox?.rate?.duration ?? 1000,
-    },
-    defaultJobOptions: {
-      attempts,
-      backoff: { type: 'exponential', delay: config.sms?.outbox?.backoffMs ?? DEFAULT_BACKOFF_MS },
-      removeOnComplete: true,
     },
   }).on('failed', async (job, err) => {
     if (!job?.data?.id) return

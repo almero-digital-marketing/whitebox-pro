@@ -12,7 +12,13 @@ const hasBody = (method) => !BODYLESS.has(String(method || 'POST').toUpperCase()
 function init(options) {
   const { concurrency = 5, retries = 3, timeout = 10000 } = options.config.webhooks || {}
 
-  webhookQueue = options.queue.createQueue(QUEUE_NAME)
+  webhookQueue = options.queue.createQueue(QUEUE_NAME, {
+    defaultJobOptions: {
+      attempts: retries,
+      backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: true,
+    },
+  })
 
   options.queue.createWorker(QUEUE_NAME, async job => {
     const { url, method = 'POST', body, headers = {} } = job.data
@@ -24,14 +30,7 @@ function init(options) {
     })
     if (!response.ok) throw new Error(`Webhook responded ${response.status}: ${url}`)
     logger.debug('Webhook delivered: %s', url)
-  }, {
-    concurrency,
-    defaultJobOptions: {
-      attempts: retries,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: true,
-    },
-  })
+  }, { concurrency })
 }
 
 // `secret`, when given, HMAC-signs the request so a receiver can verify it

@@ -69,6 +69,7 @@ export function stripHtml(html) {
 }
 
 const DEFAULT_ATTEMPTS = 5
+const DEFAULT_CONCURRENCY = 5
 const DEFAULT_BACKOFF_MS = 5000
 
 // Dependencies captured once via init() — module-level singletons, no
@@ -95,7 +96,18 @@ export function init(deps) {
   const mailConfig = config.mail
   attempts = mailConfig.outbox?.attempts ?? DEFAULT_ATTEMPTS
 
-  outboxQueue = q.createQueue('mail:outbox')
+  outboxQueue = q.createQueue('mail:outbox', {
+    // These belong on the Queue. BullMQ ignores defaultJobOptions on a Worker,
+    // which left every send on a single attempt with no backoff — and made the
+    // `failed` handler below judge terminality against an `attempts` BullMQ was
+    // never applying, so a transient provider error left the row `queued` for
+    // the reaper to find.
+    defaultJobOptions: {
+      attempts,
+      backoff: { type: 'exponential', delay: mailConfig.outbox?.backoffMs ?? DEFAULT_BACKOFF_MS },
+      removeOnComplete: true,
+    },
+  })
 
   q.createWorker('mail:outbox', async job => {
     // Bulk batches arrive as { ids: [...] } (one provider call for the chunk);
@@ -103,14 +115,15 @@ export function init(deps) {
     if (Array.isArray(job.data.ids)) return processBatch(job.data.ids)
     return processSingle(job.data.id, job.attemptsMade + 1)
   }, {
+    // A send is mostly waiting — one provider call plus a few DB round-trips —
+    // so a serial worker (BullMQ's default concurrency of 1) caps throughput at
+    // 1/duration regardless of `rate`. Measured at ~15s per send on gpoint,
+    // that ceiling was ~4/min against a 60/min limiter. Keep this well under
+    // the server's DB pool (max 10, shared with every other worker).
+    concurrency: mailConfig.outbox?.concurrency ?? DEFAULT_CONCURRENCY,
     limiter: {
       max: mailConfig.outbox?.rate?.max ?? 10,
       duration: mailConfig.outbox?.rate?.duration ?? 60000,
-    },
-    defaultJobOptions: {
-      attempts,
-      backoff: { type: 'exponential', delay: mailConfig.outbox?.backoffMs ?? DEFAULT_BACKOFF_MS },
-      removeOnComplete: true,
     },
   }).on('failed', async (job, err) => {
     if (!job?.data) return

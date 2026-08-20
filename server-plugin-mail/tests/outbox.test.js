@@ -86,7 +86,7 @@ function makeOutbox(initialRows = {}, jobCounts) {
   const config = { mail: { outbox: { rate: { max: 10, duration: 60000 } } } }
   const logger = { error: vi.fn(), warn: vi.fn() }
   outbox.init({ db, q, notify, config, logger })
-  return { outbox, db, notify, queue, logger }
+  return { outbox, db, notify, queue, logger, q }
 }
 
 describe('outbox.track status rank', () => {
@@ -480,5 +480,44 @@ describe('status() descriptions', () => {
     expect(at('sent')).toMatch(/on their way|not confirmed/i)
     expect(at('delivered')).toMatch(/inbox/i)
     expect(at('sent')).not.toBe(at('delivered'))
+  })
+})
+
+
+// This bug shipped because nothing asserted WHERE these options go. BullMQ
+// honours defaultJobOptions on a Queue and silently ignores it on a Worker, so
+// the mistake is invisible until you notice every job has one attempt and
+// Redis is full of completed jobs.
+describe('outbox queue/worker wiring', () => {
+  it('puts defaultJobOptions on the queue, not the worker', async () => {
+    const { q } = makeOutbox()
+
+    const queueOpts = q.createQueue.mock.calls[0][1]
+    expect(queueOpts.defaultJobOptions).toMatchObject({
+      attempts: 5, removeOnComplete: true,   // DEFAULT_ATTEMPTS — makeOutbox sets none
+    })
+    expect(queueOpts.defaultJobOptions.backoff).toMatchObject({ type: 'exponential' })
+
+    const workerOpts = q.createWorker.mock.calls[0][2]
+    expect(workerOpts).not.toHaveProperty('defaultJobOptions')
+  })
+
+  it('gives the worker a concurrency above 1, since a serial worker caps throughput below any rate limit', async () => {
+    const { q } = makeOutbox()
+    const workerOpts = q.createWorker.mock.calls[0][2]
+    expect(workerOpts.concurrency).toBeGreaterThan(1)
+    expect(workerOpts.limiter).toMatchObject({ max: 10, duration: 60000 })
+  })
+
+  it('honours a configured concurrency', async () => {
+    const db = makeDb({})
+    const q = { createQueue: vi.fn(() => ({ add: vi.fn() })), createWorker: vi.fn(() => ({ on: vi.fn() })) }
+    outbox.init({
+      db, q, notify: vi.fn(async () => {}),
+      config: { mail: { outbox: { concurrency: 3, attempts: 2 } } },
+      logger: { error: vi.fn(), warn: vi.fn() },
+    })
+    expect(q.createWorker.mock.calls[0][2].concurrency).toBe(3)
+    expect(q.createQueue.mock.calls[0][1].defaultJobOptions.attempts).toBe(2)
   })
 })

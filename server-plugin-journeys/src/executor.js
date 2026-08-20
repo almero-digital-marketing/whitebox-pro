@@ -32,10 +32,11 @@ export function init(deps) {
 }
 
 export function initQueue(queueModule) {
-  stepsQueue = queueModule.createQueue('journeys:steps')
+  stepsQueue = queueModule.createQueue('journeys:steps', {
+    defaultJobOptions: { attempts: 5, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: true },
+  })
   queueModule.createWorker('journeys:steps', job => processStep(job.data.enrollment_id), {
     concurrency: 10,
-    defaultJobOptions: { attempts: 5, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: true },
   })
 }
 

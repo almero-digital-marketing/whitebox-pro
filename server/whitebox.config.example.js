@@ -267,6 +267,9 @@ export default async (runtime) => ({
       auth: { secret: process.env.WB_MAIL_TOKEN },   // Bearer token for POST /mail/inbox and /mail/outbox
       outbox: {
         rate: { max: 10, duration: 60000 },          // worker rate limit (per duration)
+        concurrency: 5,                              // sends in flight; 1 caps throughput
+                                                     // at 1/send_duration whatever `rate` says.
+                                                     // Keep well under the DB pool (max 10).
         attempts: 5,                                 // total send attempts before terminal failure
         backoffMs: 5000,                             // initial exponential backoff
       },
