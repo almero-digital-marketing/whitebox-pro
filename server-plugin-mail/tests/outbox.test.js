@@ -71,15 +71,22 @@ function makeDb(rows = {}) {
 
 // Re-init the outbox singleton with fresh deps per test, return the namespace
 // so existing `outbox.track()` / `outbox.create()` call sites are unchanged.
-function makeOutbox(initialRows = {}) {
+function makeOutbox(initialRows = {}, jobCounts) {
   const db = makeDb(initialRows)
   const queue = { add: vi.fn(), addBulk: vi.fn(), remove: vi.fn(async () => 1) }
+  // Only present when a test asks for it, so the default fake keeps behaving
+  // like a queue whose depth can't be read.
+  if (jobCounts) {
+    queue.getJobCounts = typeof jobCounts === 'function'
+      ? vi.fn(jobCounts)
+      : vi.fn(async () => jobCounts)
+  }
   const q = { createQueue: vi.fn(() => queue), createWorker: vi.fn(() => ({ on: vi.fn() })) }
   const notify = vi.fn(async () => {})
   const config = { mail: { outbox: { rate: { max: 10, duration: 60000 } } } }
   const logger = { error: vi.fn(), warn: vi.fn() }
   outbox.init({ db, q, notify, config, logger })
-  return { outbox, db, notify, queue }
+  return { outbox, db, notify, queue, logger }
 }
 
 describe('outbox.track status rank', () => {
@@ -266,6 +273,73 @@ describe('outbox.markStuck', () => {
     const { outbox } = makeOutbox()
     const count = await outbox.markStuck(10 * 60 * 1000)
     expect(count).toBe(0)
+  })
+
+  // The outbox is rate-limited, so the tail of a big batch legitimately waits
+  // depth/rate for its turn. Those rows are queued, not lost, and reaping them
+  // silently destroyed the send.
+  it('does not reap while the queue still has waiting jobs', async () => {
+    const { outbox, db, notify } = makeOutbox({}, { waiting: 220, active: 1, delayed: 0, prioritized: 0, paused: 0 })
+    const old = new Date(Date.now() - 60 * 60 * 1000)
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: old })
+
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_mail_outbox'][0].status).toBe('queued')
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('counts prioritized jobs, which `waiting` excludes', async () => {
+    const { outbox, db } = makeOutbox({}, { waiting: 0, active: 0, delayed: 0, prioritized: 5, paused: 0 })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_mail_outbox'][0].status).toBe('queued')
+  })
+
+  it('reaps genuinely orphaned rows once the queue has drained', async () => {
+    const { outbox, db } = makeOutbox({}, { waiting: 0, active: 0, delayed: 0, prioritized: 0, paused: 0 })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(1)
+    expect(db.store['whitebox_mail_outbox'][0].failure_reason).toBe('stuck')
+  })
+
+  it('skips the sweep rather than reaping blind when the depth cannot be read', async () => {
+    const { outbox, db, logger } = makeOutbox({}, async () => { throw new Error('redis down') })
+    await db('whitebox_mail_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_mail_outbox'][0].status).toBe('queued')
+    expect(logger.warn).toHaveBeenCalled()
+  })
+})
+
+describe('outbox.reclaimIfReaped', () => {
+  // A job arriving at the worker proves its row was never orphaned.
+  it('returns a row the reaper failed as stuck back to queued', async () => {
+    const { outbox, db } = makeOutbox()
+    await db('whitebox_mail_outbox').insert({
+      status: 'failed', failure_reason: 'stuck', failed_at: new Date(),
+    })
+    const stored = db.store['whitebox_mail_outbox'][0]
+
+    const row = await outbox.reclaimIfReaped(stored)
+    expect(row.status).toBe('queued')
+    expect(row.failure_reason).toBeNull()
+    expect(stored.status).toBe('queued')
+    expect(stored.failed_at).toBeNull()
+  })
+
+  it('leaves rows failed for any other reason alone', async () => {
+    const { outbox } = makeOutbox()
+    const row = { id: 1, status: 'failed', failure_reason: 'suppressed' }
+    expect((await outbox.reclaimIfReaped(row)).status).toBe('failed')
+  })
+
+  it('leaves sent and cancelled rows alone', async () => {
+    const { outbox } = makeOutbox()
+    expect((await outbox.reclaimIfReaped({ id: 1, status: 'sent' })).status).toBe('sent')
+    expect((await outbox.reclaimIfReaped({ id: 2, status: 'cancelled', failure_reason: 'cancelled' })).status).toBe('cancelled')
   })
 })
 

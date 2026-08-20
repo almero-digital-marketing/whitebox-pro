@@ -5,6 +5,35 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-mail 0.6.2
+
+### Fix — the stuck reaper silently destroyed rate-limited mail
+
+The outbox reaper marked any row still `queued` after 10 minutes as `failed/stuck`. But the
+outbox is rate-limited (`mail.outbox.rate`, default 10/min), so the tail of a large batch
+legitimately waits `depth / rate` for its turn — 32 minutes for a 320-mail batch. Age alone
+cannot distinguish "waiting its turn" from "orphaned".
+
+Worse, the loss was silent. When the worker finally reached the job, `processSingle` saw the
+row was no longer `queued` and returned, so BullMQ recorded the job as **completed**. The
+mail was never sent, never retried, and the row read `attempts: 0` forever.
+
+On one production deployment this destroyed ~190 of a ~320-mail daily 06:00 batch, every
+day: 2,183 never-sent messages over 12 days, 1,200 of them birthday-gift mail. 90% of all
+failures came from the 7 daily windows that exceeded the limiter's throughput; windows within
+capacity failed at 1.6%.
+
+Two changes:
+
+- `markStuck` now skips the sweep entirely while the queue still holds work
+  (`waiting`/`active`/`delayed`/`prioritized`/`paused`). A row is only orphaned once nothing
+  pending could ever pick it up. If the queue depth can't be read, the sweep is skipped too —
+  being late to reap is harmless; reaping live mail is not.
+- `processSingle`/`processBatch` now *reclaim* a row the reaper failed as `stuck`: a job
+  arriving at the worker proves the row was never orphaned. Self-heals if the sweep misfires.
+
+Note `getJobCounts` must name `prioritized` explicitly — BullMQ's `waiting` count excludes it.
+
 ## whitebox-pro-server 2.32.0
 
 ### BREAKING (and a security fix) — the query surface fails CLOSED
