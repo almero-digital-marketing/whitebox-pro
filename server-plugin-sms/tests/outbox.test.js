@@ -10,15 +10,31 @@ function makeDb(rows = {}) {
   const chain = (currentRows, prefiltered) => {
     const baseRows = prefiltered ?? currentRows
     return {
+      // Supports .where({col: val}), .where(col, val) and .where(col, op, val),
+      // and chains — markStuck does .where('status', …).where('queued_at', '<', …).
       where: (...args) => {
         let filtered
         if (args.length === 1 && typeof args[0] === 'object') {
           const cond = args[0]
           filtered = baseRows.filter(r => Object.entries(cond).every(([k, v]) => r[k] === v))
+        } else if (args.length === 2) {
+          const [col, val] = args
+          filtered = baseRows.filter(r => r[col] === val)
+        } else if (args.length === 3) {
+          const [col, op, val] = args
+          filtered = baseRows.filter(r => {
+            if (op === '=') return r[col] === val
+            if (op === '<') return r[col] < val
+            if (op === '<=') return r[col] <= val
+            if (op === '>') return r[col] > val
+            if (op === '>=') return r[col] >= val
+            return false
+          })
         } else {
           filtered = baseRows
         }
         return {
+          where: chain(currentRows, filtered).where,
           first: async () => filtered[0] || null,
           update: (data) => {
             filtered.forEach(r => Object.assign(r, data))
@@ -42,16 +58,21 @@ function makeDb(rows = {}) {
   return db
 }
 
-function makeOutbox() {
+function makeOutbox(jobCounts) {
   const db = makeDb()
   const queue = { add: vi.fn(), remove: vi.fn(async () => 1) }
+  // getJobCounts only exists when a test asks for it, so the default fake keeps
+  // behaving like a queue whose depth cannot be read.
+  if (jobCounts) {
+    queue.getJobCounts = typeof jobCounts === 'function' ? vi.fn(jobCounts) : vi.fn(async () => jobCounts)
+  }
   const q = { createQueue: vi.fn(() => queue), createWorker: vi.fn(() => ({ on: vi.fn() })) }
   const sessions = { resolve: vi.fn(async () => null) }
   const notify = vi.fn(async () => {})
   const config = { sms: { defaultCountry: 'BG' } }
   const logger = { error: vi.fn(), warn: vi.fn() }
   outbox.init({ db, q, templates: null, passports: null, sessions, awareness: null, notify, config, logger })
-  return { outbox, db, queue, sessions, notify, q }
+  return { outbox, db, queue, sessions, notify, q, logger }
 }
 
 describe('outbox.queueSend', () => {
@@ -155,5 +176,81 @@ describe('sms outbox queue/worker wiring', () => {
     expect(queueOpts.defaultJobOptions.backoff).toMatchObject({ type: 'exponential' })
 
     expect(q.createWorker.mock.calls[0][2]).not.toHaveProperty('defaultJobOptions')
+  })
+})
+
+
+// Ported from plugin-mail 0.6.2: sms carried the identical age-only reaper and
+// the identical silent drop, and escaped the incident only because its default
+// rate window is 1000ms rather than 60000ms.
+describe('sms outbox.markStuck is queue-aware', () => {
+  it('does not reap while the queue still has waiting jobs', async () => {
+    const { outbox, db, notify } = makeOutbox({ waiting: 500, active: 1, delayed: 0, prioritized: 0, paused: 0 })
+    await db('whitebox_sms_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_sms_outbox'][0].status).toBe('queued')
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('counts prioritized jobs, which `waiting` excludes', async () => {
+    const { outbox, db } = makeOutbox({ waiting: 0, active: 0, delayed: 0, prioritized: 7, paused: 0 })
+    await db('whitebox_sms_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_sms_outbox'][0].status).toBe('queued')
+  })
+
+  it('reaps genuinely orphaned rows once the queue has drained', async () => {
+    const { outbox, db } = makeOutbox({ waiting: 0, active: 0, delayed: 0, prioritized: 0, paused: 0 })
+    await db('whitebox_sms_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(1)
+    expect(db.store['whitebox_sms_outbox'][0].failure_reason).toBe('stuck')
+  })
+
+  it('skips the sweep rather than reaping blind when the depth cannot be read', async () => {
+    const { outbox, db, logger } = makeOutbox(async () => { throw new Error('redis down') })
+    await db('whitebox_sms_outbox').insert({ status: 'queued', queued_at: new Date(Date.now() - 60 * 60 * 1000) })
+    expect(await outbox.markStuck(10 * 60 * 1000)).toBe(0)
+    expect(db.store['whitebox_sms_outbox'][0].status).toBe('queued')
+    expect(logger.warn).toHaveBeenCalled()
+  })
+})
+
+describe('sms outbox.reclaimIfReaped', () => {
+  it('returns a row the reaper failed as stuck back to queued', async () => {
+    const { outbox, db } = makeOutbox()
+    await db('whitebox_sms_outbox').insert({ status: 'failed', failure_reason: 'stuck', failed_at: new Date() })
+    const stored = db.store['whitebox_sms_outbox'][0]
+
+    const row = await outbox.reclaimIfReaped(stored)
+    expect(row.status).toBe('queued')
+    expect(row.failure_reason).toBeNull()
+    expect(stored.status).toBe('queued')
+  })
+
+  it('leaves rows failed for any other reason, and sent/cancelled rows, alone', async () => {
+    const { outbox } = makeOutbox()
+    expect((await outbox.reclaimIfReaped({ id: 1, status: 'failed', failure_reason: 'suppressed' })).status).toBe('failed')
+    expect((await outbox.reclaimIfReaped({ id: 2, status: 'sent' })).status).toBe('sent')
+    expect((await outbox.reclaimIfReaped({ id: 3, status: 'cancelled', failure_reason: 'cancelled' })).status).toBe('cancelled')
+  })
+})
+
+describe('sms outbox worker concurrency', () => {
+  it('gives the worker a concurrency above 1', async () => {
+    const { q } = makeOutbox()
+    expect(q.createWorker.mock.calls[0][2].concurrency).toBeGreaterThan(1)
+  })
+
+  it('honours a configured concurrency', async () => {
+    const db = makeDb()
+    const q = { createQueue: vi.fn(() => ({ add: vi.fn() })), createWorker: vi.fn(() => ({ on: vi.fn() })) }
+    outbox.init({
+      db, q, templates: null, passports: null, sessions: { resolve: vi.fn(async () => null) },
+      awareness: null, notify: vi.fn(async () => {}),
+      config: { sms: { outbox: { concurrency: 4 } } },
+      logger: { error: vi.fn(), warn: vi.fn() },
+    })
+    expect(q.createWorker.mock.calls[0][2].concurrency).toBe(4)
   })
 })

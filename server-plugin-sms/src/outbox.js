@@ -13,6 +13,7 @@ const STATUS_AT = { sent: 'sent_at', delivered: 'delivered_at', undelivered: 'fa
 
 const DEFAULT_ATTEMPTS = 5
 const DEFAULT_BACKOFF_MS = 5000
+const DEFAULT_CONCURRENCY = 5
 
 // Rough segment count: any non-ASCII char ⇒ UCS-2 (70/segment), else GSM (160).
 function segmentCount(body) {
@@ -51,6 +52,10 @@ export function init(deps) {
   })
 
   q.createWorker('sms:outbox', async job => processSingle(job.data.id, job.attemptsMade + 1), {
+    // A serial worker (BullMQ's default of 1) caps throughput at
+    // 1/send_duration regardless of `rate`. Keep well under the server's DB
+    // pool (max 10, shared with every other worker).
+    concurrency: config.sms?.outbox?.concurrency ?? DEFAULT_CONCURRENCY,
     limiter: {
       max: config.sms?.outbox?.rate?.max ?? 10,
       duration: config.sms?.outbox?.rate?.duration ?? 1000,
@@ -110,8 +115,20 @@ async function markInvalidIfPermanent(row, errLike, provider) {
   return c
 }
 
+// A job reaching the worker proves its row was never orphaned, so if the reaper
+// failed it as `stuck` while it waited its turn, take it back rather than
+// dropping the send. Keeps messages flowing even if the sweep misfires.
+export async function reclaimIfReaped(row) {
+  if (!row || row.status !== 'failed' || row.failure_reason !== 'stuck') return row
+  logger.warn({ id: row.id },
+    'Reclaiming sms row %s failed as stuck while its job was still queued', row.id)
+  await db(TABLE).where({ id: row.id })
+    .update({ status: 'queued', failed_at: null, failure_reason: null })
+  return { ...row, status: 'queued', failed_at: null, failure_reason: null }
+}
+
 async function processSingle(id, attemptsMade) {
-  const row = await find(id)
+  const row = await reclaimIfReaped(await find(id))
   if (!row || row.status !== 'queued') return
 
   const blockReason = await preflightBlock(row.to)
@@ -272,7 +289,33 @@ export async function find(id) {
   return await db(TABLE).where({ id }).first()
 }
 
+// A queued row is only orphaned if no job could ever pick it up. Age alone is
+// the wrong signal: the outbox is rate-limited (sms.outbox.rate) and the worker
+// has finite concurrency, so the tail of a large batch legitimately waits its
+// turn. Reaping on age destroyed exactly those tail sends — silently, because
+// the worker then found the row no longer `queued` and dropped the job as a
+// success. gpoint's mail outbox lost ~190 sends a morning to this before
+// plugin-mail 0.6.2; sms escaped only because its default rate window is
+// 1000ms rather than 60000ms, not because the logic was sound.
+async function queueBusy() {
+  if (typeof outboxQueue?.getJobCounts !== 'function') return false
+  // `waiting` excludes prioritized jobs, so ask for that state by name too.
+  const counts = await outboxQueue.getJobCounts(
+    'waiting', 'active', 'delayed', 'prioritized', 'paused')
+  return Object.values(counts).some(n => n > 0)
+}
+
 export async function markStuck(thresholdMs = 10 * 60 * 1000) {
+  // Skip the sweep while the queue still has work: those rows are waiting, not
+  // lost. If the depth can't be read, skip too — being late to reap is
+  // harmless, reaping live messages is not.
+  try {
+    if (await queueBusy()) return 0
+  } catch (err) {
+    logger.warn({ err }, 'Could not read sms outbox queue depth; skipping stuck sweep')
+    return 0
+  }
+
   const cutoff = new Date(Date.now() - thresholdMs)
   const stuck = await db(TABLE).where('status', 'queued').where('queued_at', '<', cutoff)
     .update({ status: 'failed', failed_at: new Date(), failure_reason: 'stuck' }).returning('*')

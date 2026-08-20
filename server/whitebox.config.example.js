@@ -296,6 +296,13 @@ export default async (runtime) => ({
       },
       defaultCountry: 'BG',                                                // for normalizing national numbers
       auth: { secret: process.env.WB_SMS_TOKEN },                         // Bearer for /sms/outbox + /sms/bulk
+      outbox: {
+        rate: { max: 10, duration: 1000 },                                // note: per SECOND here, unlike mail
+        concurrency: 5,                                                   // sends in flight; 1 caps throughput
+                                                                          // at 1/send_duration whatever `rate` says
+        attempts: 5,                                                      // total attempts before terminal failure
+        backoffMs: 5000,                                                  // initial exponential backoff
+      },
     }),
 
     // Passive, no-permission-prompt IP geolocation — piggybacks on the

@@ -5,6 +5,30 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-sms 0.5.3
+
+### Fix — the same silent-loss reaper as mail, ported
+
+sms carried a byte-for-byte copy of the bug fixed in plugin-mail 0.6.2: `markStuck` failed any
+row still `queued` past a fixed age, and `processSingle` then returned early on the non-queued
+status so BullMQ recorded the job **completed** with nothing sent and `attempts: 0`.
+
+It had never fired in production, but not because the logic was sound — only because sms's
+default rate window is `1000ms` (10/sec) where mail's is `60000ms` (10/min). A 60× wider
+ceiling meant the queue never stayed busy for the reaper's 10 minutes. Measured headroom on
+one deployment was about 2×: a daily batch of ~800 messages clearing in ~5.5 minutes against a
+10-minute threshold, with send latency p99 already at 102s. A larger batch or a slow provider
+day would have reproduced the mail incident exactly.
+
+- `markStuck` skips the sweep while the queue holds work (counting `prioritized` explicitly),
+  and skips rather than reaping blind if the depth can't be read.
+- `processSingle` reclaims a row the reaper failed as `stuck`.
+- New `sms.outbox.concurrency`, default 5 — the worker had no concurrency, so its real ceiling
+  was `1/send_duration`, not the configured rate.
+
+The test fake's `where()` only supported a single object form, so `markStuck` had no coverage
+at all in this package. It now chains like knex does.
+
 ## whitebox-pro-server 2.33.0 + plugin-mail 0.6.3, plugin-sms 0.5.2, plugin-journeys 0.2.1
 
 ### Fix — job retries and cleanup never worked anywhere
