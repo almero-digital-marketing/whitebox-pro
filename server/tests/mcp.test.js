@@ -251,3 +251,38 @@ describe('mcp registry', () => {
     expect(s.enabled).toBe(true)
   })
 })
+
+// A client with no icon to show falls back to a letter avatar cut from
+// whatever the user named the connector — so a server advertising none looks
+// unbranded however well it works, and the programmatic `name` ends up where
+// a display name belongs. MCP's Implementation carries icons/title/websiteUrl.
+describe('server implementation', () => {
+  it('advertises a display title distinct from the programmatic name', () => {
+    const mcp = createMcp({ logger })
+    const impl = mcp.serverImplementation()
+    expect(impl.name).toBe('whitebox')
+    expect(impl.title).toBe('WhiteBox')
+    expect(impl.version).toBeTruthy()
+    expect(impl.websiteUrl).toMatch(/^https:\/\//)
+  })
+
+  it('carries an icon that decodes to the WhiteBox mark', () => {
+    const mcp = createMcp({ logger })
+    const [icon] = mcp.serverImplementation().icons
+    expect(icon.mimeType).toBe('image/svg+xml')
+    expect(icon.sizes).toEqual(['any'])
+    // A data URI rather than a path: the src has to resolve for the CLIENT,
+    // which may be nowhere near this deployment.
+    expect(icon.src).toMatch(/^data:image\/svg\+xml;base64,/)
+    const svg = Buffer.from(icon.src.split(',')[1], 'base64').toString()
+    expect(svg).toMatch(/^<svg/)
+    expect(svg).toMatch(/WhiteBox/)
+  })
+
+  it('lets a white-labelled deployment override the mark and title', () => {
+    const mcp = createMcp({ logger, config: { title: 'Acme Insights', icon: 'https://acme.test/i.svg' } })
+    const impl = mcp.serverImplementation()
+    expect(impl.title).toBe('Acme Insights')
+    expect(impl.icons[0].src).toBe('https://acme.test/i.svg')
+  })
+})

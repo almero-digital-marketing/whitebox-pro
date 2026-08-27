@@ -16,6 +16,9 @@
 // middleware already sets `req.auth = { sub, scope, claims }`, so this needs
 // no extra plumbing beyond reading extra.authInfo.scope here.
 
+import { readFileSync } from 'node:fs'
+import nodePath from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 
@@ -58,9 +61,22 @@ export const PERMISSIONS = {
 // because the transport can't be shared across requests (see mount() below) —
 // each request needs its own fresh McpServer with the full catalog replayed
 // onto it, and replaying from a plain list is what makes that replay possible.
+// The WhiteBox mark, inlined once at load as a data URI.
+//
+// MCP's Implementation carries `icons`; a client given none falls back to a
+// letter avatar cut from whatever the connector was named, so the server looks
+// unbranded however well it works. A data URI rather than a served route
+// because the `src` has to resolve for the CLIENT, which is generally nowhere
+// near this deployment — a relative path means nothing to it, and an absolute
+// one needs a public base URL that self-hosted installs frequently do not set.
+const ICON_DATA_URI = (() => {
+  const file = nodePath.join(nodePath.dirname(fileURLToPath(import.meta.url)), 'assets', 'icon.svg')
+  return `data:image/svg+xml;base64,${Buffer.from(readFileSync(file, 'utf8')).toString('base64')}`
+})()
+
 let logger
 let enabled
-let name, version
+let name, version, title, icons
 let registrations = { tools: [], resources: [], prompts: [] }
 let registered = { tools: [], resources: [], prompts: [] }   // names only, for inspect()
 
@@ -69,6 +85,12 @@ export function init({ config = {}, logger: log } = {}) {
   enabled = config.enabled !== false
   name = config.name || 'whitebox'
   version = config.version || '2.0.0'
+  // `name` is the programmatic identifier; `title` is what a UI shows. Both
+  // are overridable so a white-labelled deployment can carry its own mark
+  // rather than this one.
+  title = config.title || 'WhiteBox'
+  icons = config.icons
+    || [{ src: config.icon || ICON_DATA_URI, mimeType: 'image/svg+xml', sizes: ['any'] }]
   registrations = { tools: [], resources: [], prompts: [] }
   registered = { tools: [], resources: [], prompts: [] }
 }
@@ -193,8 +215,20 @@ export function prompt({ name, description, argsSchema, handler }) {
 // Build a fresh McpServer with the full recorded catalog replayed onto it —
 // cheap (plain function calls, no I/O), and what lets every request start
 // from a clean, never-before-connected server instance.
+// What this server calls itself in the initialize response. Exported so the
+// values can be asserted without reaching into McpServer's private state.
+export function serverImplementation() {
+  return {
+    name,
+    title,
+    version,
+    icons,
+    websiteUrl: 'https://whitebox.pro',
+  }
+}
+
 function buildServer() {
-  const server = new McpServer({ name, version }, { capabilities: { logging: {} } })
+  const server = new McpServer(serverImplementation(), { capabilities: { logging: {} } })
   for (const r of registrations.tools) server.registerTool(r.name, r.config, r.handler)
   for (const r of registrations.resources) server.registerResource(r.name, r.uri, r.config, r.handler)
   for (const r of registrations.prompts) server.registerPrompt(r.name, r.config, r.handler)
