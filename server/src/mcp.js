@@ -61,7 +61,8 @@ export const PERMISSIONS = {
 // because the transport can't be shared across requests (see mount() below) —
 // each request needs its own fresh McpServer with the full catalog replayed
 // onto it, and replaying from a plain list is what makes that replay possible.
-// The WhiteBox mark, inlined once at load as a data URI.
+// The WhiteBox mark from the repository root — the same file the README
+// renders on GitHub — inlined once at load as a data URI.
 //
 // MCP's Implementation carries `icons`; a client given none falls back to a
 // letter avatar cut from whatever the connector was named, so the server looks
