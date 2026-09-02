@@ -46,7 +46,7 @@ import { mailgun } from 'whitebox-pro-mail-mailgun'
 // import { postmark } from 'whitebox-pro-mail-postmark'      // swap the mail provider below
 import { twilio } from 'whitebox-pro-sms-twilio'
 import { mobica } from 'whitebox-pro-sms-mobica'
-import { maxmind } from 'whitebox-geolocation-maxmind'
+import { maxmind } from 'whitebox-pro-geolocation-maxmind'
 
 export default async (runtime) => ({
   port: Number(process.env.WB_PORT || 3000),
@@ -311,7 +311,7 @@ export default async (runtime) => ({
     process.env.WB_GEOIP_DB_PATH && geolocation({
       // watch: true polls the .mmdb file's mtime (every 5 min by default) and
       // hot-reloads it once your deploy's geoipupdate cron/sidecar replaces it
-      // on disk — no restart needed. See whitebox-geolocation-maxmind's README.
+      // on disk — no restart needed. See whitebox-pro-geolocation-maxmind's README.
       provider: maxmind({ dbPath: process.env.WB_GEOIP_DB_PATH, watch: true }),
       // recordFacts: true (default) — geo_country/geo_region/geo_city/geo_lat/
       // geo_lon become core facts, queryable via the selector for segmentation.

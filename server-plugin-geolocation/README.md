@@ -49,7 +49,7 @@ describe its data source (a network API, say) just omits it.
 
 ```js
 import { geolocation } from 'whitebox-pro-server-plugin-geolocation'
-import { maxmind } from 'whitebox-geolocation-maxmind'
+import { maxmind } from 'whitebox-pro-geolocation-maxmind'
 
 geolocation({
   provider: maxmind({ dbPath: process.env.GEOIP_DB_PATH, watch: true }),

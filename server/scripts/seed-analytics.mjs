@@ -105,7 +105,7 @@ const TREATMENTS = [
 // mirror EXACTLY what
 // whitebox-pro-server-plugin-geolocation resolves from a real IP lookup
 // (geo_country/geo_region/geo_city/geo_lat/geo_lon — see server-plugin-geolocation
-// and the whitebox-geolocation-maxmind provider), so this seed data is a truthful
+// and the whitebox-pro-geolocation-maxmind provider), so this seed data is a truthful
 // preview of the real feature, not a stand-in shape. Sofia repeated 3x, Plovdiv/Varna
 // 2x — weights toward the HQ city via plain array repetition, same idiom as pick().
 const LOCATIONS = [

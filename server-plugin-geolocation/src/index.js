@@ -15,7 +15,7 @@
 //
 // Factory: geolocation({ provider: maxmind({ … }), recordFacts?, staleAfterDays? }).
 // `provider` is a composed geolocation-provider descriptor (e.g.
-// whitebox-geolocation-maxmind) implementing the neutral contract:
+// whitebox-pro-geolocation-maxmind) implementing the neutral contract:
 //   { name, lookup(ip) → { country, region, city, lat, lon } | null }
 // The plugin stays provider-agnostic — swap providers without touching this file.
 
