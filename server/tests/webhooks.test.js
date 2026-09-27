@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import crypto from 'node:crypto'
 import * as webhooks from '../src/webhooks.js'
+import logger from '../src/logger.js'
 
 function makeQueue() {
   const queue = { add: vi.fn(async () => ({})) }
@@ -110,5 +111,51 @@ describe('webhooks.send — no url', () => {
     const result = await webhooks.send({ data: {} })
     expect(result).toBeUndefined()
     expect(queue.add).not.toHaveBeenCalled()
+  })
+})
+
+describe('webhooks.send — a missing url is a misconfiguration, not a no-op', () => {
+  // logger's default export is a Proxy whose get() returns a FRESH bound
+  // function each access, so vi.spyOn cannot install through it — the spy is
+  // never the function send() ends up calling. Assigning works, because the
+  // proxy's set() forwards to the live pino instance.
+  const captureWarnings = () => {
+    const lines = []
+    const original = logger.warn
+    logger.warn = (...args) => lines.push(args.join(' '))
+    return { lines, restore: () => { logger.warn = original } }
+  }
+
+  it('logs a warning and enqueues nothing', () => {
+    const { queue } = makeQueue()
+    const { lines, restore } = captureWarnings()
+
+    webhooks.send({ method: 'post', data: { a: 1 } })
+
+    expect(queue.add).not.toHaveBeenCalled()
+    expect(lines).toHaveLength(1)
+    restore()
+  })
+
+  it('names the keys it received but never their values — secret passes through here', () => {
+    makeQueue()
+    const { lines, restore } = captureWarnings()
+
+    webhooks.send({ method: 'post', secret: 'super-secret-value', data: { a: 1 } })
+
+    const logged = lines.join(' ')
+    expect(logged).toContain('secret')              // the key name is useful
+    expect(logged).not.toContain('super-secret-value')
+    restore()
+  })
+
+  it('survives being called with nothing at all', () => {
+    const { queue } = makeQueue()
+    const { restore } = captureWarnings()
+
+    expect(() => webhooks.send()).not.toThrow()
+
+    expect(queue.add).not.toHaveBeenCalled()
+    restore()
   })
 })

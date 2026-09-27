@@ -21,8 +21,14 @@ export default ({ webhooksConfig, events, webhooks, eventRegistry }) => {
     events.publish(FIREHOSE_CHANNEL, { type, payload })?.catch?.(() => {})
     eventRegistry?.record(type, payload).catch(() => {})
     const key = type.split('.').pop()
-    if (webhooksConfig?.[key]) {
-      await webhooks.send({ ...webhooksConfig[key], data: payload })
+    const configured = webhooksConfig?.[key]
+    if (configured) {
+      // One event may have several endpoints, so the value is a webhook config
+      // OR an array of them. Spreading an array produced `{ "0": {…} }` with no
+      // `url`, which webhooks.send() used to drop without a word — every
+      // webhook for that event silently went nowhere.
+      const targets = Array.isArray(configured) ? configured : [configured]
+      await Promise.all(targets.map(target => webhooks.send({ ...target, data: payload })))
     }
   }
 

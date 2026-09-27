@@ -43,8 +43,16 @@ function init(options) {
 // `jobId`, when given, makes a repeated send() with the same id a BullMQ
 // no-op — lets a retried caller (e.g. a journey step re-run after a crash)
 // enqueue idempotently instead of firing the webhook twice.
-function send({ url, method = 'POST', data, headers = {}, secret, jobId }) {
-  if (!url) return
+function send(options = {}) {
+  const { url, method = 'POST', data, headers = {}, secret, jobId } = options
+  // Returning silently here is what let a misconfigured fan-out go unnoticed
+  // for as long as the config existed. Only KEY NAMES are logged — `secret`
+  // passes through this function and must never reach the log.
+  if (!url) {
+    logger.warn('Webhook not sent — no url. Received keys: %s',
+      Object.keys(options).join(', ') || '(none)')
+    return
+  }
   const body = hasBody(method) ? JSON.stringify(data) : undefined
   let finalHeaders = headers
   if (secret && body) {

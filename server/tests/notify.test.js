@@ -40,6 +40,68 @@ describe('notify() — event registry recording', () => {
   })
 })
 
+describe('notify() — one event, several webhooks', () => {
+  // The value under an event key may be a single config or an array of them.
+  // The array form used to be spread into `{ "0": {…} }`, losing `url`, and
+  // webhooks.send() dropped it silently — nothing was ever enqueued.
+  const setup = (webhooksConfig) => {
+    const events = { publish: vi.fn(async () => {}) }
+    const webhooks = { send: vi.fn(async () => {}) }
+    const { notify } = createNotify({ events, webhooks, webhooksConfig })
+    return { webhooks, notify }
+  }
+  const payload = { type: 'voip.ring', data: { call_id: 'c1' } }
+
+  it('sends to every target in an array, each with its own url and method', async () => {
+    const { webhooks, notify } = setup({
+      ring: [
+        { url: 'https://one.example/ring', method: 'post' },
+        { url: 'https://two.example/ring', method: 'PUT' },
+      ],
+    })
+    await notify('voip.ring', payload)
+
+    expect(webhooks.send).toHaveBeenCalledTimes(2)
+    expect(webhooks.send).toHaveBeenCalledWith({ url: 'https://one.example/ring', method: 'post', data: payload })
+    expect(webhooks.send).toHaveBeenCalledWith({ url: 'https://two.example/ring', method: 'PUT', data: payload })
+  })
+
+  it('sends an array of one with its url intact — the exact shape that sent nothing before', async () => {
+    const { webhooks, notify } = setup({
+      ring: [{ url: 'https://api.gpoint.bg/support/voip/ring', method: 'post' }],
+    })
+    await notify('voip.ring', payload)
+
+    expect(webhooks.send).toHaveBeenCalledTimes(1)
+    // Asserting the url, not just the count: a `{ "0": {…} }` object would
+    // still satisfy a bare call-count assertion.
+    const [sent] = webhooks.send.mock.calls[0]
+    expect(sent.url).toBe('https://api.gpoint.bg/support/voip/ring')
+    expect(sent.data).toEqual(payload)
+    expect(sent['0']).toBeUndefined()
+  })
+
+  it('still accepts a single config object', async () => {
+    const { webhooks, notify } = setup({ ring: { url: 'https://one.example/ring' } })
+    await notify('voip.ring', payload)
+
+    expect(webhooks.send).toHaveBeenCalledTimes(1)
+    expect(webhooks.send).toHaveBeenCalledWith({ url: 'https://one.example/ring', data: payload })
+  })
+
+  it('sends nothing for an empty array, and does not throw', async () => {
+    const { webhooks, notify } = setup({ ring: [] })
+    await expect(notify('voip.ring', payload)).resolves.toBeUndefined()
+    expect(webhooks.send).not.toHaveBeenCalled()
+  })
+
+  it('sends nothing for an event with no entry in the map', async () => {
+    const { webhooks, notify } = setup({ pick: [{ url: 'https://one.example/pick' }] })
+    await notify('voip.ring', payload)
+    expect(webhooks.send).not.toHaveBeenCalled()
+  })
+})
+
 describe('notify() — the firehose channel', () => {
   it('echoes every event to one channel, carrying the type IN the message', async () => {
     const events = { publish: vi.fn(async () => {}) }

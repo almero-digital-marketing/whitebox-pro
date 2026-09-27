@@ -115,7 +115,8 @@ No app-level bearer auth — the composed provider verifies each request's authe
 
 ### 6. Subscribe to events
 
-Either via the global notify webhooks (`config.mail.webhooks: [...]`) or by registering an in-process listener on `core/events`:
+Either via the global notify webhooks (`config.mail.webhooks`, a map keyed by
+the event's last segment — see [Configuration](#configuration)) or by registering an in-process listener on `core/events`:
 
 ```js
 events.on('mail.bounced', ({ data }) => {
@@ -399,7 +400,15 @@ mail({
   company: 'info@example.com',
   provider: mailgun({ apiKey, domain, webhookSigningKey, replayWindowMs: 5 * 60 * 1000 }),
   // …or postmark({ serverToken, from, webhookUser, webhookPassword })
-  webhooks: [ /* outbound notify webhook configs */ ],
+  // Keyed by the event's last segment (mail.sent → sent, mail.bounced →
+  // bounced). A value is one webhook config, or an array for several endpoints.
+  webhooks: {
+    sent: { url: 'https://api.example.com/mail/sent' },
+    bounced: [
+      { url: 'https://api.example.com/mail/bounced' },
+      { url: 'https://audit.example.com/mail/bounced' },
+    ],
+  },
   auth: { secret: '...' },
   outbox: {
     rate: { max: 10, duration: 60000 },

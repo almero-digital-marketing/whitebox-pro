@@ -5,6 +5,31 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server 2.34.0
+
+### Fix — an event with more than one webhook sent to none of them
+
+`config.<plugin>.webhooks` is a map keyed by the event's last segment, and a value may be
+one webhook config **or an array of them**. `notify()` spread the value as though it were
+always a single object, so an array became `{ "0": {…}, "1": {…} }` with no `url`, and
+`webhooks.send()` dropped it with `if (!url) return` — no request, no log, no throw.
+
+Configuring more than one endpoint for an event therefore sent to **none** of them. Not a
+delivery failure: nothing was ever enqueued. One production deployment ran 25 days with
+three such events configured and zero webhook deliveries, while the events themselves fired
+normally the whole time.
+
+- `notify()` now accepts one config or an array, sending to each target.
+- `webhooks.send()` logs a warning naming the keys it received instead of returning
+  silently. Only key *names* are logged — `secret` passes through that function.
+
+**Feature, not just a fix:** an event can now genuinely have several webhooks. The
+single-object form is unchanged.
+
+The three places documenting this contradicted each other, which is how the wrong shape got
+written in the first place — `docs/07-channels.md` showed the map form while both plugin
+READMEs showed a flat array. All now show the true shape, with a two-endpoint example.
+
 ## whitebox-pro-server-plugin-sms 0.5.3
 
 ### Fix — the same silent-loss reaper as mail, ported

@@ -153,7 +153,15 @@ voip({
   recordsFolder: 'recordings',
   lines: [ { tag: 'sales', in: ['+35924000000'], out: ['+359880000000'], strategy: 'hunt' } ],
   ari: { url: process.env.WB_ARI_URL, user: process.env.WB_ARI_USER, password: process.env.WB_ARI_PASSWORD },
-  webhooks: { ring: {…}, pick: {…}, call: {…} },
+  // Keyed by the event's LAST SEGMENT (voip.ring → ring). Each value is one
+  // webhook config, or an array of them when an event has several endpoints.
+  webhooks: {
+    ring: { url: 'https://api.example.com/voip/ring', method: 'post' },
+    pick: [
+      { url: 'https://api.example.com/voip/pick', method: 'post' },
+      { url: 'https://audit.example.com/voip/pick' },
+    ],
+  },
 })
 ```
 

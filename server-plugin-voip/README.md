@@ -107,7 +107,8 @@ Aggressive release: viewport-leave, tab-hide, blur, idle, or pagehide all return
 
 ### 3. Subscribe to call events
 
-Either via global notify webhooks (`config.voip.webhooks: [...]`) or in-process:
+Either via global notify webhooks (`config.voip.webhooks`, a map keyed by the
+event's last segment — see [Configuration](#configuration)) or in-process:
 
 ```js
 events.on('voip.call', ({ data }) => {
@@ -289,7 +290,15 @@ config.voip = {
     // tag → trackable inbound numbers for that line
     sofia: ['+35921234567', '+35921234568'],
   },
-  webhooks: [ /* outbound notify configs */ ],
+  // Keyed by the event's last segment (voip.ring → ring, voip.call → call).
+  // A value is one webhook config, or an array of them for several endpoints.
+  webhooks: {
+    ring: { url: 'https://api.example.com/voip/ring', method: 'post' },
+    call: [
+      { url: 'https://api.example.com/voip/call', method: 'post' },
+      { url: 'https://audit.example.com/voip/call' },
+    ],
+  },
 }
 ```
 
