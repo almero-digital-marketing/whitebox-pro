@@ -101,13 +101,29 @@ export async function resolveVideo(url, providedTranscript) {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'wb-engagement-'))
   try {
     const videoPath = await downloadVideo(url, tmp)
-    const audioPath = await extractAudio(videoPath, tmp)
+
+    // A video with no audio stream has nothing to transcribe, and asking ffmpeg
+    // for an audio-only output of one fails outright — which took the whole
+    // resolution down with it, losing the frame descriptions that would have
+    // worked. Probe first and skip only the Whisper leg.
+    const probe = await probeVideo(videoPath)
+    if (probe.error) {
+      logger.warn({ url, err: probe.error },
+        'Could not probe the video for an audio stream; attempting transcription anyway')
+    }
+    const silent = probe.hasAudio === false
+    if (silent) {
+      logger.info({ url }, 'Video has no audio channel — skipping transcription, keeping the visual pass')
+    }
 
     const [whisper, frames] = await Promise.all([
-      ai.transcribe(audioPath, { response_format: 'verbose_json' }).then(w => {
-        logger.info({ url }, 'Video transcribed: %s', w.text || '(no speech detected)')
-        return w
-      }),
+      silent
+        ? Promise.resolve({ segments: [], text: '', duration: probe.duration })
+        : extractAudio(videoPath, tmp).then(audioPath =>
+            ai.transcribe(audioPath, { response_format: 'verbose_json' }).then(w => {
+              logger.info({ url }, 'Video transcribed: %s', w.text || '(no speech detected)')
+              return w
+            })),
       video.extractVisual ? extractAndDescribeFrames(videoPath, tmp, url) : Promise.resolve([]),
     ])
 
@@ -117,9 +133,10 @@ export async function resolveVideo(url, providedTranscript) {
     return upsert({
       url, kind: 'video', text, segments, source_kind: 'auto',
       meta: {
-        duration_s: whisper.duration,
+        duration_s: whisper.duration ?? probe.duration,
         frames: frames.length,
         has_visual: frames.length > 0,
+        has_audio: probe.hasAudio,
       },
     })
   } finally {
@@ -141,6 +158,24 @@ async function downloadVideo(url, tmpDir) {
     w.on('error', reject)
   })
   return dest
+}
+
+// `hasAudio` is null, not false, when the probe itself failed: treating an
+// unreadable probe as "no audio" would silently drop transcripts for perfectly
+// good videos, which is a worse failure than the one this guards against.
+export function probeVideo(videoPath) {
+  return new Promise(resolve => {
+    ffmpeg.ffprobe(videoPath, (err, data) => {
+      if (err) {
+        resolve({ hasAudio: null, duration: undefined, error: err })
+        return
+      }
+      resolve({
+        hasAudio: (data?.streams || []).some(stream => stream.codec_type === 'audio'),
+        duration: data?.format?.duration,
+      })
+    })
+  })
 }
 
 function extractAudio(videoPath, tmpDir) {

@@ -5,6 +5,23 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-engagement 0.3.0
+
+### Fix — a video with no audio channel failed to resolve at all
+
+`resolveVideo()` always extracted an audio track before transcribing. Asking ffmpeg for an
+audio-only output of a video that has no audio stream fails outright, so the rejection took
+the **whole** resolution down — including the frame descriptions, which would have worked
+perfectly well. A silent video produced nothing and cost a failed job.
+
+It now probes with `ffprobe` first and skips only the Whisper leg, keeping the visual pass.
+`meta.has_audio` records what was found, and `meta.duration_s` falls back to the probe's
+duration when there is no transcript to take it from.
+
+A probe that *fails* reports `hasAudio: null` — unknown, not silent — and transcription is
+attempted anyway with a warning. Treating an unreadable probe as "no audio" would silently
+stop transcribing perfectly good video, which is the worse failure of the two.
+
 ## whitebox-pro-server 2.34.0
 
 ### Fix — an event with more than one webhook sent to none of them
