@@ -5,6 +5,40 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-client 0.5.0 + client-plugin-engagement 0.3.0, server-plugin-engagement 0.3.1
+
+### Fix — video playback handed to the iOS native player recorded nothing
+
+A `<video>` without `playsinline` is handed to iOS's own fullscreen player on play. iOS never
+sets `document.fullscreenElement` for it — it fires `webkitbeginfullscreen`/`webkitendfullscreen`
+on the **element** and exposes `el.webkitDisplayingFullscreen`. The tracker watched only
+`fullscreenchange`, so `inFullscreen` stayed false; the IntersectionObserver no longer saw the
+element, so `visible` was false; and the native player takes window focus, closing the activity
+gate as well.
+
+`shouldRecord()` was therefore false on every `play` and `timeupdate`: no interval ever opened,
+and `flush()` returned before emitting. Nothing was sent on pause, on close, or ever — no event,
+no error, no trace. On one site the hero video was unmeasurable on mobile for five days, while
+text and link engagement from the same pages arrived normally.
+
+- The tracker now detects iOS fullscreen (element events plus `webkitDisplayingFullscreen`,
+  and `webkitfullscreenchange` for older WebKit).
+- `createActivity({ requireFocus: false })` is new, and video uses it. Playback is engagement
+  even when the OS player holds focus — the same reasoning that already disabled the idle gate
+  for video. Visibility still applies, so a backgrounded tab does not accrue.
+- A video that played but recorded nothing now reports `onUnrecorded` (logged as a warning and
+  emitted as `engagement.video_unrecorded`) instead of failing silently.
+- `server-plugin-engagement` logs the exposure it drops when no transcript text covers the
+  watched intervals, rather than returning into silence.
+
+`client-plugin-engagement` now requires `whitebox-pro-client` `^0.5.0`: on an older client the
+`requireFocus` option is ignored and the focus gate silently closes again.
+
+Still outstanding: the server couples recording an exposure to producing a transcript, so watch
+data is discarded whenever transcription fails. That is a separate change.
+
+---
+
 ## whitebox-pro-server-plugin-engagement 0.3.0
 
 ### Fix — a video with no audio channel failed to resolve at all

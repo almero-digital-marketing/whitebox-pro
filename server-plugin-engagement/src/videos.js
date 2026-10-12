@@ -37,7 +37,15 @@ export async function consume(visitor, msg) {
           : null)
 
     const text = content.sliceVideo(resolved, intervals)
-    if (!text) return
+    if (!text) {
+      // Dropping the exposure here discards real watch data — completion,
+      // intervals, dwell — because a TRANSCRIPT could not be sliced. Say so
+      // rather than returning into silence; the measurement and the transcript
+      // being coupled is tracked separately.
+      logger.warn({ url, intervals, has_transcript: !!resolved?.text },
+        'video exposure dropped — no transcript text for the watched intervals')
+      return
+    }
 
     const pageUrl = msg.url && msg.url !== url ? msg.url : null
 

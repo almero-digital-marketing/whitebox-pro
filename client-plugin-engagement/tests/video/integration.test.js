@@ -303,3 +303,92 @@ describe('video engagement (opt-in only)', () => {
     t.stop()
   })
 })
+
+// The gpointpremium case: on a phone the site drops `playsinline` so iOS hands
+// the video to its native player. iOS never sets document.fullscreenElement
+// and fires webkitbeginfullscreen on the ELEMENT instead, so the tracker saw
+// the element as neither visible nor fullscreen and recorded nothing at all —
+// no event, no error, for five days.
+describe('video engagement — iOS native fullscreen', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    FakeIO.instances = []
+    globalThis.IntersectionObserver = FakeIO
+  })
+  afterEach(() => { delete globalThis.IntersectionObserver })
+
+  const playFullscreenOutOfViewport = (video) => {
+    // Out of viewport: the native player has taken the frame away.
+    FakeIO.latest().triggerIntersect(video, 0)
+    fire(video, 'webkitbeginfullscreen')
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 12
+    fire(video, 'timeupdate')
+  }
+
+  it('records playback handed to the iOS native player', () => {
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead })
+    t.start()
+
+    playFullscreenOutOfViewport(video)
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
+    const sent = onRead.mock.calls[0][0]
+    expect(sent.id).toBe('istoriyata')
+    expect(sent.total_watched_s).toBeGreaterThan(0)
+    t.stop()
+  })
+
+  it('stops recording once the native player is dismissed and the element is off-screen', () => {
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead })
+    t.start()
+
+    playFullscreenOutOfViewport(video)
+    fire(video, 'webkitendfullscreen')
+    video.currentTime = 30
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    // The 0→12s watched in the player counts; nothing after it does.
+    const sent = onRead.mock.calls[0][0]
+    expect(sent.total_watched_s).toBeLessThanOrEqual(12)
+    t.stop()
+  })
+
+  it('warns when a video played but recorded nothing, instead of staying silent', () => {
+    const onRead = vi.fn()
+    const onUnrecorded = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead, onUnrecorded })
+    t.start()
+
+    // Never visible, never fullscreen — the pre-fix situation.
+    FakeIO.latest().triggerIntersect(video, 0)
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 20
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).not.toHaveBeenCalled()
+    expect(onUnrecorded).toHaveBeenCalledTimes(1)
+    expect(onUnrecorded.mock.calls[0][0]).toMatchObject({ id: 'istoriyata', reason: 'not-visible' })
+    t.stop()
+  })
+
+  it('does not warn for a video that was never played', () => {
+    const onUnrecorded = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead: vi.fn(), onUnrecorded })
+    t.start()
+    FakeIO.latest().triggerIntersect(video, 0)
+    t.stop()
+    expect(onUnrecorded).not.toHaveBeenCalled()
+  })
+})

@@ -174,6 +174,15 @@ export default function engagementPlugin(localOptions = {}) {
             })
             emitter.emit('engagement.video', { id, kind, src, duration_s, intervals, total_watched_s, completion_pct, ms_spent, url, muted, partial })
           },
+          // A video that played but recorded nothing is otherwise invisible:
+          // no event, no error, no trace anywhere. Say it out loud.
+          onUnrecorded: ({ id, reason, visible, in_fullscreen, in_pip }) => {
+            logger?.warn?.(
+              'whitebox: video "%s" played but recorded no watch time (%s; visible=%s fullscreen=%s pip=%s)',
+              id, reason, visible, in_fullscreen, in_pip,
+            )
+            emitter.emit('engagement.video_unrecorded', { id, reason, visible, in_fullscreen, in_pip })
+          },
         })
         if (typeof window !== 'undefined') queue(async () => videoTracker.start())
       }

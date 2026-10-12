@@ -48,7 +48,7 @@ export function mergeIntervals(intervals) {
   return out
 }
 
-function createVideoTracker({ activity, onRead, options = {} } = {}) {
+function createVideoTracker({ activity, onRead, onUnrecorded, options = {} } = {}) {
   const cfg = { ...DEFAULTS, ...options }
   const states = new Map()
   let io = null
@@ -66,6 +66,8 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
       visible: false,
       inPip: false,
       inFullscreen: false,
+      everPlayed: false,
+      warnedUnrecorded: false,
       flushTimer: null,
       handlers: null,
     }
@@ -135,6 +137,7 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
 
   function attach(s) {
     const onPlay = () => {
+      s.everPlayed = true
       if (!shouldRecord(s)) return
       startInterval(s)
     }
@@ -164,12 +167,26 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
     }
     const onEnterPip = () => { s.inPip = true }
     const onLeavePip = () => { s.inPip = false }
+    // iOS never sets document.fullscreenElement: handing a <video> to the
+    // native player fires webkitbeginfullscreen/webkitendfullscreen on the
+    // ELEMENT and exposes el.webkitDisplayingFullscreen. Watching only
+    // `fullscreenchange` left every iOS fullscreen play unrecorded — which on a
+    // phone is the only way a video without `playsinline` ever plays.
+    const inNativeFullscreen = () =>
+      document.fullscreenElement === s.el ||
+      document.webkitFullscreenElement === s.el ||
+      !!s.el.webkitDisplayingFullscreen
     const onFullscreenChange = () => {
-      s.inFullscreen = document.fullscreenElement === s.el
+      s.inFullscreen = inNativeFullscreen()
+      if (!isEffectivelyVisible(s) && s.currentInterval) closeInterval(s)
+    }
+    const onBeginFullscreen = () => { s.inFullscreen = true }
+    const onEndFullscreen = () => {
+      s.inFullscreen = false
       if (!isEffectivelyVisible(s) && s.currentInterval) closeInterval(s)
     }
 
-    s.handlers = { onPlay, onPause, onTimeupdate, onEnded, onSeeking, onSeeked, onEnterPip, onLeavePip, onFullscreenChange }
+    s.handlers = { onPlay, onPause, onTimeupdate, onEnded, onSeeking, onSeeked, onEnterPip, onLeavePip, onFullscreenChange, onBeginFullscreen, onEndFullscreen }
     s.el.addEventListener('play', onPlay)
     s.el.addEventListener('pause', onPause)
     s.el.addEventListener('timeupdate', onTimeupdate)
@@ -178,7 +195,10 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
     s.el.addEventListener('seeked', onSeeked)
     s.el.addEventListener('enterpictureinpicture', onEnterPip)
     s.el.addEventListener('leavepictureinpicture', onLeavePip)
+    s.el.addEventListener('webkitbeginfullscreen', onBeginFullscreen)
+    s.el.addEventListener('webkitendfullscreen', onEndFullscreen)
     document.addEventListener('fullscreenchange', onFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange)
   }
 
   function detach(s) {
@@ -192,13 +212,30 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
     s.el.removeEventListener('seeked', h.onSeeked)
     s.el.removeEventListener('enterpictureinpicture', h.onEnterPip)
     s.el.removeEventListener('leavepictureinpicture', h.onLeavePip)
+    s.el.removeEventListener('webkitbeginfullscreen', h.onBeginFullscreen)
+    s.el.removeEventListener('webkitendfullscreen', h.onEndFullscreen)
     document.removeEventListener('fullscreenchange', h.onFullscreenChange)
+    document.removeEventListener('webkitfullscreenchange', h.onFullscreenChange)
     s.handlers = null
     if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
   }
 
   function flush(s, partial) {
-    if (!s.intervals.length && !s.currentInterval) return
+    if (!s.intervals.length && !s.currentInterval) {
+      // Played, yet not one second was recorded: every gate that can do this is
+      // invisible from the outside, which is how it went unnoticed for days.
+      if (s.everPlayed && !s.warnedUnrecorded) {
+        s.warnedUnrecorded = true
+        onUnrecorded?.({
+          id: s.id,
+          reason: !isEffectivelyVisible(s) ? 'not-visible' : 'inactive',
+          visible: s.visible,
+          in_fullscreen: s.inFullscreen,
+          in_pip: s.inPip,
+        })
+      }
+      return
+    }
     if (s.currentInterval) closeInterval(s)
     if (!s.intervals.length) return
     if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
@@ -279,14 +316,17 @@ function createVideoTracker({ activity, onRead, options = {} } = {}) {
   return { start, stop, observe, unobserve, _states: states }
 }
 
-export default function createVideoEngagements({ onRead, options = {} } = {}) {
+export default function createVideoEngagements({ onRead, onUnrecorded, options = {} } = {}) {
   const idAttribute = options.idAttribute ?? DEFAULT_VIDEO_ID_ATTR
-  // Idle gate disabled for video — active playback IS engagement, even without keystrokes.
-  const activity = createActivity({ idleAfterMs: Infinity })
+  // Idle gate disabled for video — active playback IS engagement, even without
+  // keystrokes. Focus goes with it, for the same reason: the OS player takes
+  // focus away precisely while the person is watching. Visibility still counts.
+  const activity = createActivity({ idleAfterMs: Infinity, requireFocus: false })
 
   const inner = createVideoTracker({
     activity,
     onRead,
+    onUnrecorded,
     options: { ...options, idAttribute },
   })
 
