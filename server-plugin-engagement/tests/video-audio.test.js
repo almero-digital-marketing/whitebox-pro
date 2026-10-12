@@ -9,7 +9,8 @@ vi.mock('fluent-ffmpeg', () => {
   const ffmpeg = vi.fn(() => {
     const handlers = {}
     const chain = {}
-    for (const m of ['noVideo', 'audioCodec', 'audioBitrate', 'outputOptions', 'screenshots']) {
+    for (const m of ['noVideo', 'audioCodec', 'audioBitrate', 'outputOptions', 'screenshots',
+                     'seekInput', 'frames']) {
       chain[m] = vi.fn(() => chain)
     }
     chain.on = vi.fn((event, cb) => { handlers[event] = cb; return chain })
@@ -18,6 +19,11 @@ vi.mock('fluent-ffmpeg', () => {
   })
   ffmpeg.ffprobe = vi.fn()
   return { default: ffmpeg }
+})
+
+vi.mock('sharp', () => {
+  const api = { resize: () => api, jpeg: () => api, toBuffer: async () => Buffer.from('jpg') }
+  return { default: () => api }
 })
 
 vi.mock('axios', () => {
@@ -29,6 +35,23 @@ const ffmpeg = (await import('fluent-ffmpeg')).default
 const axiosGet = (await import('axios')).default.get
 const { Readable } = await import('node:stream')
 const content = await import('../src/content.js')
+
+
+// mockImplementation persists across tests, so any test that makes ffmpeg fail
+// must be undone explicitly or it leaks into the next describe block.
+function installWorkingFfmpeg() {
+  ffmpeg.mockImplementation(() => {
+    const handlers = {}
+    const chain = {}
+    for (const m of ['noVideo', 'audioCodec', 'audioBitrate', 'outputOptions', 'screenshots',
+                     'seekInput', 'frames']) {
+      chain[m] = vi.fn(() => chain)
+    }
+    chain.on = vi.fn((e, cb) => { handlers[e] = cb; return chain })
+    chain.save = vi.fn(() => { setImmediate(() => handlers.end?.()); return chain })
+    return chain
+  })
+}
 
 const probeReturns = (err, data) => {
   ffmpeg.ffprobe.mockImplementation((_path, cb) => cb(err, data))
@@ -201,7 +224,12 @@ describe('resolveVideo — frame extraction is not allowed to be fatal', () => {
       const handlers = {}
       const chain = {}
       for (const m of ['noVideo', 'audioCodec', 'audioBitrate', 'screenshots']) chain[m] = vi.fn(() => chain)
-      chain.outputOptions = vi.fn(() => { chain.__frames = true; return chain })
+      // Only the timeline's scene-detection pass fails — a plain single-frame
+      // grab must still work, which is what the fallback relies on.
+      chain.outputOptions = vi.fn((opts) => {
+        if (String(opts).includes('select=')) chain.__frames = true
+        return chain
+      })
       chain.on = vi.fn((e, cb) => { handlers[e] = cb; return chain })
       chain.save = vi.fn(() => {
         setImmediate(() => chain.__frames
@@ -217,5 +245,110 @@ describe('resolveVideo — frame extraction is not allowed to be fatal', () => {
     expect(row).toBeTruthy()                     // resolved, not thrown
     expect(row.text).toContain('spoken words')   // the transcript survived
     expect(logger.warn).toHaveBeenCalled()       // and it said so
+  })
+})
+
+// A video with no words still has something to say. Without text there is no
+// exposure at all — awareness.record() refuses a row without it — so the watch
+// data would be lost a second time.
+describe('resolveVideo — summarising a wordless video from its frames', () => {
+  const makeContent = (ai, extractVisual = true) => {
+    const rows = []
+    const chain = () => {
+      const filters = []
+      const c = {
+        where: (cond) => { filters.push(r => Object.entries(cond).every(([k, v]) => r[k] === v)); return c },
+        first: async () => rows.find(r => filters.every(f => f(r))) || null,
+        insert: (data) => ({ onConflict: () => ({ merge: () => ({ returning: async () => {
+          const parsed = {
+            ...data,
+            segments: typeof data.segments === 'string' ? JSON.parse(data.segments) : data.segments,
+            meta: typeof data.meta === 'string' ? JSON.parse(data.meta) : data.meta,
+          }
+          rows.push(parsed); return [parsed]
+        } }) }) }),
+      }
+      return c
+    }
+    const db = () => chain()
+    db.rows = rows
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    content.init({ db, ai, config: { engagement: { video: { extractVisual } } }, logger })
+    return { db, logger }
+  }
+
+  beforeEach(() => {
+    ffmpeg.ffprobe.mockReset()
+    installWorkingFfmpeg()
+    axiosGet.mockImplementation(async () => ({ data: Readable.from([Buffer.from('fake-video')]) }))
+  })
+
+  const silentVideo = () =>
+    probeReturns(null, { streams: [{ codec_type: 'video' }], format: { duration: 120 } })
+
+  it('describes sampled frames and synthesises what the video is about', async () => {
+    silentVideo()
+    const ai = {
+      transcribe: vi.fn(),
+      vision: vi.fn(async () => 'a clinician speaking to camera in a bright treatment room'),
+      prompt: vi.fn(async () => 'A clinic introduction filmed in a treatment room.'),
+      embed: vi.fn(),
+    }
+    makeContent(ai, false)        // timeline frame pass OFF, so only the fallback can supply text
+
+    const row = await content.resolveVideo('https://example.com/silent.mp4')
+
+    expect(ai.transcribe).not.toHaveBeenCalled()          // no audio: never transcribed
+    expect(ai.vision).toHaveBeenCalled()                  // frames looked at
+    expect(ai.prompt).toHaveBeenCalledTimes(1)            // synthesised once
+    expect(row.text).toBe('A clinic introduction filmed in a treatment room.')
+    expect(row.source_kind).toBe('frames')
+    expect(row.meta.summarised_from_frames).toBe(true)
+  })
+
+  it('covers the whole video, so any watched interval gets the summary', async () => {
+    silentVideo()
+    const ai = {
+      transcribe: vi.fn(),
+      vision: vi.fn(async () => 'a frame'),
+      prompt: vi.fn(async () => 'What the video is about.'),
+      embed: vi.fn(),
+    }
+    makeContent(ai, false)
+
+    const row = await content.resolveVideo('https://example.com/silent.mp4')
+    expect(row.segments).toHaveLength(1)
+    expect(row.segments[0].end_s).toBeNull()
+    // A watch late in the video still picks it up.
+    expect(content.sliceVideo(row, [{ start_s: 100, end_s: 118 }])).toContain('What the video is about.')
+  })
+
+  it('falls back to the frame descriptions when the synthesis call fails', async () => {
+    silentVideo()
+    const ai = {
+      transcribe: vi.fn(),
+      vision: vi.fn(async () => 'a clinician speaking'),
+      prompt: vi.fn(async () => { throw new Error('model unavailable') }),
+      embed: vi.fn(),
+    }
+    const { logger } = makeContent(ai, false)
+
+    const row = await content.resolveVideo('https://example.com/silent.mp4')
+    expect(row.text).toContain('a clinician speaking')   // descriptions kept
+    expect(logger.warn).toHaveBeenCalled()
+  })
+
+  it('does not summarise when the transcript already has words', async () => {
+    probeReturns(null, { streams: [{ codec_type: 'audio' }], format: { duration: 60 } })
+    const ai = {
+      transcribe: vi.fn(async () => ({ segments: [{ start: 0, end: 10, text: 'real speech' }], duration: 60 })),
+      vision: vi.fn(), prompt: vi.fn(), embed: vi.fn(),
+    }
+    makeContent(ai, false)
+
+    const row = await content.resolveVideo('https://example.com/spoken.mp4')
+    expect(row.text).toContain('real speech')
+    expect(ai.prompt).not.toHaveBeenCalled()
+    expect(row.source_kind).toBe('auto')
   })
 })

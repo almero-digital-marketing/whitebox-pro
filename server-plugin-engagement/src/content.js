@@ -10,6 +10,10 @@ const TABLE = 'whitebox_engagement_content'
 
 const IMAGE_PROMPT = 'Describe this image in 2-3 sentences for content awareness tracking. Focus on subject, message, and notable text shown.'
 const FRAME_PROMPT = 'Describe this video frame in one sentence. Focus on subjects, action, on-screen text, and notable visual elements.'
+const SUMMARY_SYSTEM = 'You are given timestamped descriptions of frames sampled across one video, in order. Write 2-4 sentences saying what the video is about: its subject, setting, and what happens. Write about the video itself, never about the frames or the descriptions.'
+
+// How many frames the fallback samples when a video yields no words at all.
+const SUMMARY_FRAMES = 5
 
 // Dependencies captured once via init() — module-level singletons, no
 // wrapping factory closure. Matches the core pattern (passports, sessions, …).
@@ -137,16 +141,35 @@ export async function resolveVideo(url, providedTranscript) {
         : Promise.resolve([]),
     ])
 
-    const segments = mergeSegments(whisper.segments || [], frames)
-    const text = segments.map(s => [s.audio, s.visual].filter(Boolean).join(' ')).join('\n')
+    let segments = mergeSegments(whisper.segments || [], frames)
+    let text = segments.map(s => [s.audio, s.visual].filter(Boolean).join(' ')).join('\n')
+    let sourceKind = 'auto'
+
+    // No words at all — a silent video, a transcriber that returned nothing, or
+    // a frame pass that failed. Look at the video instead of giving up: without
+    // text there is no exposure, because awareness.record() requires it, and the
+    // watch data would be lost for a second time.
+    if (!text.trim()) {
+      const duration = whisper.duration ?? probe.duration
+      const summary = await summariseFromFrames(videoPath, tmp, url, duration)
+      if (summary) {
+        text = summary
+        sourceKind = 'frames'
+        // end_s null on purpose: a summary describes the WHOLE video, so
+        // sliceVideo includes it for any watched interval rather than only
+        // those overlapping some arbitrary span.
+        segments = [{ start_s: 0, end_s: null, audio: null, visual: summary }]
+      }
+    }
 
     return upsert({
-      url, kind: 'video', text, segments, source_kind: 'auto',
+      url, kind: 'video', text, segments, source_kind: sourceKind,
       meta: {
         duration_s: whisper.duration ?? probe.duration,
         frames: frames.length,
-        has_visual: frames.length > 0,
+        has_visual: frames.length > 0 || sourceKind === 'frames',
         has_audio: probe.hasAudio,
+        summarised_from_frames: sourceKind === 'frames',
       },
     })
   } finally {
@@ -186,6 +209,67 @@ export function probeVideo(videoPath) {
       })
     })
   })
+}
+
+// One frame at a given second, taken with a plain seek. Deliberately NOT the
+// scene-detection filter chain the timeline pass uses — that is the thing that
+// exits 251 on some perfectly playable files, and this exists for exactly the
+// moment after it has already failed.
+function grabFrame(videoPath, outPath, atSeconds) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .seekInput(atSeconds)
+      .frames(1)
+      .outputOptions(['-q:v', '4'])
+      .on('error', reject)
+      .on('end', () => resolve(outPath))
+      .save(outPath)
+  })
+}
+
+// A video with no words still has something to say. When there is no audio
+// track, or the transcriber returns nothing, sample a handful of frames across
+// the whole runtime, describe each, and synthesise them into what the video is
+// ABOUT — which is what an exposure needs in order to exist at all, since
+// awareness.record() refuses a row with no text.
+export async function summariseFromFrames(videoPath, tmpDir, url, durationS) {
+  const dir = await mkdtemp(path.join(tmpDir, 'summary-'))
+  const span = Number.isFinite(durationS) && durationS > 1 ? durationS : null
+  // Skip the outer 5% at each end: title cards and black frames describe nothing.
+  const times = span
+    ? Array.from({ length: SUMMARY_FRAMES },
+        (_, i) => span * (0.05 + (0.9 * (i + 0.5)) / SUMMARY_FRAMES))
+    : Array.from({ length: SUMMARY_FRAMES }, (_, i) => i)
+
+  const described = []
+  for (const [i, t] of times.entries()) {
+    try {
+      const out = await grabFrame(videoPath, path.join(dir, `s-${i}.jpg`), t)
+      const buf = await sharp(out).resize(768, 768, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
+      const desc = await ai.vision(FRAME_PROMPT, `data:image/jpeg;base64,${buf.toString('base64')}`,
+        { detail: video.visionDetail, maxTokens: 80 })
+      if (desc) described.push({ t, desc: String(desc).trim() })
+    } catch (err) {
+      // One unreadable frame should not cost the summary.
+      logger.warn({ err, t: Math.round(t), url }, 'Summary frame failed')
+    }
+  }
+  if (!described.length) {
+    logger.warn({ url }, 'No frames could be described; the video has no text at all')
+    return null
+  }
+
+  const listed = described.map(d => `[${Math.round(d.t)}s] ${d.desc}`).join('\n')
+  let summary = null
+  try {
+    summary = await ai.prompt(SUMMARY_SYSTEM, listed)
+  } catch (err) {
+    // The descriptions on their own are already a usable account of the video.
+    logger.warn({ err, url }, 'Frame summary synthesis failed; keeping the descriptions')
+  }
+  const text = String(summary || listed).trim()
+  logger.info({ url, frames: described.length }, 'Video summarised from frames: %s', text)
+  return text || null
 }
 
 function extractAudio(videoPath, tmpDir) {

@@ -5,6 +5,34 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-engagement 0.4.0
+
+### A video with no words is now summarised from its frames
+
+`awareness.record()` requires `text`, so a video that produced none could not be recorded at
+all — no exposure, and the watch data (completion, intervals, dwell) lost with it. That happens
+whenever a video has no audio track, the transcriber returns nothing, or the timeline frame
+pass fails.
+
+`resolveVideo()` now falls back: sample `SUMMARY_FRAMES` (5) frames evenly across the runtime,
+describe each with vision, and synthesise them into 2-4 sentences about what the video *is*.
+That becomes the content text, with `source_kind: 'frames'` and `meta.summarised_from_frames`
+so it is distinguishable from a transcript in the data.
+
+Details that matter:
+
+- The sampled frames are grabbed with a **plain seek**, not the scene-detection filter chain
+  the timeline uses — that chain is exactly what exits 251 on some playable files, and this
+  fallback exists for the moment after it has already failed.
+- The summary segment carries `end_s: null`, so `sliceVideo()` returns it for **any** watched
+  interval. A summary describes the whole video; it should not depend on which seconds were
+  watched.
+- The outer 5% at each end is skipped — title cards and black frames describe nothing.
+- If the synthesis call fails, the frame descriptions are kept as-is rather than discarded.
+- One unreadable frame does not cost the summary.
+
+---
+
 ## whitebox-pro-server-plugin-engagement 0.3.3
 
 ### Fix — a failed frame pass destroyed the transcript and the watch data with it
