@@ -173,8 +173,12 @@ describe('video engagement (opt-in only)', () => {
     t.stop()
   })
 
-  it('does not accumulate while out of viewport', async () => {
+  it('does not accumulate while a background video is out of viewport', async () => {
     const video = fakeVideo({ id: 'bg', duration: 100 })
+    // Identified as background explicitly now, rather than inferred from being
+    // off-screen: a video someone deliberately started counts wherever it sits.
+    video.autoplay = true
+    video.muted = true
     const onRead = vi.fn()
     const t = createVideo({ onRead })
     t.start()
@@ -343,7 +347,7 @@ describe('video engagement — iOS native fullscreen', () => {
     t.stop()
   })
 
-  it('stops recording once the native player is dismissed and the element is off-screen', () => {
+  it('keeps counting after the native player is dismissed, and closes on pause', () => {
     const onRead = vi.fn()
     const video = fakeVideo({ id: 'istoriyata' })
     const t = createVideo({ onRead })
@@ -351,24 +355,28 @@ describe('video engagement — iOS native fullscreen', () => {
 
     playFullscreenOutOfViewport(video)
     fire(video, 'webkitendfullscreen')
+    // Still playing, now inline and off-screen: deliberately started, so it
+    // still counts — the viewport no longer decides once someone pressed play.
     video.currentTime = 30
     fire(video, 'timeupdate')
+    video.paused = true
+    fire(video, 'pause')
     fire(video, 'ended')
 
-    // The 0→12s watched in the player counts; nothing after it does.
     const sent = onRead.mock.calls[0][0]
-    expect(sent.total_watched_s).toBeLessThanOrEqual(12)
+    expect(sent.total_watched_s).toBeGreaterThan(12)
     t.stop()
   })
 
-  it('warns when a video played but recorded nothing, instead of staying silent', () => {
+  it('warns when a play records nothing, instead of staying silent', () => {
     const onRead = vi.fn()
     const onUnrecorded = vi.fn()
-    const video = fakeVideo({ id: 'istoriyata' })
+    const video = fakeVideo({ id: 'banner' })
+    video.autoplay = true
+    video.muted = true                 // the one case still gated by the viewport
     const t = createVideo({ onRead, onUnrecorded })
     t.start()
 
-    // Never visible, never fullscreen — the pre-fix situation.
     FakeIO.latest().triggerIntersect(video, 0)
     video.paused = false
     fire(video, 'play')
@@ -378,7 +386,7 @@ describe('video engagement — iOS native fullscreen', () => {
 
     expect(onRead).not.toHaveBeenCalled()
     expect(onUnrecorded).toHaveBeenCalledTimes(1)
-    expect(onUnrecorded.mock.calls[0][0]).toMatchObject({ id: 'istoriyata', reason: 'not-visible' })
+    expect(onUnrecorded.mock.calls[0][0]).toMatchObject({ id: 'banner', reason: 'not-visible' })
     t.stop()
   })
 
@@ -452,22 +460,64 @@ describe('video engagement — Android', () => {
     t.stop()
   })
 
-  it('still refuses to record a video playing off-screen in a visible tab', () => {
+  it('still refuses to record a MUTED AUTOPLAY banner playing off-screen', () => {
     const onRead = vi.fn()
     const onUnrecorded = vi.fn()
     const video = fakeVideo({ id: 'banner' })
+    video.autoplay = true
+    video.muted = true
     const t = createVideo({ onRead, onUnrecorded })
     t.start()
 
-    FakeIO.latest().triggerIntersect(video, 0)   // scrolled away, not fullscreen
+    FakeIO.latest().triggerIntersect(video, 0)   // scrolled away
     video.paused = false
     fire(video, 'play')
     video.currentTime = 30
     fire(video, 'timeupdate')
     fire(video, 'ended')
 
-    expect(onRead).not.toHaveBeenCalled()        // the viewport gate is intentional
+    expect(onRead).not.toHaveBeenCalled()        // this is what the gate is FOR
     expect(onUnrecorded).toHaveBeenCalledTimes(1)
+    t.stop()
+  })
+
+  it('records a deliberately started video that the reader then scrolls past', () => {
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })   // no autoplay, not muted
+    const t = createVideo({ onRead })
+    t.start()
+
+    FakeIO.latest().triggerIntersect(video, 1)      // started on screen
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 10
+    fire(video, 'timeupdate')
+    FakeIO.latest().triggerIntersect(video, 0)      // scrolled away, still listening
+    video.currentTime = 40
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
+    expect(onRead.mock.calls[0][0].total_watched_s).toBeGreaterThan(30)
+    t.stop()
+  })
+
+  it('records an autoplay banner once the reader unmutes it — that is a choice', () => {
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'banner' })
+    video.autoplay = true
+    video.muted = false                             // unmuted by the reader
+    const t = createVideo({ onRead })
+    t.start()
+
+    FakeIO.latest().triggerIntersect(video, 0)
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 12
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
     t.stop()
   })
 })

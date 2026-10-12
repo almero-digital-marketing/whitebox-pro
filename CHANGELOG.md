@@ -5,6 +5,31 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-client-plugin-engagement 0.4.0
+
+### Behaviour change — the viewport no longer decides, once someone pressed play
+
+Video engagement required the element to be at least 50% in the viewport. That gate exists for
+**autoplay background video** — a muted banner scrolled out of frame is not engagement — but it
+was applied to every video, including ones a person deliberately started.
+
+That made whole platforms unmeasurable. The OS player takes the video out of the page entirely
+(iOS native fullscreen, Android fullscreen), so the IntersectionObserver stops seeing it; and a
+reader who starts a film and scrolls on while listening is engaged by any reasonable reading of
+the word. In each case the tracker recorded nothing, silently.
+
+The gate now applies only to what it was for: a video with **both** `autoplay` and `muted` set.
+Anything else, once played, accrues while the document is visible regardless of intersection
+ratio. Unmuting an autoplay banner is itself a choice, so that counts too.
+
+A document that is genuinely hidden still stops accrual — a backgrounded tab is not engagement.
+
+**This reverses a documented behaviour.** The existing test asserting it covered a fixture named
+`bg`, i.e. the background case, and now identifies it explicitly rather than inferring it from
+being off-screen.
+
+---
+
 ## whitebox-pro-client 0.5.0 + client-plugin-engagement 0.3.0, server-plugin-engagement 0.3.1
 
 ### Fix — video playback handed to the iOS native player recorded nothing

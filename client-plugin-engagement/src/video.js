@@ -75,8 +75,21 @@ function createVideoTracker({ activity, onRead, onUnrecorded, options = {} } = {
     return s
   }
 
+  // The viewport gate exists for AUTOPLAY background video: a muted banner
+  // scrolled out of frame is not engagement, and that stays true.
+  //
+  // A video the person deliberately STARTED is engagement wherever it happens
+  // to sit — they may have scrolled on while listening, or handed it to the OS
+  // player, which takes it out of the page entirely and out of the observer's
+  // sight. Gating that on intersection ratio made whole platforms unmeasurable
+  // and failed closed every time, which is the wrong direction for a measure.
+  function isBackgroundAutoplay(s) {
+    return !!s.el.autoplay && !!s.el.muted
+  }
+
   function isEffectivelyVisible(s) {
-    return s.visible || s.inPip || s.inFullscreen
+    if (s.visible || s.inPip || s.inFullscreen) return true
+    return s.everPlayed && !isBackgroundAutoplay(s)
   }
 
   function shouldRecord(s) {
