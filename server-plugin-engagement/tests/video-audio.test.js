@@ -150,3 +150,72 @@ describe('resolveVideo — a silent video is not sent for transcription', () => 
     expect(logger.warn).toHaveBeenCalled()
   })
 })
+
+// Frame description is an enhancement. ffmpeg refuses to extract frames from
+// some perfectly playable files — exit 251 on gpointpremium's 1080p h264 hero —
+// and that rejection used to take the whole resolution down, discarding the
+// Whisper transcript that had already succeeded and the watch data with it.
+describe('resolveVideo — frame extraction is not allowed to be fatal', () => {
+  const makeContent = (ai) => {
+    const rows = []
+    const chain = () => {
+      const filters = []
+      const c = {
+        where: (cond) => { filters.push(r => Object.entries(cond).every(([k, v]) => r[k] === v)); return c },
+        first: async () => rows.find(r => filters.every(f => f(r))) || null,
+        insert: (data) => ({ onConflict: () => ({ merge: () => ({ returning: async () => {
+          const parsed = {
+            ...data,
+            segments: typeof data.segments === 'string' ? JSON.parse(data.segments) : data.segments,
+            meta: typeof data.meta === 'string' ? JSON.parse(data.meta) : data.meta,
+          }
+          rows.push(parsed); return [parsed]
+        } }) }) }),
+      }
+      return c
+    }
+    const db = () => chain()
+    db.rows = rows
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    // extractVisual ON — the frame pass must run, and must fail.
+    content.init({ db, ai, config: { engagement: { video: { extractVisual: true } } }, logger })
+    return { db, logger }
+  }
+
+  beforeEach(() => {
+    ffmpeg.ffprobe.mockReset()
+    axiosGet.mockImplementation(async () => ({ data: Readable.from([Buffer.from('fake-video')]) }))
+  })
+
+  it('keeps the transcript when the frame pass throws', async () => {
+    probeReturns(null, { streams: [{ codec_type: 'audio' }, { codec_type: 'video' }], format: { duration: 341 } })
+    const ai = {
+      transcribe: vi.fn(async () => ({ segments: [{ start: 0, end: 20, text: 'spoken words' }], duration: 341, text: 'spoken words' })),
+      vision: vi.fn(async () => 'a clinic interior'),
+      embed: vi.fn(),
+    }
+    const { logger } = makeContent(ai)
+    // The frame pass uses outputOptions(); make that chain reject the way
+    // ffmpeg does on this file, while the audio chain still succeeds.
+    ffmpeg.mockImplementation(() => {
+      const handlers = {}
+      const chain = {}
+      for (const m of ['noVideo', 'audioCodec', 'audioBitrate', 'screenshots']) chain[m] = vi.fn(() => chain)
+      chain.outputOptions = vi.fn(() => { chain.__frames = true; return chain })
+      chain.on = vi.fn((e, cb) => { handlers[e] = cb; return chain })
+      chain.save = vi.fn(() => {
+        setImmediate(() => chain.__frames
+          ? handlers.error?.(new Error('ffmpeg exited with code 251: Conversion failed!'))
+          : handlers.end?.())
+        return chain
+      })
+      return chain
+    })
+
+    const row = await content.resolveVideo('https://gpointpremium.com/media/istoriyata.mp4')
+
+    expect(row).toBeTruthy()                     // resolved, not thrown
+    expect(row.text).toContain('spoken words')   // the transcript survived
+    expect(logger.warn).toHaveBeenCalled()       // and it said so
+  })
+})

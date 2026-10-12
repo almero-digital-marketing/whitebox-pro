@@ -5,6 +5,26 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-engagement 0.3.3
+
+### Fix — a failed frame pass destroyed the transcript and the watch data with it
+
+ffmpeg refuses to extract frames from some perfectly playable files. On one production video —
+a 1080p h264 mp4 that plays fine and transcribes fine — it exits 251 with `Conversion failed!`.
+
+That rejection propagated out of `resolveVideo()`, so `videos.consume()` caught it and dropped
+the exposure. The Whisper transcript had already succeeded and was thrown away, and with it the
+engagement itself: completion, intervals, dwell. The video had been unmeasurable since the page
+launched, and the only trace was one `video.consume failed` warning.
+
+Frame description is an enhancement. It now fails soft — logged, with an empty frame list — and
+the audio transcript carries the exposure on its own.
+
+Found by instrumenting the live path end to end: the client measured correctly, the event
+arrived, `consume()` ran with the right url, and ffmpeg was the thing that broke.
+
+---
+
 ## whitebox-pro-server-plugin-engagement 0.3.2
 
 ### Diagnostics — the last two silent exits on the engagement socket path

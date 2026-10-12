@@ -124,7 +124,17 @@ export async function resolveVideo(url, providedTranscript) {
               logger.info({ url }, 'Video transcribed: %s', w.text || '(no speech detected)')
               return w
             })),
-      video.extractVisual ? extractAndDescribeFrames(videoPath, tmp, url) : Promise.resolve([]),
+      video.extractVisual
+        ? extractAndDescribeFrames(videoPath, tmp, url).catch(err => {
+            // Frame description is an ENHANCEMENT. ffmpeg refuses to extract
+            // frames from some perfectly playable files (exit 251 on one real
+            // 1080p h264 mp4), and letting that reject took the whole
+            // resolution down — losing the Whisper transcript that had already
+            // succeeded, and with it the watch data the exposure carries.
+            logger.warn({ err, url }, 'Frame extraction failed; continuing with audio only')
+            return []
+          })
+        : Promise.resolve([]),
     ])
 
     const segments = mergeSegments(whisper.segments || [], frames)
