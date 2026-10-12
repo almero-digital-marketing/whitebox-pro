@@ -392,3 +392,82 @@ describe('video engagement — iOS native fullscreen', () => {
     expect(onUnrecorded).not.toHaveBeenCalled()
   })
 })
+
+// Android: two different worlds. A normal Chrome tab uses the standard
+// Fullscreen API and always worked. An in-app WebView (Facebook/Messenger,
+// which this site actually gets) is the broken one: requestFullscreen is
+// commonly refused there, and document.hasFocus() reports false, which closed
+// the activity gate even though the video was on screen and playing.
+describe('video engagement — Android', () => {
+  let hadFocus
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    FakeIO.instances = []
+    globalThis.IntersectionObserver = FakeIO
+    hadFocus = document.hasFocus
+  })
+  afterEach(() => {
+    delete globalThis.IntersectionObserver
+    document.hasFocus = hadFocus
+  })
+
+  it('records a standard-API fullscreen play (Chrome tab)', () => {
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead })
+    t.start()
+
+    FakeIO.latest().triggerIntersect(video, 0)                 // fullscreen takes it off-screen
+    Object.defineProperty(document, 'fullscreenElement', { value: video, configurable: true })
+    document.dispatchEvent(new Event('fullscreenchange'))
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 15
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
+    expect(onRead.mock.calls[0][0].total_watched_s).toBeGreaterThan(0)
+    Object.defineProperty(document, 'fullscreenElement', { value: null, configurable: true })
+    t.stop()
+  })
+
+  it('records an in-app WebView play where the document never reports focus', () => {
+    document.hasFocus = () => false            // must be set BEFORE createActivity runs
+    const onRead = vi.fn()
+    const video = fakeVideo({ id: 'istoriyata' })
+    const t = createVideo({ onRead })
+    t.start()
+
+    // Inline, on screen — fullscreen was refused by the host app.
+    FakeIO.latest().triggerIntersect(video, 1)
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 18
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).toHaveBeenCalledTimes(1)
+    expect(onRead.mock.calls[0][0].total_watched_s).toBeGreaterThan(0)
+    t.stop()
+  })
+
+  it('still refuses to record a video playing off-screen in a visible tab', () => {
+    const onRead = vi.fn()
+    const onUnrecorded = vi.fn()
+    const video = fakeVideo({ id: 'banner' })
+    const t = createVideo({ onRead, onUnrecorded })
+    t.start()
+
+    FakeIO.latest().triggerIntersect(video, 0)   // scrolled away, not fullscreen
+    video.paused = false
+    fire(video, 'play')
+    video.currentTime = 30
+    fire(video, 'timeupdate')
+    fire(video, 'ended')
+
+    expect(onRead).not.toHaveBeenCalled()        // the viewport gate is intentional
+    expect(onUnrecorded).toHaveBeenCalledTimes(1)
+    t.stop()
+  })
+})
