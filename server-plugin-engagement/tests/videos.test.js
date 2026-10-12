@@ -13,7 +13,7 @@ vi.mock('../src/content.js', () => ({
 // so existing `videos.consume()` call sites are unchanged.
 function makeVideos({ resolved, sliced } = {}) {
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   content.resolveVideo.mockReset()
   content.sliceVideo.mockReset()
   content.resolveVideo.mockResolvedValue(resolved ?? { url: 'u', kind: 'video', segments: [], text: '' })
@@ -112,7 +112,7 @@ describe('engagement.videos.consume', () => {
 
   it('swallows resolver errors and logs', async () => {
     const awareness = { record: vi.fn() }
-    const logger = { warn: vi.fn(), error: vi.fn() }
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     content.resolveVideo.mockReset()
     content.sliceVideo.mockReset()
     content.resolveVideo.mockRejectedValue(new Error('whisper down'))

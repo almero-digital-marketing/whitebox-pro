@@ -87,7 +87,14 @@ export function engagement(options = {}) {
         if (!kind && event !== 'engagement.batch') return
 
         const visitor = connect.find(connectionId)
-        if (!visitor?.passportId) return
+        if (!visitor?.passportId) {
+          // Dropping a batch for an unresolved connection is the last silent
+          // exit on this path: the client has already measured the engagement
+          // and believes it delivered it.
+          logger.warn({ connectionId, event, events: data?.events?.length ?? null },
+            'engagement dropped — socket connection has no resolved passport')
+          return
+        }
 
         if (event === 'engagement.batch') {
           const parsed = batchSchema.safeParse(data)
@@ -95,6 +102,14 @@ export function engagement(options = {}) {
             logger.warn({ err: parsed.error }, 'engagement.batch validation failed')
             return
           }
+          // One line per arriving batch, naming the kinds: the difference
+          // between "nothing arrived" and "it arrived and something ate it"
+          // is otherwise invisible from the server side.
+          logger.info({
+            passport_id: visitor.passportId,
+            events: parsed.data.events.length,
+            kinds: parsed.data.events.map(e => e.type || e.kind).join(','),
+          }, 'engagement batch received')
           for (const e of parsed.data.events) await dispatchBatchEvent(visitor, e)
           return
         }

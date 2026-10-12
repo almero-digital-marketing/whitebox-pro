@@ -54,7 +54,7 @@ function makeDb() {
 function makeContent({ ai } = {}) {
   const db = makeDb()
   const config = { engagement: {} }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const openaiMock = ai ?? {
     vision: vi.fn(async () => 'A diagram showing a CI/CD pipeline'),
     transcribe: vi.fn(async () => ({ segments: [{ start: 0, end: 5, text: 'hello world' }], duration: 5 })),

@@ -25,7 +25,15 @@ export function init(deps) {
 
 export async function consume(visitor, msg) {
   const url = msg?.src || msg?.url
-  if (!url) return
+  if (!url) {
+    // A video event with neither src nor url cannot be attributed to any
+    // content. Worth a line: the watch data is real and is about to be lost.
+    logger.warn({ id: msg?.id ?? null, keys: Object.keys(msg || {}).join(',') },
+      'video exposure dropped — event carried neither src nor url')
+    return
+  }
+  logger.info({ url, id: msg?.id ?? null, intervals: msg?.intervals?.length ?? null },
+    'video exposure received')
 
   try {
     const resolved = await content.resolveVideo(url, msg.transcript)

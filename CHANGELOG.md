@@ -5,6 +5,25 @@ independently; entries name the package and version that carries the change.
 
 ---
 
+## whitebox-pro-server-plugin-engagement 0.3.2
+
+### Diagnostics — the last two silent exits on the engagement socket path
+
+A client can measure engagement correctly, hand it to the transport, and have the server
+discard it without a word. Two returns did that:
+
+- the socket handler dropped any batch whose connection had no resolved passport
+- `videos.consume()` dropped any event carrying neither `src` nor `url`
+
+Both now log. An arriving batch is also logged once with its event count and kinds, because
+"nothing arrived" and "it arrived and something ate it" were indistinguishable from the server
+side — which is what made a five-day outage take this long to locate.
+
+Test logger mocks that omitted `info` were completed; `content.js` has logged at that level all
+along, so they were incomplete rather than deliberately minimal.
+
+---
+
 ## whitebox-pro-client-plugin-engagement 0.4.0
 
 ### Behaviour change — the viewport no longer decides, once someone pressed play

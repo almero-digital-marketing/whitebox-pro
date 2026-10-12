@@ -12,7 +12,7 @@ vi.mock('../src/content.js', () => ({
 // so existing `images.consume()` call sites are unchanged.
 function makeImages({ resolved } = {}) {
   const awareness = { record: vi.fn(async () => ({ id: 1 })) }
-  const logger = { warn: vi.fn(), error: vi.fn() }
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   content.resolveImage.mockReset()
   content.resolveImage.mockResolvedValue(resolved ?? { url: 'u', kind: 'image', text: 'A diagram showing X' })
   images.init({ awareness, logger })
@@ -64,7 +64,7 @@ describe('engagement.images.consume', () => {
 
   it('swallows resolver errors and logs', async () => {
     const awareness = { record: vi.fn() }
-    const logger = { warn: vi.fn(), error: vi.fn() }
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     content.resolveImage.mockReset()
     content.resolveImage.mockRejectedValue(new Error('vision down'))
     images.init({ awareness, logger })
